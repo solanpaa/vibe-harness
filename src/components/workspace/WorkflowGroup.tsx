@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronDown, ChevronRight, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +45,7 @@ export function WorkflowGroup({
   onSelectTask,
   onSelectReview,
 }: WorkflowGroupProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   const completedCount = tasks.filter(
     (t) => t.status === "completed",
@@ -68,11 +68,33 @@ export function WorkflowGroup({
     return bIdx - aIdx;
   });
 
+  // Active tasks: running or awaiting review (+ latest completed if none active)
+  const activeTasks = sortedTasks.filter(
+    (t) => t.status === "running" || t.status === "awaiting_review",
+  );
+  const visibleWhenCollapsed =
+    activeTasks.length > 0 ? activeTasks : sortedTasks.slice(0, 1);
+
+  // Auto-expand when a child task/review is selected
+  const hasSelectedChild = tasks.some(
+    (t) =>
+      (selection?.kind === "task" && selection.taskId === t.id) ||
+      (selection?.kind === "review" && selection.taskId === t.id),
+  );
+
+  useEffect(() => {
+    if (hasSelectedChild && !expanded) setExpanded(true);
+  }, [hasSelectedChild]);
+
   const isTaskSelected = (taskId: string) =>
     selection?.kind === "task" && selection.taskId === taskId;
 
   const isReviewSelected = (reviewId: string) =>
     selection?.kind === "review" && selection.reviewId === reviewId;
+
+  const displayTasks = expanded ? sortedTasks : visibleWhenCollapsed;
+  const isFullyCompleted = runStatus === "completed" || runStatus === "failed";
+  const showStages = expanded || !isFullyCompleted;
 
   return (
     <div className="space-y-px">
@@ -114,10 +136,10 @@ export function WorkflowGroup({
         </Badge>
       </button>
 
-      {/* Stage tasks with injected review items (review above its task) */}
-      {expanded && (
+      {/* Stage tasks */}
+      {showStages && (
         <div className="ml-3 border-l border-border/60 pl-1 space-y-px">
-          {sortedTasks.map((task) => (
+          {displayTasks.map((task) => (
             <div key={task.id}>
               {task.latestReview && (
                 <ReviewFeedItem
@@ -139,6 +161,16 @@ export function WorkflowGroup({
               />
             </div>
           ))}
+          {/* Collapsed hint */}
+          {!expanded && sortedTasks.length > displayTasks.length && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="w-full px-3 py-0.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground text-left cursor-pointer"
+            >
+              +{sortedTasks.length - displayTasks.length} more stage{sortedTasks.length - displayTasks.length > 1 ? "s" : ""}…
+            </button>
+          )}
         </div>
       )}
     </div>
