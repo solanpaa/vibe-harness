@@ -18,7 +18,7 @@ export const projects = sqliteTable("projects", {
 export const agentDefinitions = sqliteTable("agent_definitions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  type: text("type").notNull(), // copilot_cli | claude_code | codex | aider | custom
+  type: text("type").notNull(), // copilot_cli
   commandTemplate: text("command_template").notNull(),
   dockerImage: text("docker_image"),
   description: text("description"),
@@ -105,6 +105,8 @@ export const tasks = sqliteTable("tasks", {
   model: text("model"),
   useWorktree: integer("use_worktree").notNull().default(1), // 1=true, 0=false
   output: text("output"),
+  lastAiMessage: text("last_ai_message"),
+  usageStats: text("usage_stats"), // JSON string
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
 });

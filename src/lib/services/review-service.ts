@@ -186,7 +186,7 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 }
 
 function generateStructuredSummary(
-  task: { prompt: string; output: string | null },
+  task: { prompt: string; output: string | null; lastAiMessage?: string | null },
   files: ReturnType<typeof parseUnifiedDiff>,
   changeSummary: string
 ): string {
@@ -201,6 +201,12 @@ function generateStructuredSummary(
     .replace(/^##\s+Current Stage:\s*/m, "**Current Stage:** ")
     .trim();
   md += `${cleanPrompt}\n\n`;
+
+  // Include the agent's final AI message when available
+  if (task.lastAiMessage) {
+    md += `### Agent Summary\n\n`;
+    md += `${task.lastAiMessage}\n\n`;
+  }
   
   md += `### Changes Overview\n\n`;
   md += `**${files.length}** file(s) changed, **${totalAdded}** insertions(+), **${totalDeleted}** deletions(-)\n\n`;

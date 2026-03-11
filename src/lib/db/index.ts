@@ -36,24 +36,6 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
           description: "GitHub Copilot CLI in Docker sandbox. Requires GITHUB_TOKEN env var or host credentials.",
           createdAt: now,
         },
-        {
-          id: "00000000-0000-0000-0000-000000000002",
-          name: "Claude Code",
-          type: "claude_code",
-          commandTemplate: "claude",
-          dockerImage: null,
-          description: "Claude Code running in a Docker sandbox",
-          createdAt: now,
-        },
-        {
-          id: "00000000-0000-0000-0000-000000000003",
-          name: "Gemini CLI",
-          type: "custom",
-          commandTemplate: "gemini",
-          dockerImage: null,
-          description: "Gemini CLI running in a Docker sandbox",
-          createdAt: now,
-        },
       ])
       .run();
   }

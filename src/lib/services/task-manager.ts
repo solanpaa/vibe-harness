@@ -84,6 +84,18 @@ export function startTask(options: StartTaskOptions) {
   sandbox.events.on("close", async (code: number) => {
     const output = sandbox.output.join("");
 
+    // Extract parsed JSONL output (available after close event)
+    const parsedOutput = sandbox.parsedOutput ?? sandbox.jsonlParser.getResult();
+    const lastAiMessage = parsedOutput.lastAiMessage || null;
+    const usageStats = parsedOutput.usage
+      ? JSON.stringify({
+          premiumRequests: parsedOutput.usage.premiumRequests,
+          totalApiDurationMs: parsedOutput.usage.totalApiDurationMs,
+          sessionDurationMs: parsedOutput.usage.sessionDurationMs,
+          codeChanges: parsedOutput.codeChanges,
+        })
+      : null;
+
     // Look up the task to find its workflow run (if any)
     const currentTask = db
       .select({ workflowRunId: schema.tasks.workflowRunId })
@@ -97,6 +109,8 @@ export function startTask(options: StartTaskOptions) {
         .set({
           status: "awaiting_review",
           output,
+          lastAiMessage,
+          usageStats,
           completedAt: new Date().toISOString(),
         })
         .where(eq(schema.tasks.id, options.taskId))
@@ -124,6 +138,8 @@ export function startTask(options: StartTaskOptions) {
         .set({
           status: "failed",
           output,
+          lastAiMessage,
+          usageStats,
           completedAt: new Date().toISOString(),
         })
         .where(eq(schema.tasks.id, options.taskId))

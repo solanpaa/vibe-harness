@@ -4,10 +4,6 @@ import { z } from "zod";
 
 export const AgentType = z.enum([
   "copilot_cli",
-  "claude_code",
-  "codex",
-  "aider",
-  "custom",
 ]);
 export type AgentType = z.infer<typeof AgentType>;
 

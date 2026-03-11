@@ -1,6 +1,33 @@
 import { NextRequest } from "next/server";
 import { getTaskSandbox } from "@/lib/services/task-manager";
 
+/**
+ * Try to parse a raw output line as a JSONL event from Copilot CLI.
+ * Returns the parsed object when the line is valid JSON with a `type` field,
+ * or null for non-JSON lines (stderr, shell prompts, etc.).
+ */
+function tryParseJsonlEvent(line: string): Record<string, unknown> | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string") {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Not JSON
+  }
+  return null;
+}
+
+function formatSseMessage(line: string): string {
+  const event = tryParseJsonlEvent(line);
+  if (event) {
+    return `data: ${JSON.stringify({ type: "jsonl_event", event })}\n\n`;
+  }
+  return `data: ${JSON.stringify({ type: "output", data: line })}\n\n`;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -22,17 +49,13 @@ export async function GET(
 
       // Send existing output
       for (const line of sandbox.output) {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ type: "output", data: line })}\n\n`)
-        );
+        controller.enqueue(encoder.encode(formatSseMessage(line)));
       }
 
       // Stream new output
       const onOutput = (data: string) => {
         try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "output", data })}\n\n`)
-          );
+          controller.enqueue(encoder.encode(formatSseMessage(data)));
         } catch {
           // Stream closed
         }

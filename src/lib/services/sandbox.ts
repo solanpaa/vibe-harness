@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import { buildSandboxCredentials } from "./credential-vault";
+import { CopilotJsonlParser, ParsedAgentOutput } from "./jsonl-parser";
 
 export interface SandboxOptions {
   projectDir: string;
@@ -20,6 +21,8 @@ export interface SandboxInstance {
   output: string[];
   events: EventEmitter;
   workDir: string;
+  jsonlParser: CopilotJsonlParser;
+  parsedOutput?: ParsedAgentOutput;
 }
 
 // Persist across Next.js hot reloads in dev mode
@@ -68,7 +71,7 @@ function buildSandboxCommand(options: SandboxOptions): {
   }
 
   // Agent args after -- separator
-  const agentArgs: string[] = ["--yolo"];
+  const agentArgs: string[] = ["--yolo", "--output-format", "json"];
 
   if (options.prompt) {
     agentArgs.push("-p", options.prompt);
@@ -106,6 +109,7 @@ export function launchSandbox(
   const { command, args, env } = buildSandboxCommand(options);
   const events = new EventEmitter();
   const output: string[] = [];
+  const jsonlParser = new CopilotJsonlParser();
 
   // Try to get GITHUB_TOKEN from gh CLI if not already set
   if (!env.GITHUB_TOKEN && !env.GH_TOKEN) {
@@ -128,17 +132,24 @@ export function launchSandbox(
   proc.stdout?.on("data", (data: Buffer) => {
     const line = data.toString();
     output.push(line);
-    events.emit("output", line);
+    // Parse JSONL and emit typed event alongside raw output
+    const parsed = jsonlParser.parseLine(line);
+    events.emit("output", line, parsed);
   });
 
   proc.stderr?.on("data", (data: Buffer) => {
     const line = data.toString();
     output.push(line);
-    events.emit("output", line);
+    events.emit("output", line, null);
   });
 
   proc.on("close", (code) => {
     events.emit("close", code);
+    // Finalize parsed output before cleanup
+    const instance = activeSandboxes.get(taskId);
+    if (instance) {
+      instance.parsedOutput = jsonlParser.getResult();
+    }
     activeSandboxes.delete(taskId);
   });
 
@@ -153,6 +164,7 @@ export function launchSandbox(
     output,
     events,
     workDir: options.projectDir,
+    jsonlParser,
   };
 
   activeSandboxes.set(taskId, instance);

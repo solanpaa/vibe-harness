@@ -283,14 +283,14 @@ export function NewTaskModal({
                     const a = agents.find(
                       (a) => a.id === form.agentDefinitionId
                     );
-                    return a ? `${a.name} (${a.type})` : undefined;
+                    return a ? `${a.name}` : undefined;
                   })()}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {agents.map((a) => (
                   <SelectItem key={a.id} value={a.id}>
-                    {a.name} ({a.type})
+                    {a.name}
                   </SelectItem>
                 ))}
               </SelectContent>

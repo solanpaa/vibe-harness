@@ -152,7 +152,7 @@ export async function startWorkflowRun(input: {
     }
   }).catch(() => {});
 
-  const agentCommand = agent.commandTemplate || "claude";
+  const agentCommand = agent.commandTemplate || "copilot";
 
   startTask({
     taskId,
@@ -274,7 +274,7 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .run();
 
-  const agentCommand = agent.commandTemplate || "claude";
+  const agentCommand = agent.commandTemplate || "copilot";
 
   startTask({
     taskId,
