@@ -47,9 +47,12 @@ export function WorkflowGroup({
 }: WorkflowGroupProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const completedCount = tasks.filter(
-    (t) => t.status === "completed",
-  ).length;
+  // Count unique completed stages (not total tasks, since reruns create extras)
+  const completedStages = new Set(
+    tasks
+      .filter((t) => t.status === "completed" && t.stageName)
+      .map((t) => t.stageName),
+  ).size;
 
   // Find the best task to select when clicking the workflow title
   const bestTask =
@@ -123,7 +126,7 @@ export function WorkflowGroup({
           {runTitle ?? workflowName}
         </span>
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {completedCount}/{stages.length}
+          {completedStages}/{stages.length}
         </span>
         <Badge
           variant="secondary"
