@@ -15,7 +15,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, FolderGit2, ExternalLink } from "lucide-react";
+import { Plus, FolderGit2, ExternalLink, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import type { Project } from "@/types/domain";
 
 export default function ProjectsPage() {
@@ -46,6 +47,31 @@ export default function ProjectsPage() {
       setProjects((prev) => [...prev, project]);
       setForm({ name: "", localPath: "", gitUrl: "", description: "" });
       setOpen(false);
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to create project");
+    }
+  }
+
+  async function handleDelete(
+    e: React.MouseEvent,
+    project: Project,
+  ) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (!window.confirm(`Delete project "${project.name}"?`)) return;
+
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: "DELETE",
+    });
+
+    if (res.ok) {
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      toast.success("Project deleted");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete project");
     }
   }
 
@@ -60,13 +86,13 @@ export default function ProjectsPage() {
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger
-              render={
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  New Project
-                </Button>
-              }
-            />
+            render={
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                New Project
+              </Button>
+            }
+          />
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create Project</DialogTitle>
@@ -146,7 +172,17 @@ export default function ProjectsPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">{project.name}</CardTitle>
-                    <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => handleDelete(e, project)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -25,12 +25,12 @@ import {
   Plus,
   Terminal,
   Play,
-  Square,
   Clock,
   CheckCircle,
   XCircle,
   Loader2,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -79,13 +79,33 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string }> = {
     icon: <XCircle className="h-4 w-4" />,
     color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
   },
-  paused: {
-    icon: <Square className="h-4 w-4" />,
-    color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  },
 };
 
+function relativeTime(iso: string): string {
+  const seconds = Math.floor(
+    (Date.now() - new Date(iso).getTime()) / 1000
+  );
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function SessionsPage() {
+  return (
+    <Suspense>
+      <SessionsContent />
+    </Suspense>
+  );
+}
+
+function SessionsContent() {
+  const searchParams = useSearchParams();
+  const urlProjectId = searchParams.get("projectId") ?? "";
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -99,18 +119,25 @@ export default function SessionsPage() {
     prompt: "",
   });
 
-  function loadSessions() {
+  const loadSessions = useCallback(() => {
     fetch("/api/sessions")
       .then((r) => r.json())
-      .then(setSessions);
-  }
+      .then(setSessions)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadSessions();
-    fetch("/api/projects").then((r) => r.json()).then(setProjects);
-    fetch("/api/agents").then((r) => r.json()).then(setAgents);
-    fetch("/api/credentials").then((r) => r.json()).then(setCredSets);
-  }, []);
+    fetch("/api/projects").then((r) => r.json()).then(setProjects).catch(() => {});
+    fetch("/api/agents").then((r) => r.json()).then(setAgents).catch(() => {});
+    fetch("/api/credentials").then((r) => r.json()).then(setCredSets).catch(() => {});
+  }, [loadSessions]);
+
+  // Poll sessions every 5 seconds
+  useEffect(() => {
+    const id = setInterval(loadSessions, 5000);
+    return () => clearInterval(id);
+  }, [loadSessions]);
 
   // Auto-select first agent when agents load
   useEffect(() => {
@@ -118,6 +145,16 @@ export default function SessionsPage() {
       setForm((f) => ({ ...f, agentDefinitionId: agents[0].id }));
     }
   }, [agents, form.agentDefinitionId]);
+
+  // Auto-select project from URL ?projectId
+  useEffect(() => {
+    if (urlProjectId && projects.length > 0) {
+      const match = projects.find((p) => p.id === urlProjectId);
+      if (match) {
+        setForm((f) => ({ ...f, projectId: match.id }));
+      }
+    }
+  }, [urlProjectId, projects]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -127,7 +164,6 @@ export default function SessionsPage() {
     }
     setLoading(true);
     try {
-      // Create the session
       const createRes = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,29 +175,54 @@ export default function SessionsPage() {
         }),
       });
       if (!createRes.ok) {
-        toast.error("Failed to create session");
+        const body = await createRes.json().catch(() => null);
+        toast.error(body?.error ?? "Failed to create session");
         return;
       }
       const session = await createRes.json();
 
-      // Start the session
       const startRes = await fetch(`/api/sessions/${session.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "start" }),
       });
       if (!startRes.ok) {
-        const err = await startRes.json();
-        toast.error(`Session created but failed to start: ${err.error}`);
+        const body = await startRes.json().catch(() => null);
+        toast.error(
+          `Session created but failed to start: ${body?.error ?? "unknown error"}`
+        );
       } else {
         toast.success("Session created and started");
       }
 
-      setForm({ projectId: "", agentDefinitionId: agents[0]?.id || "", credentialSetId: "", prompt: "" });
+      setForm({
+        projectId: urlProjectId || "",
+        agentDefinitionId: agents[0]?.id ?? "",
+        credentialSetId: "",
+        prompt: "",
+      });
       setCreateOpen(false);
       loadSessions();
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDelete(sessionId: string) {
+    if (!window.confirm("Delete this session? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Failed to delete session");
+        return;
+      }
+      toast.success("Session deleted");
+      loadSessions();
+    } catch {
+      toast.error("Failed to delete session");
     }
   }
 
@@ -174,10 +235,20 @@ export default function SessionsPage() {
             Agent coding sessions running in Docker sandboxes
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} disabled={projects.length === 0}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Session
-        </Button>
+        <div className="flex items-center gap-2">
+          {projects.length === 0 && (
+            <span className="text-sm text-muted-foreground">
+              Create a project first
+            </span>
+          )}
+          <Button
+            onClick={() => setCreateOpen(true)}
+            disabled={projects.length === 0}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            New Session
+          </Button>
+        </div>
       </div>
 
       {/* Create Session Dialog */}
@@ -191,7 +262,9 @@ export default function SessionsPage() {
               <Label>Project *</Label>
               <Select
                 value={form.projectId}
-                onValueChange={(v) => setForm((f) => ({ ...f, projectId: v ?? "" }))}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, projectId: v ?? "" }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a project..." />
@@ -207,10 +280,12 @@ export default function SessionsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Agent</Label>
+              <Label>Agent *</Label>
               <Select
                 value={form.agentDefinitionId}
-                onValueChange={(v) => setForm((f) => ({ ...f, agentDefinitionId: v ?? "" }))}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, agentDefinitionId: v ?? "" }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select an agent..." />
@@ -229,7 +304,9 @@ export default function SessionsPage() {
               <Label>Credential Set (optional)</Label>
               <Select
                 value={form.credentialSetId}
-                onValueChange={(v) => setForm((f) => ({ ...f, credentialSetId: v ?? "" }))}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, credentialSetId: v ?? "" }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="None" />
@@ -249,7 +326,9 @@ export default function SessionsPage() {
               <Label>Prompt *</Label>
               <Textarea
                 value={form.prompt}
-                onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, prompt: e.target.value }))
+                }
                 placeholder="Describe what you want the agent to do..."
                 className="min-h-[120px]"
                 required
@@ -283,33 +362,37 @@ export default function SessionsPage() {
               <p className="text-sm">
                 {projects.length === 0
                   ? "Create a project first, then launch a session."
-                  : "Click \"New Session\" to launch an agent."}
+                  : 'Click "New Session" to launch an agent.'}
               </p>
             </div>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {sessions
+          {[...sessions]
             .sort(
               (a, b) =>
-                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                new Date(b.createdAt).getTime() -
+                new Date(a.createdAt).getTime()
             )
             .map((session) => {
-              const project = projects.find((p) => p.id === session.projectId);
+              const project = projects.find(
+                (p) => p.id === session.projectId
+              );
               const agent = agents.find(
                 (a) => a.id === session.agentDefinitionId
               );
-              const config = statusConfig[session.status] || statusConfig.pending;
+              const config =
+                statusConfig[session.status] || statusConfig.pending;
 
               return (
                 <Link key={session.id} href={`/sessions/${session.id}`}>
                   <Card className="hover:border-foreground/20 transition-colors cursor-pointer">
                     <CardHeader className="py-3">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
                           {config.icon}
-                          <div>
+                          <div className="min-w-0">
                             <CardTitle className="text-base">
                               {project?.name || "Unknown project"}
                             </CardTitle>
@@ -318,7 +401,7 @@ export default function SessionsPage() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0">
                           {agent && (
                             <Badge variant="outline" className="text-xs">
                               {agent.name}
@@ -328,8 +411,20 @@ export default function SessionsPage() {
                             {session.status}
                           </Badge>
                           <span className="text-xs text-muted-foreground">
-                            {new Date(session.createdAt).toLocaleString()}
+                            {relativeTime(session.createdAt)}
                           </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleDelete(session.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                           <ExternalLink className="h-3 w-3 text-muted-foreground" />
                         </div>
                       </div>

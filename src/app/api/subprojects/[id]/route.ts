@@ -8,15 +8,15 @@ export async function GET(
 ) {
   const { id } = await params;
   const db = getDb();
-  const review = db
+  const sub = db
     .select()
-    .from(schema.reviews)
-    .where(eq(schema.reviews.id, id))
+    .from(schema.subprojects)
+    .where(eq(schema.subprojects.id, id))
     .get();
-  if (!review) {
-    return NextResponse.json({ error: "Review not found" }, { status: 404 });
+  if (!sub) {
+    return NextResponse.json({ error: "Subproject not found" }, { status: 404 });
   }
-  return NextResponse.json(review);
+  return NextResponse.json(sub);
 }
 
 export async function PATCH(
@@ -26,14 +26,14 @@ export async function PATCH(
   const { id } = await params;
   const db = getDb();
   const body = await request.json();
-  db.update(schema.reviews)
+  db.update(schema.subprojects)
     .set(body)
-    .where(eq(schema.reviews.id, id))
+    .where(eq(schema.subprojects.id, id))
     .run();
   const updated = db
     .select()
-    .from(schema.reviews)
-    .where(eq(schema.reviews.id, id))
+    .from(schema.subprojects)
+    .where(eq(schema.subprojects.id, id))
     .get();
   return NextResponse.json(updated);
 }
@@ -44,9 +44,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const db = getDb();
-  db.delete(schema.reviewComments)
-    .where(eq(schema.reviewComments.reviewId, id))
-    .run();
-  db.delete(schema.reviews).where(eq(schema.reviews.id, id)).run();
+  db.delete(schema.subprojects).where(eq(schema.subprojects.id, id)).run();
   return NextResponse.json({ ok: true });
 }

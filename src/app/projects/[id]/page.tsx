@@ -22,7 +22,10 @@ import {
   FolderOpen,
   Play,
   GitBranch,
+  Trash2,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { Project, Subproject } from "@/types/domain";
 
 export default function ProjectDetailPage({
@@ -33,6 +36,8 @@ export default function ProjectDetailPage({
   const { id } = use(params);
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [subprojects, setSubprojects] = useState<Subproject[]>([]);
   const [subOpen, setSubOpen] = useState(false);
   const [subForm, setSubForm] = useState({
@@ -42,17 +47,46 @@ export default function ProjectDetailPage({
   });
 
   useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then((projects: Project[]) => {
-        const p = projects.find((p) => p.id === id);
-        if (p) setProject(p);
-      });
-
-    fetch(`/api/subprojects?projectId=${id}`)
-      .then((r) => r.json())
-      .then(setSubprojects);
+    Promise.all([
+      fetch(`/api/projects/${id}`).then(async (r) => {
+        if (!r.ok) {
+          setNotFound(true);
+          return;
+        }
+        setProject(await r.json());
+      }),
+      fetch(`/api/subprojects?projectId=${id}`)
+        .then((r) => r.json())
+        .then(setSubprojects),
+    ]).finally(() => setLoading(false));
   }, [id]);
+
+  async function handleDeleteProject() {
+    if (!window.confirm(`Delete project "${project?.name}"? This will also delete all its subprojects.`))
+      return;
+
+    const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success("Project deleted");
+      router.push("/projects");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete project");
+    }
+  }
+
+  async function handleDeleteSubproject(sub: Subproject) {
+    if (!window.confirm(`Delete subproject "${sub.name}"?`)) return;
+
+    const res = await fetch(`/api/subprojects/${sub.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setSubprojects((prev) => prev.filter((s) => s.id !== sub.id));
+      toast.success("Subproject deleted");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete subproject");
+    }
+  }
 
   async function handleCreateSubproject(e: React.FormEvent) {
     e.preventDefault();
@@ -66,11 +100,36 @@ export default function ProjectDetailPage({
       setSubprojects((prev) => [...prev, sub]);
       setSubForm({ name: "", description: "", pathFilter: "" });
       setSubOpen(false);
+      toast.success("Subproject created");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to create subproject");
     }
   }
 
-  if (!project) {
-    return <div className="text-muted-foreground">Loading...</div>;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-muted-foreground">
+        <Loader2 className="h-6 w-6 animate-spin mr-2" />
+        Loading…
+      </div>
+    );
+  }
+
+  if (notFound || !project) {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" size="sm" onClick={() => router.push("/projects")}>
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back to Projects
+        </Button>
+        <Card>
+          <CardContent className="flex items-center justify-center h-48">
+            <p className="text-muted-foreground">Project not found.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -89,10 +148,20 @@ export default function ProjectDetailPage({
             <p className="text-muted-foreground">{project.description}</p>
           )}
         </div>
-        <Button onClick={() => router.push(`/sessions?projectId=${id}`)}>
-          <Play className="mr-2 h-4 w-4" />
-          Launch Session
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDeleteProject}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete Project
+          </Button>
+          <Button onClick={() => router.push(`/sessions?projectId=${id}`)}>
+            <Play className="mr-2 h-4 w-4" />
+            Launch Session
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-4">
@@ -114,13 +183,13 @@ export default function ProjectDetailPage({
         <h2 className="text-xl font-semibold">Subprojects</h2>
         <Dialog open={subOpen} onOpenChange={setSubOpen}>
           <DialogTrigger
-              render={
-                <Button variant="outline" size="sm">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Subproject
-                </Button>
-              }
-            />
+            render={
+              <Button variant="outline" size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Subproject
+              </Button>
+            }
+          />
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create Subproject</DialogTitle>
@@ -182,11 +251,21 @@ export default function ProjectDetailPage({
               <CardHeader className="py-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base">{sub.name}</CardTitle>
-                  {sub.pathFilter && (
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {sub.pathFilter}
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {sub.pathFilter && (
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {sub.pathFilter}
+                      </Badge>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteSubproject(sub)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 {sub.description && (
                   <p className="text-sm text-muted-foreground">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, use } from "react";
+import { useEffect, useState, useRef, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   XCircle,
   Terminal,
   GitPullRequestArrow,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -85,29 +86,34 @@ export default function SessionDetailPage({
   const outputRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Load session data
-  useEffect(() => {
-    fetch(`/api/sessions/${id}`)
+  const fetchSession = useCallback(() => {
+    return fetch(`/api/sessions/${id}`)
       .then((r) => r.json())
       .then((s: Session) => {
         setSession(s);
-        // Load related data
-        fetch("/api/projects")
-          .then((r) => r.json())
-          .then((projects: Project[]) => {
-            setProject(projects.find((p) => p.id === s.projectId) || null);
-          });
-        fetch("/api/agents")
-          .then((r) => r.json())
-          .then((agents: Agent[]) => {
-            setAgent(agents.find((a) => a.id === s.agentDefinitionId) || null);
-          });
-        // If there's saved output, show it
-        if (s.output) {
-          setStreamOutput(s.output.split("\n"));
-        }
+        return s;
       });
   }, [id]);
+
+  // Load session and related data
+  useEffect(() => {
+    fetchSession().then((s) => {
+      fetch(`/api/projects/${s.projectId}`)
+        .then((r) => r.json())
+        .then((p: Project) => setProject(p))
+        .catch(() => {});
+
+      fetch("/api/agents")
+        .then((r) => r.json())
+        .then((agents: Agent[]) => {
+          setAgent(agents.find((a) => a.id === s.agentDefinitionId) || null);
+        });
+
+      if (s.output) {
+        setStreamOutput(s.output.split("\n"));
+      }
+    });
+  }, [id, fetchSession]);
 
   // Connect to SSE stream when session is running
   useEffect(() => {
@@ -125,17 +131,14 @@ export default function SessionDetailPage({
         } else if (data.type === "close") {
           setIsStreaming(false);
           es.close();
-          // Refresh session to get final status
-          fetch(`/api/sessions/${id}`)
-            .then((r) => r.json())
-            .then(setSession);
+          fetchSession();
         } else if (data.type === "error") {
           toast.error(data.message);
           setIsStreaming(false);
           es.close();
+          fetchSession();
         }
       } catch {
-        // Raw text fallback
         setStreamOutput((prev) => [...prev, event.data]);
       }
     };
@@ -143,13 +146,26 @@ export default function SessionDetailPage({
     es.onerror = () => {
       setIsStreaming(false);
       es.close();
+      fetchSession();
     };
 
     return () => {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [session?.status, id]);
+  }, [session?.status, id, fetchSession]);
+
+  // Poll session status every 3s when not streaming
+  useEffect(() => {
+    if (!session || isStreaming) return;
+    if (session.status === "completed" || session.status === "failed") return;
+
+    const interval = setInterval(() => {
+      fetchSession();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [session?.status, isStreaming, fetchSession]);
 
   // Auto-scroll output
   useEffect(() => {
@@ -199,6 +215,20 @@ export default function SessionDetailPage({
       const review = await res.json();
       toast.success("Review created");
       router.push(`/reviews/${review.id}`);
+    } else {
+      toast.error("Failed to create review");
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm("Are you sure you want to delete this session?")) return;
+
+    const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success("Session deleted");
+      router.push("/sessions");
+    } else {
+      toast.error("Failed to delete session");
     }
   }
 
@@ -255,11 +285,14 @@ export default function SessionDetailPage({
               Create Review
             </Button>
           )}
+          <Button variant="ghost" size="sm" onClick={handleDelete}>
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
         </div>
       </div>
 
       {/* Metadata */}
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-center">
         <Badge className={config.color}>
           <span className="mr-1">{config.icon}</span>
           {config.label}
@@ -269,9 +302,11 @@ export default function SessionDetailPage({
             {agent.name}
           </Badge>
         )}
-        <Badge variant="secondary" className="font-mono text-xs">
-          {project?.localPath}
-        </Badge>
+        {project?.localPath && (
+          <Badge variant="secondary" className="font-mono text-xs">
+            {project.localPath}
+          </Badge>
+        )}
         <span className="text-xs text-muted-foreground flex items-center">
           Created {new Date(session.createdAt).toLocaleString()}
         </span>
@@ -311,24 +346,27 @@ export default function SessionDetailPage({
           </div>
         </CardHeader>
         <CardContent>
-          <div
-            ref={outputRef}
-            className="bg-gray-950 text-green-400 font-mono text-xs rounded-lg p-4 min-h-[300px] max-h-[500px] overflow-auto whitespace-pre-wrap"
-          >
-            {streamOutput.length === 0 ? (
-              <span className="text-gray-600">
-                {session.status === "pending"
-                  ? "Session not started yet. Click Start to begin."
-                  : session.status === "running"
-                  ? "Connecting to output stream..."
-                  : "No output recorded."}
-              </span>
-            ) : (
-              streamOutput.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))
-            )}
-          </div>
+          <ScrollArea className="h-[500px] rounded-lg">
+            <div
+              ref={outputRef}
+              style={{ backgroundColor: "#030712" }}
+              className="text-green-400 font-mono text-xs p-4 min-h-[300px] whitespace-pre-wrap"
+            >
+              {streamOutput.length === 0 ? (
+                <span className="text-gray-600">
+                  {session.status === "pending"
+                    ? "Session not started yet. Click Start to begin."
+                    : session.status === "running"
+                      ? "Connecting to output stream..."
+                      : "No output recorded."}
+                </span>
+              ) : (
+                streamOutput.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
         </CardContent>
       </Card>
     </div>

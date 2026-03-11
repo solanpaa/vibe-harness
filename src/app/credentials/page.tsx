@@ -21,7 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, KeyRound, Trash2 } from "lucide-react";
+import { Plus, KeyRound, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
 
 interface CredentialSet {
   id: string;
@@ -40,9 +41,17 @@ interface CredentialEntry {
   createdAt: string;
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  env_var: "Environment Variable",
+  file_mount: "File Mount",
+  docker_login: "Docker Login",
+};
+
 export default function CredentialsPage() {
   const [sets, setSets] = useState<CredentialSet[]>([]);
   const [entries, setEntries] = useState<Record<string, CredentialEntry[]>>({});
+  const [expandedSets, setExpandedSets] = useState<Set<string>>(new Set());
+  const [loadedSets, setLoadedSets] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
   const [addEntryOpen, setAddEntryOpen] = useState<string | null>(null);
   const [setForm, setSetForm] = useState({ name: "", description: "" });
@@ -55,7 +64,8 @@ export default function CredentialsPage() {
   useEffect(() => {
     fetch("/api/credentials")
       .then((r) => r.json())
-      .then(setSets);
+      .then(setSets)
+      .catch(() => toast.error("Failed to load credential sets"));
   }, []);
 
   async function loadEntries(setId: string) {
@@ -63,7 +73,25 @@ export default function CredentialsPage() {
     if (res.ok) {
       const data = await res.json();
       setEntries((prev) => ({ ...prev, [setId]: data }));
+      setLoadedSets((prev) => new Set(prev).add(setId));
+    } else {
+      toast.error("Failed to load entries");
     }
+  }
+
+  function toggleExpand(setId: string) {
+    setExpandedSets((prev) => {
+      const next = new Set(prev);
+      if (next.has(setId)) {
+        next.delete(setId);
+      } else {
+        next.add(setId);
+        if (!loadedSets.has(setId)) {
+          loadEntries(setId);
+        }
+      }
+      return next;
+    });
   }
 
   async function handleCreateSet(e: React.FormEvent) {
@@ -78,6 +106,29 @@ export default function CredentialsPage() {
       setSets((prev) => [...prev, newSet]);
       setSetForm({ name: "", description: "" });
       setCreateOpen(false);
+      toast.success("Credential set created");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to create credential set");
+    }
+  }
+
+  async function handleDeleteSet(credSet: CredentialSet) {
+    if (!window.confirm(`Delete credential set "${credSet.name}"?`)) return;
+    const res = await fetch(`/api/credentials/${credSet.id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      setSets((prev) => prev.filter((s) => s.id !== credSet.id));
+      setEntries((prev) => {
+        const next = { ...prev };
+        delete next[credSet.id];
+        return next;
+      });
+      toast.success(`Deleted "${credSet.name}"`);
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete credential set");
     }
   }
 
@@ -92,6 +143,27 @@ export default function CredentialsPage() {
       await loadEntries(setId);
       setEntryForm({ key: "", value: "", type: "env_var" });
       setAddEntryOpen(null);
+      toast.success("Entry added");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to add entry");
+    }
+  }
+
+  async function handleDeleteEntry(setId: string, entry: CredentialEntry) {
+    const res = await fetch(
+      `/api/credentials/${setId}/entries/${entry.id}`,
+      { method: "DELETE" },
+    );
+    if (res.ok) {
+      setEntries((prev) => ({
+        ...prev,
+        [setId]: (prev[setId] ?? []).filter((e) => e.id !== entry.id),
+      }));
+      toast.success(`Deleted entry "${entry.key}"`);
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete entry");
     }
   }
 
@@ -106,13 +178,13 @@ export default function CredentialsPage() {
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger
-              render={
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  New Credential Set
-                </Button>
-              }
-            />
+            render={
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                New Credential Set
+              </Button>
+            }
+          />
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create Credential Set</DialogTitle>
@@ -163,148 +235,182 @@ export default function CredentialsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {sets.map((credSet) => (
-            <Card key={credSet.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{credSet.name}</CardTitle>
-                  <Dialog
-                    open={addEntryOpen === credSet.id}
-                    onOpenChange={(open) =>
-                      setAddEntryOpen(open ? credSet.id : null)
-                    }
-                  >
-                    <DialogTrigger
-                      render={
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => loadEntries(credSet.id)}
-                        >
-                          <Plus className="mr-2 h-3 w-3" />
-                          Add Entry
-                        </Button>
-                      }
-                    />
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>
-                          Add Credential to {credSet.name}
-                        </DialogTitle>
-                      </DialogHeader>
-                      <form
-                        onSubmit={(e) => handleAddEntry(e, credSet.id)}
-                        className="space-y-4"
-                      >
-                        <div className="space-y-2">
-                          <Label>Type</Label>
-                          <Select
-                            value={entryForm.type}
-                            onValueChange={(v) =>
-                              setEntryForm((f) => ({ ...f, type: v ?? "env_var" }))
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="env_var">
-                                Environment Variable
-                              </SelectItem>
-                              <SelectItem value="file_mount">
-                                File Mount
-                              </SelectItem>
-                              <SelectItem value="docker_login">
-                                Docker Login
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Key</Label>
-                          <Input
-                            value={entryForm.key}
-                            onChange={(e) =>
-                              setEntryForm((f) => ({
-                                ...f,
-                                key: e.target.value,
-                              }))
-                            }
-                            placeholder={
-                              entryForm.type === "env_var"
-                                ? "AZURE_CLIENT_ID"
-                                : entryForm.type === "file_mount"
-                                ? "/home/user/.ssh/id_rsa"
-                                : "registry.example.com"
-                            }
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Value</Label>
-                          <Input
-                            type="password"
-                            value={entryForm.value}
-                            onChange={(e) =>
-                              setEntryForm((f) => ({
-                                ...f,
-                                value: e.target.value,
-                              }))
-                            }
-                            placeholder="Secret value (will be encrypted)"
-                            required
-                          />
-                        </div>
-                        <Button type="submit" className="w-full">
-                          Add Entry
-                        </Button>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-                {credSet.description && (
-                  <p className="text-sm text-muted-foreground">
-                    {credSet.description}
-                  </p>
-                )}
-              </CardHeader>
-              <CardContent>
-                {entries[credSet.id]?.length ? (
-                  <div className="space-y-2">
-                    {entries[credSet.id].map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="flex items-center justify-between rounded-md border px-3 py-2"
-                      >
-                        <div className="flex items-center gap-3">
-                          <Badge variant="outline" className="text-xs">
-                            {entry.type}
-                          </Badge>
-                          <span className="font-mono text-sm">{entry.key}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          •••••••
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No entries.{" "}
+          {sets.map((credSet) => {
+            const isExpanded = expandedSets.has(credSet.id);
+            const setEntryList = entries[credSet.id] ?? [];
+
+            return (
+              <Card key={credSet.id}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
                     <button
-                      className="underline"
-                      onClick={() => {
-                        loadEntries(credSet.id);
-                        setAddEntryOpen(credSet.id);
-                      }}
+                      type="button"
+                      className="flex items-center gap-2 text-left"
+                      onClick={() => toggleExpand(credSet.id)}
                     >
-                      Add one
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 shrink-0" />
+                      )}
+                      <CardTitle className="text-lg">{credSet.name}</CardTitle>
                     </button>
-                  </p>
+                    <div className="flex items-center gap-2">
+                      {isExpanded && (
+                        <Dialog
+                          open={addEntryOpen === credSet.id}
+                          onOpenChange={(open) =>
+                            setAddEntryOpen(open ? credSet.id : null)
+                          }
+                        >
+                          <DialogTrigger
+                            render={
+                              <Button variant="outline" size="sm">
+                                <Plus className="mr-2 h-3 w-3" />
+                                Add Entry
+                              </Button>
+                            }
+                          />
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>
+                                Add Credential to {credSet.name}
+                              </DialogTitle>
+                            </DialogHeader>
+                            <form
+                              onSubmit={(e) => handleAddEntry(e, credSet.id)}
+                              className="space-y-4"
+                            >
+                              <div className="space-y-2">
+                                <Label>Type</Label>
+                                <Select
+                                  value={entryForm.type}
+                                  onValueChange={(v) =>
+                                    setEntryForm((f) => ({
+                                      ...f,
+                                      type: v ?? "env_var",
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="env_var">
+                                      Environment Variable
+                                    </SelectItem>
+                                    <SelectItem value="file_mount">
+                                      File Mount
+                                    </SelectItem>
+                                    <SelectItem value="docker_login">
+                                      Docker Login
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Key</Label>
+                                <Input
+                                  value={entryForm.key}
+                                  onChange={(e) =>
+                                    setEntryForm((f) => ({
+                                      ...f,
+                                      key: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={
+                                    entryForm.type === "env_var"
+                                      ? "AZURE_CLIENT_ID"
+                                      : entryForm.type === "file_mount"
+                                        ? "/home/user/.ssh/id_rsa"
+                                        : "registry.example.com"
+                                  }
+                                  required
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Value</Label>
+                                <Input
+                                  type="password"
+                                  value={entryForm.value}
+                                  onChange={(e) =>
+                                    setEntryForm((f) => ({
+                                      ...f,
+                                      value: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Secret value (will be encrypted)"
+                                  required
+                                />
+                              </div>
+                              <Button type="submit" className="w-full">
+                                Add Entry
+                              </Button>
+                            </form>
+                          </DialogContent>
+                        </Dialog>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleDeleteSet(credSet)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                  {credSet.description && (
+                    <p className="text-sm text-muted-foreground">
+                      {credSet.description}
+                    </p>
+                  )}
+                </CardHeader>
+
+                {isExpanded && (
+                  <CardContent>
+                    {setEntryList.length > 0 ? (
+                      <div className="space-y-2">
+                        {setEntryList.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="flex items-center justify-between rounded-md border px-3 py-2"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Badge variant="outline" className="text-xs">
+                                {TYPE_LABELS[entry.type] ?? entry.type}
+                              </Badge>
+                              <span className="font-mono text-sm">
+                                {entry.key}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-muted-foreground">
+                                •••••••
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() =>
+                                  handleDeleteEntry(credSet.id, entry)
+                                }
+                              >
+                                <Trash2 className="h-3 w-3 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No entries yet. Click &quot;Add Entry&quot; to add
+                        credentials.
+                      </p>
+                    )}
+                  </CardContent>
                 )}
-              </CardContent>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

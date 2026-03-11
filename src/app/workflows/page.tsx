@@ -14,12 +14,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Workflow, ArrowRight } from "lucide-react";
+import {
+  Plus,
+  Workflow,
+  ArrowRight,
+  Trash2,
+  ExternalLink,
+} from "lucide-react";
+import { toast } from "sonner";
 
 interface WorkflowStage {
   name: string;
   promptTemplate: string;
-  autoAdvance: boolean;
   reviewRequired: boolean;
 }
 
@@ -39,7 +45,8 @@ export default function WorkflowsPage() {
   useEffect(() => {
     fetch("/api/workflows")
       .then((r) => r.json())
-      .then(setTemplates);
+      .then(setTemplates)
+      .catch(() => toast.error("Failed to load workflows"));
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -58,6 +65,29 @@ export default function WorkflowsPage() {
       setTemplates((prev) => [...prev, template]);
       setForm({ name: "", description: "" });
       setCreateOpen(false);
+      toast.success("Workflow created");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to create workflow");
+    }
+  }
+
+  async function handleDelete(e: React.MouseEvent, template: WorkflowTemplate) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (!window.confirm(`Delete workflow "${template.name}"?`)) return;
+
+    const res = await fetch(`/api/workflows/${template.id}`, {
+      method: "DELETE",
+    });
+
+    if (res.ok) {
+      setTemplates((prev) => prev.filter((t) => t.id !== template.id));
+      toast.success("Workflow deleted");
+    } else {
+      const body = await res.json().catch(() => null);
+      toast.error(body?.error ?? "Failed to delete workflow");
     }
   }
 
@@ -86,7 +116,9 @@ export default function WorkflowsPage() {
               <Label>Name</Label>
               <Input
                 value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, name: e.target.value }))
+                }
                 placeholder="Standard dev workflow"
                 required
               />
@@ -102,7 +134,8 @@ export default function WorkflowsPage() {
               />
             </div>
             <p className="text-sm text-muted-foreground">
-              Default stages: Plan → Implement → Review (with review gates at each step)
+              Default stages: Plan → Implement → Review (with review gates at
+              each step)
             </p>
             <Button type="submit" className="w-full">
               Create Workflow
@@ -118,7 +151,8 @@ export default function WorkflowsPage() {
               <Workflow className="mx-auto h-12 w-12 mb-4 opacity-50" />
               <p>No workflows yet.</p>
               <p className="text-sm">
-                Create a workflow template to define plan → implement → review cycles.
+                Create a workflow template to define plan → implement → review
+                cycles.
               </p>
             </div>
           </CardContent>
@@ -126,43 +160,64 @@ export default function WorkflowsPage() {
       ) : (
         <div className="space-y-4">
           {templates.map((template) => (
-            <Card key={template.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{template.name}</CardTitle>
-                  <Badge variant="outline">
-                    {template.stages.length} stages
-                  </Badge>
-                </div>
-                {template.description && (
-                  <p className="text-sm text-muted-foreground">
-                    {template.description}
-                  </p>
-                )}
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {template.stages.map((stage, i) => (
-                    <div key={stage.name} className="flex items-center gap-2">
-                      <Badge
-                        variant="secondary"
-                        className="capitalize"
-                      >
-                        {stage.name}
-                        {stage.reviewRequired && " 🔍"}
-                      </Badge>
-                      {i < template.stages.length - 1 && (
-                        <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                      )}
+            <Link key={template.id} href={`/workflows/${template.id}`}>
+              <Card className="hover:border-foreground/20 transition-colors cursor-pointer">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Workflow className="h-4 w-4 text-muted-foreground" />
+                      <CardTitle className="text-lg">
+                        {template.name}
+                      </CardTitle>
                     </div>
-                  ))}
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                  <Badge variant="outline" className="bg-green-50 dark:bg-green-950">
-                    Done ✓
-                  </Badge>
-                </div>
-              </CardContent>
-            </Card>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">
+                        {template.stages.length} stages
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => handleDelete(e, template)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </div>
+                  {template.description && (
+                    <p className="text-sm text-muted-foreground">
+                      {template.description}
+                    </p>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {template.stages.map((stage, i) => (
+                      <div
+                        key={stage.name}
+                        className="flex items-center gap-2"
+                      >
+                        <Badge variant="secondary" className="capitalize">
+                          {stage.name}
+                          {stage.reviewRequired && " 🔍"}
+                        </Badge>
+                        {i < template.stages.length - 1 && (
+                          <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </div>
+                    ))}
+                    <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                    <Badge
+                      variant="outline"
+                      className="bg-green-50 dark:bg-green-950"
+                    >
+                      Done ✓
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
           ))}
         </div>
       )}
