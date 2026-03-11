@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import Link from "next/link";
-import { Terminal } from "lucide-react";
-import { ConfigMenu } from "./ConfigMenu";
+import { AppHeader } from "@/components/layout/AppHeader";
 
 const DEFAULT_WIDTH = 320;
 const MIN_WIDTH = 240;
@@ -44,14 +42,7 @@ export function WorkspaceLayout({ feedSlot, detailSlot }: WorkspaceLayoutProps) 
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center justify-between border-b bg-card px-4 shadow-sm">
-        <Link href="/" className="flex items-center gap-2 font-bold text-sm">
-          <Terminal className="h-5 w-5" />
-          Vibe Harness
-        </Link>
-        <ConfigMenu />
-      </header>
+      <AppHeader />
 
       {/* Panels */}
       <div className="flex flex-1 overflow-hidden">
