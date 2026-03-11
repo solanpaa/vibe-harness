@@ -251,15 +251,28 @@ export function bundleCommentsAsPrompt(reviewId: string): string {
 
   if (comments.length === 0) return "";
 
-  // Group comments by file
+  // Group comments by file, separating general comments
+  const generalComments: typeof comments = [];
   const byFile = new Map<string, typeof comments>();
   for (const c of comments) {
-    const existing = byFile.get(c.filePath) || [];
-    existing.push(c);
-    byFile.set(c.filePath, existing);
+    if (c.filePath === "__general__") {
+      generalComments.push(c);
+    } else {
+      const existing = byFile.get(c.filePath) || [];
+      existing.push(c);
+      byFile.set(c.filePath, existing);
+    }
   }
 
   let prompt = `The following review comments were left on your changes. Please address each one:\n\n`;
+
+  if (generalComments.length > 0) {
+    prompt += `## General Comments\n`;
+    for (const c of generalComments) {
+      prompt += `- ${JSON.stringify(c.body)}\n`;
+    }
+    prompt += `\n`;
+  }
 
   for (const [filePath, fileComments] of byFile) {
     prompt += `## ${filePath}\n`;
