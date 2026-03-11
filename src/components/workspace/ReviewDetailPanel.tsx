@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Check,
@@ -16,7 +14,6 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ReviewSummary } from "@/components/diff-viewer/ReviewSummary";
 import { DiffView, type InlineComment } from "@/components/diff-viewer/DiffView";
 import { FileTree } from "@/components/diff-viewer/FileTree";
 import { parseUnifiedDiff } from "@/lib/services/diff-service";
@@ -343,57 +340,59 @@ export function ReviewDetailPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="shrink-0 space-y-3 border-b p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <GitPullRequestArrow className="h-5 w-5 shrink-0" />
-              <h2 className="text-lg font-semibold leading-tight">
-                Review — Round {activeReview.round}
-              </h2>
-              <Badge className={statusColors[activeReview.status] ?? ""}>
-                {statusLabel[activeReview.status] ?? activeReview.status.replace(/_/g, " ")}
-              </Badge>
-            </div>
-            <button
-              className="mt-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => onNavigateToTask?.(taskId)}
-            >
-              <ArrowLeft className="h-3 w-3" />
-              Back to task
-            </button>
-          </div>
-
-          {/* Round selector */}
-          {reviews.length > 1 && (
-            <div className="flex items-center gap-2 shrink-0">
-              <History className="h-4 w-4 text-muted-foreground" />
-              <div className="flex gap-1">
-                {reviews.map((r) => (
-                  <button
-                    key={r.round}
-                    onClick={() => setSelectedRound(String(r.round))}
-                    className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors ${
-                      String(r.round) === selectedRound
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                    }`}
-                  >
-                    {r.round}
-                  </button>
-                ))}
+      {/* ── Header — elevated surface ─────────────────────────── */}
+      <div className="shrink-0 bg-card border-b shadow-sm">
+        <div className="p-4 pb-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <GitPullRequestArrow className="h-5 w-5 shrink-0 text-primary" />
+                <h2 className="text-lg font-semibold leading-tight">
+                  Review — Round {activeReview.round}
+                </h2>
+                <Badge className={statusColors[activeReview.status] ?? ""}>
+                  {statusLabel[activeReview.status] ?? activeReview.status.replace(/_/g, " ")}
+                </Badge>
               </div>
+              <button
+                className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => onNavigateToTask?.(taskId)}
+              >
+                <ArrowLeft className="h-3 w-3" />
+                Back to task
+              </button>
             </div>
-          )}
+
+            {/* Round selector */}
+            {reviews.length > 1 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <History className="h-4 w-4 text-muted-foreground" />
+                <div className="flex gap-1">
+                  {reviews.map((r) => (
+                    <button
+                      key={r.round}
+                      onClick={() => setSelectedRound(String(r.round))}
+                      className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors ${
+                        String(r.round) === selectedRound
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                      }`}
+                    >
+                      {r.round}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Action buttons */}
+        {/* Action bar — sticky at top */}
         {isPending && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 px-4 pb-3">
             <Button
               onClick={() => handleSubmit("approve")}
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-green-600 hover:bg-green-700 shadow-sm"
               disabled={submitting}
             >
               <Check className="mr-2 h-4 w-4" />
@@ -418,99 +417,102 @@ export function ReviewDetailPanel({
 
       {/* ── Body ───────────────────────────────────────────────── */}
       <ScrollArea className="flex-1">
-        <div className="space-y-4 p-4">
-          {/* General Comments */}
-          <GeneralComments
-            comments={generalComments}
-            onAddComment={handleAddGeneralComment}
-            onDeleteComment={isPending ? handleDeleteComment : undefined}
-            readOnly={!isPending}
-          />
+        <div className="space-y-4 p-5">
+          {/* General Comments — elevated card */}
+          <div className="rounded-lg border bg-card p-4 shadow-sm">
+            <GeneralComments
+              comments={generalComments}
+              onAddComment={handleAddGeneralComment}
+              onDeleteComment={isPending ? handleDeleteComment : undefined}
+              readOnly={!isPending}
+            />
+          </div>
 
-          <Separator />
-
-          {/* AI Summary (collapsible) */}
+          {/* AI Summary (collapsible) — elevated card */}
           {activeReview.aiSummary && (
-            <div>
+            <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
               <button
-                className="flex items-center gap-2 text-sm font-medium mb-2 hover:text-foreground text-muted-foreground transition-colors"
+                className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
                 onClick={() => setSummaryExpanded((v) => !v)}
               >
                 {summaryExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
                 ) : (
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 )}
                 AI Summary
+                <Badge variant="outline" className="ml-auto text-[10px]">Round {activeReview.round}</Badge>
               </button>
               {summaryExpanded && (
-                <ReviewSummary
-                  summary={activeReview.aiSummary}
-                  round={activeReview.round}
-                  status={activeReview.status}
-                />
+                <div className="border-t px-4 py-4">
+                  <Markdown>{activeReview.aiSummary}</Markdown>
+                </div>
               )}
             </div>
           )}
 
-          {/* Agent Plan (collapsible) */}
+          {/* Agent Plan (collapsible) — elevated card */}
           {hasPlan && (
-            <div>
+            <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
               <button
-                className="flex items-center gap-2 text-sm font-medium mb-2 hover:text-foreground text-muted-foreground transition-colors"
+                className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
                 onClick={() => setPlanExpanded((v) => !v)}
               >
                 {planExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
                 ) : (
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 )}
                 Agent Plan
               </button>
               {planExpanded && (
-                <Card>
-                  <CardContent className="pt-4">
-                    <Markdown>{activeReview.planMarkdown!}</Markdown>
-                  </CardContent>
-                </Card>
+                <div className="border-t px-4 py-4">
+                  <Markdown>{activeReview.planMarkdown!}</Markdown>
+                </div>
               )}
             </div>
           )}
 
           {/* Plan-only empty state */}
           {!hasDiff && hasPlan && (
-            <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-center text-sm text-muted-foreground">
               No code changes — this is a plan-only review
             </div>
           )}
 
-          {/* Code Changes */}
+          {/* Code Changes — elevated card */}
           {hasDiff && (
-            <>
-              <Separator />
-              <div className="grid grid-cols-[200px_1fr] gap-4">
-                <FileTree
-                  files={diffFiles}
-                  selectedFile={selectedFile}
-                  onSelectFile={setSelectedFile}
-                />
-                <DiffView
-                  files={
-                    selectedFile
-                      ? diffFiles.filter((f) => f.path === selectedFile)
-                      : diffFiles
-                  }
-                  comments={inlineComments}
-                  onAddComment={isPending ? handleAddComment : undefined}
-                  readOnly={!isPending}
-                />
+            <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b">
+                <h3 className="text-sm font-medium">Code Changes</h3>
               </div>
-            </>
+              <div className="grid grid-cols-[200px_1fr] gap-0">
+                <div className="border-r p-3 bg-muted/20">
+                  <FileTree
+                    files={diffFiles}
+                    selectedFile={selectedFile}
+                    onSelectFile={setSelectedFile}
+                  />
+                </div>
+                <div className="p-3">
+                  <DiffView
+                    files={
+                      selectedFile
+                        ? diffFiles.filter((f) => f.path === selectedFile)
+                        : diffFiles
+                    }
+                    comments={inlineComments}
+                    onAddComment={isPending ? handleAddComment : undefined}
+                    readOnly={!isPending}
+                  />
+                </div>
+              </div>
+            </div>
           )}
 
           {/* No diff and no plan */}
           {!hasDiff && !hasPlan && (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-center text-sm text-muted-foreground">
               No changes to review
             </div>
           )}

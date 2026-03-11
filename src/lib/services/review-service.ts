@@ -190,38 +190,27 @@ function generateStructuredSummary(
   files: ReturnType<typeof parseUnifiedDiff>,
   changeSummary: string
 ): string {
-  const filesByStatus = {
-    added: files.filter((f) => f.status === "added"),
-    modified: files.filter((f) => f.status === "modified"),
-    deleted: files.filter((f) => f.status === "deleted"),
-    renamed: files.filter((f) => f.status === "renamed"),
-  };
+  const totalAdded = files.reduce((s, f) => s + f.additions, 0);
+  const totalDeleted = files.reduce((s, f) => s + f.deletions, 0);
 
   let md = `## Task Summary\n\n`;
-  md += `**Prompt:** ${task.prompt}\n\n`;
+  
+  // Clean the prompt — strip markdown heading markers for inline display
+  const cleanPrompt = task.prompt
+    .replace(/^##\s+Task\s*/m, "")
+    .replace(/^##\s+Current Stage:\s*/m, "**Current Stage:** ")
+    .trim();
+  md += `${cleanPrompt}\n\n`;
+  
   md += `### Changes Overview\n\n`;
-  md += `${changeSummary}\n\n`;
+  md += `**${files.length}** file(s) changed, **${totalAdded}** insertions(+), **${totalDeleted}** deletions(-)\n\n`;
 
-  if (filesByStatus.added.length > 0) {
-    md += `### New Files\n`;
-    for (const f of filesByStatus.added) {
-      md += `- \`${f.path}\` (+${f.additions} lines)\n`;
-    }
-    md += `\n`;
-  }
-
-  if (filesByStatus.modified.length > 0) {
-    md += `### Modified Files\n`;
-    for (const f of filesByStatus.modified) {
-      md += `- \`${f.path}\` (+${f.additions} -${f.deletions})\n`;
-    }
-    md += `\n`;
-  }
-
-  if (filesByStatus.deleted.length > 0) {
-    md += `### Deleted Files\n`;
-    for (const f of filesByStatus.deleted) {
-      md += `- \`${f.path}\`\n`;
+  if (files.length > 0) {
+    md += `| File | Status | Changes |\n`;
+    md += `|------|--------|---------|\n`;
+    for (const f of files) {
+      const status = f.status === "added" ? "🟢 Added" : f.status === "deleted" ? "🔴 Deleted" : f.status === "renamed" ? "🔵 Renamed" : "🟡 Modified";
+      md += `| \`${f.path}\` | ${status} | +${f.additions} -${f.deletions} |\n`;
     }
     md += `\n`;
   }

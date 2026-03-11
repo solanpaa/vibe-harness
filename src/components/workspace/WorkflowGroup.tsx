@@ -114,18 +114,12 @@ export function WorkflowGroup({
         </Badge>
       </button>
 
-      {/* Stage tasks with injected review items */}
+      {/* Stage tasks with injected review items (review above its task) */}
       {expanded && (
         <div className="ml-3 border-l-2 border-border pl-1 space-y-0.5">
           {sortedTasks.map((task) => (
             <div key={task.id}>
-              <TaskFeedItem
-                task={task}
-                isSelected={isTaskSelected(task.id)}
-                isNested
-                onClick={() => onSelectTask(task.id)}
-              />
-              {/* Injected review stage */}
+              {/* Review appears above its parent task */}
               {task.latestReview && (
                 <ReviewFeedItem
                   reviewId={task.latestReview.id}
@@ -138,6 +132,12 @@ export function WorkflowGroup({
                   }
                 />
               )}
+              <TaskFeedItem
+                task={task}
+                isSelected={isTaskSelected(task.id)}
+                isNested
+                onClick={() => onSelectTask(task.id)}
+              />
             </div>
           ))}
         </div>

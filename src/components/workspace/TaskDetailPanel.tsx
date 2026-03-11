@@ -13,10 +13,13 @@ import {
   XCircle,
   GitPullRequestArrow,
   Workflow,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./TerminalOutput";
+import { Markdown } from "@/components/ui/markdown";
 
 // ─── Status configuration ────────────────────────────────────────────────────
 
@@ -88,6 +91,7 @@ export function TaskDetailPanel({
   onTaskChanged,
 }: TaskDetailPanelProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
   const fetchDetail = useCallback(() => {
     fetch(`/api/tasks/${task.id}`)
@@ -168,46 +172,50 @@ export function TaskDetailPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="shrink-0 space-y-3 border-b p-4">
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold leading-tight">
-              {task.projectName}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
-              {task.prompt}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {currentStatus === "pending" && (
-              <Button size="sm" onClick={handleStart}>
-                <Play className="mr-1 h-3 w-3" />
-                Start
+      {/* ── Header — elevated surface ─────────────────────────── */}
+      <div className="shrink-0 bg-card border-b shadow-sm">
+        <div className="p-4 pb-3">
+          {/* Title row */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-lg font-semibold leading-tight">
+                {task.projectName}
+              </h2>
+              {task.stageName && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Stage: {task.stageName}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {currentStatus === "pending" && (
+                <Button size="sm" onClick={handleStart}>
+                  <Play className="mr-1 h-3 w-3" />
+                  Start
+                </Button>
+              )}
+              {currentStatus === "running" && (
+                <Button size="sm" variant="destructive" onClick={handleStop}>
+                  <Square className="mr-1 h-3 w-3" />
+                  Stop
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                onClick={handleDelete}
+                disabled={currentStatus === "running"}
+                title={currentStatus === "running" ? "Stop the task before deleting" : "Delete task"}
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
-            )}
-            {currentStatus === "running" && (
-              <Button size="sm" variant="destructive" onClick={handleStop}>
-                <Square className="mr-1 h-3 w-3" />
-                Stop
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-              onClick={handleDelete}
-              disabled={currentStatus === "running"}
-              title={currentStatus === "running" ? "Stop the task before deleting" : "Delete task"}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            </div>
           </div>
         </div>
 
         {/* Metadata badges */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
           <Badge className={config.color}>
             <span className="mr-1">{config.icon}</span>
             {config.label}
@@ -241,6 +249,33 @@ export function TaskDetailPanel({
             {new Date(task.createdAt).toLocaleString()}
           </span>
         </div>
+      </div>
+
+      {/* ── Prompt (collapsible) ────────────────────────────────── */}
+      <div className="shrink-0 border-b bg-card">
+        <button
+          className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          onClick={() => setPromptExpanded((v) => !v)}
+        >
+          {promptExpanded ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+          Prompt
+          {!promptExpanded && (
+            <span className="truncate text-muted-foreground/70 font-normal">
+              — {task.prompt.slice(0, 80)}{task.prompt.length > 80 ? "…" : ""}
+            </span>
+          )}
+        </button>
+        {promptExpanded && (
+          <div className="px-4 pb-3 border-t bg-muted/20">
+            <div className="pt-3">
+              <Markdown>{task.prompt}</Markdown>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Terminal output ─────────────────────────────────────── */}
