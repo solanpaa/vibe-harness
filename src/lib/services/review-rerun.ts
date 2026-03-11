@@ -1,15 +1,19 @@
+import { spawn } from "child_process";
+import { EventEmitter } from "events";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { bundleCommentsAsPrompt } from "./review-service";
-import { startSession } from "./session-manager";
+import path from "path";
+import fs from "fs";
+
+const WORKTREE_DIR = ".vibe-harness-worktrees";
 
 /**
  * Handle "request changes" on a review:
  * 1. Bundle inline comments into a structured prompt
- * 2. Create a new session (round N+1) with the original prompt + review feedback
- * 3. Start the session in a Docker sandbox
- * 4. Return the new session ID
+ * 2. Run copilot --continue in the SAME sandbox with the feedback as prompt
+ * 3. Create a new session record linked to the same worktree
  */
 export async function rerunWithComments(reviewId: string): Promise<{
   sessionId: string;
@@ -17,59 +21,51 @@ export async function rerunWithComments(reviewId: string): Promise<{
 } | null> {
   const db = getDb();
 
-  // Get the review
   const review = db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, reviewId))
     .get();
-
   if (!review) return null;
 
-  // Get the original session
   const originalSession = db
     .select()
     .from(schema.sessions)
     .where(eq(schema.sessions.id, review.sessionId))
     .get();
-
   if (!originalSession) return null;
 
-  // Get the project
   const project = db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, originalSession.projectId))
     .get();
-
   if (!project) return null;
 
-  // Get the agent definition
   const agent = db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, originalSession.agentDefinitionId))
     .get();
-
   if (!agent) return null;
 
   // Bundle comments into a prompt
   const commentPrompt = bundleCommentsAsPrompt(reviewId);
-
-  // Build the combined prompt
   const combinedPrompt = [
-    `This is review round ${review.round + 1}. The original task was:`,
-    "",
-    originalSession.prompt,
-    "",
-    "---",
+    "Please address these review comments on your previous changes:",
     "",
     commentPrompt,
-    "",
-    "Please address all the review comments above. The codebase already contains the changes from the previous round.",
   ].join("\n");
 
-  // Create a new session
+  // Resolve the SAME worktree that the original session used
+  const originalShortId = originalSession.id.slice(0, 8);
+  const worktreePath = path.join(project.localPath, WORKTREE_DIR, originalShortId);
+  const workDir = fs.existsSync(worktreePath) ? worktreePath : project.localPath;
+
+  // Reuse the original sandbox name
+  const sandboxName = originalSession.sandboxId || `vibe-${originalShortId}`;
+
+  // Create a new session record (for tracking), linked to same worktree
   const now = new Date().toISOString();
   const newSessionId = uuid();
   db.insert(schema.sessions)
@@ -81,25 +77,62 @@ export async function rerunWithComments(reviewId: string): Promise<{
       stageName: originalSession.stageName,
       agentDefinitionId: originalSession.agentDefinitionId,
       credentialSetId: originalSession.credentialSetId,
-      sandboxId: null,
-      status: "pending",
+      sandboxId: sandboxName,
+      status: "running",
       prompt: combinedPrompt,
+      model: originalSession.model,
+      useWorktree: originalSession.useWorktree,
       output: null,
       createdAt: now,
       completedAt: null,
     })
     .run();
 
-  // Extract agent command from template
-  const agentCommand = agent.commandTemplate || "claude";
+  // Run copilot --continue in the same sandbox
+  // docker sandbox run <sandbox-name> -- --yolo --continue -p "review comments"
+  const args = ["sandbox", "run", sandboxName, "--", "--yolo", "--continue", "-p", combinedPrompt];
 
-  // Start the session
-  startSession({
-    sessionId: newSessionId,
-    projectDir: project.localPath,
-    agentCommand,
-    credentialSetId: originalSession.credentialSetId,
-    prompt: combinedPrompt,
+  if (originalSession.model) {
+    args.push("--model", originalSession.model);
+  }
+
+  const env = { ...process.env };
+  // Inject GH token
+  if (!env.GITHUB_TOKEN && !env.GH_TOKEN) {
+    try {
+      const token = require("child_process")
+        .execSync("gh auth token", { encoding: "utf-8" })
+        .trim();
+      if (token) env.GITHUB_TOKEN = token;
+    } catch {}
+  }
+
+  const proc = spawn("docker", args, {
+    env,
+    cwd: workDir,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const output: string[] = [];
+
+  proc.stdout?.on("data", (data: Buffer) => {
+    output.push(data.toString());
+  });
+
+  proc.stderr?.on("data", (data: Buffer) => {
+    output.push(data.toString());
+  });
+
+  proc.on("close", (code) => {
+    const status = code === 0 ? "completed" : "failed";
+    db.update(schema.sessions)
+      .set({
+        status,
+        output: output.join(""),
+        completedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, newSessionId))
+      .run();
   });
 
   return {
