@@ -16,7 +16,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-interface RecentSession {
+interface RecentTask {
   id: string;
   projectName: string;
   status: string;
@@ -29,15 +29,15 @@ interface PendingReview {
   round: number;
   status: string;
   createdAt: string;
-  sessionId: string;
+  taskId: string;
 }
 
 interface Stats {
   projectCount: number;
-  activeSessionCount: number;
+  activeTaskCount: number;
   pendingReviewCount: number;
   activeWorkflowCount: number;
-  recentSessions: RecentSession[];
+  recentTasks: RecentTask[];
   pendingReviews: PendingReview[];
 }
 
@@ -125,11 +125,11 @@ export default function DashboardPage() {
       href: "/projects",
     },
     {
-      title: "Active Sessions",
-      value: stats?.activeSessionCount ?? "—",
+      title: "Active Tasks",
+      value: stats?.activeTaskCount ?? "—",
       subtitle: "Running in sandbox",
       icon: Terminal,
-      href: "/sessions",
+      href: "/tasks",
     },
     {
       title: "Pending Reviews",
@@ -186,12 +186,12 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Recent Sessions */}
+        {/* Recent Tasks */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Recent Sessions</CardTitle>
+            <CardTitle>Recent Tasks</CardTitle>
             <Link
-              href="/sessions"
+              href="/tasks"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               View all
@@ -202,35 +202,35 @@ export default function DashboardPage() {
               <div className="flex items-center justify-center h-32">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
-            ) : stats.recentSessions.length === 0 ? (
+            ) : stats.recentTasks.length === 0 ? (
               <div className="flex items-center justify-center h-32 text-muted-foreground">
-                No sessions yet. Create a project and launch a session to get started.
+                No tasks yet. Create a project and launch a task to get started.
               </div>
             ) : (
               <div className="space-y-3">
-                {stats.recentSessions.map((session) => (
+                {stats.recentTasks.map((task) => (
                   <Link
-                    key={session.id}
-                    href={`/sessions/${session.id}`}
+                    key={task.id}
+                    href={`/tasks/${task.id}`}
                     className="group flex items-start justify-between gap-3 rounded-md border p-3 transition-colors hover:bg-muted/50"
                   >
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium truncate">
-                          {session.projectName}
+                          {task.projectName}
                         </span>
-                        <Badge variant={statusVariant(session.status)} className="gap-1 shrink-0">
-                          <StatusIcon status={session.status} />
-                          {session.status}
+                        <Badge variant={statusVariant(task.status)} className="gap-1 shrink-0">
+                          <StatusIcon status={task.status} />
+                          {task.status}
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
-                        {session.prompt}
+                        {task.prompt}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground">
                       <Clock className="h-3 w-3" />
-                      {relativeTime(session.createdAt)}
+                      {relativeTime(task.createdAt)}
                       <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
                   </Link>
@@ -258,7 +258,7 @@ export default function DashboardPage() {
               </div>
             ) : stats.pendingReviews.length === 0 ? (
               <div className="flex items-center justify-center h-32 text-muted-foreground">
-                No reviews pending. Reviews appear here when agent sessions complete.
+                No reviews pending. Reviews appear here when agent tasks complete.
               </div>
             ) : (
               <div className="space-y-3">

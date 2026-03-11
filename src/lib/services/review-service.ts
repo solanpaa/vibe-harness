@@ -2,18 +2,18 @@ import { execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { getDb, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { eq, or, inArray } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { parseUnifiedDiff, diffSummary } from "./diff-service";
 
 const WORKTREE_DIR = ".vibe-harness-worktrees";
 
 /**
- * Resolve the working directory for a session — worktree if it exists,
+ * Resolve the working directory for a task — worktree if it exists,
  * otherwise the project root.
  */
-function resolveSessionWorkDir(projectDir: string, sessionId: string): string {
-  const shortId = sessionId.slice(0, 8);
+function resolveTaskWorkDir(projectDir: string, taskId: string): string {
+  const shortId = taskId.slice(0, 8);
   const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
   if (fs.existsSync(worktreePath)) {
     return worktreePath;
@@ -22,30 +22,111 @@ function resolveSessionWorkDir(projectDir: string, sessionId: string): string {
 }
 
 /**
- * Create a review after an agent session completes.
+ * Capture the agent's plan.md from inside the Docker sandbox VM.
+ * The Copilot CLI writes plans to ~/.copilot/session-state/<uuid>/plan.md
+ * inside the sandbox. The sandbox VM persists after the agent exits
+ * (which is how --continue works), so we can docker exec into it.
+ */
+function capturePlanFromSandbox(sandboxName: string): string | null {
+  if (!sandboxName) return null;
+
+  try {
+    // Find plan.md files inside the sandbox
+    const findResult = execSync(
+      `docker sandbox exec ${sandboxName} find / -name "plan.md" -path "*session-state*" -type f 2>/dev/null || true`,
+      { encoding: "utf-8", timeout: 10000 }
+    ).trim();
+
+    const files = findResult.split("\n").filter(Boolean);
+    if (files.length === 0) return null;
+
+    // Use the last one found (most recently created session)
+    const planPath = files[files.length - 1];
+    return execSync(
+      `docker sandbox exec ${sandboxName} cat "${planPath}"`,
+      { encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 10000 }
+    );
+  } catch {
+    // Sandbox may not support exec, or plan.md doesn't exist
+    return null;
+  }
+}
+
+/**
+ * Get the origin task ID for a task chain.
+ * If the task has an originTaskId, return it. Otherwise, the task
+ * itself is the origin.
+ */
+export function getOriginTaskId(taskId: string): string {
+  const db = getDb();
+  const task = db
+    .select({ originTaskId: schema.tasks.originTaskId })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .get();
+  return task?.originTaskId || taskId;
+}
+
+/**
+ * Get all task IDs in a chain (the origin + all reruns).
+ */
+export function getTaskChainIds(originTaskId: string): string[] {
+  const db = getDb();
+  const tasks = db
+    .select({ id: schema.tasks.id })
+    .from(schema.tasks)
+    .where(
+      or(
+        eq(schema.tasks.id, originTaskId),
+        eq(schema.tasks.originTaskId, originTaskId)
+      )
+    )
+    .all();
+  return tasks.map((s) => s.id);
+}
+
+/**
+ * Count the total review rounds across a task chain.
+ */
+function countChainReviewRounds(taskId: string): number {
+  const originId = getOriginTaskId(taskId);
+  const chainIds = getTaskChainIds(originId);
+  if (chainIds.length === 0) return 0;
+
+  const db = getDb();
+  const reviews = db
+    .select()
+    .from(schema.reviews)
+    .where(inArray(schema.reviews.taskId, chainIds))
+    .all();
+  return reviews.length;
+}
+
+/**
+ * Create a review after an agent task completes.
  * Captures git diff from the worktree (includes uncommitted changes),
  * generates a summary, and stores as a Review record.
  */
-export async function createReviewForSession(sessionId: string): Promise<string | null> {
+export async function createReviewForTask(taskId: string): Promise<string | null> {
   const db = getDb();
 
-  const session = db
+  const task = db
     .select()
-    .from(schema.sessions)
-    .where(eq(schema.sessions.id, sessionId))
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
     .get();
 
-  if (!session) return null;
+  if (!task) return null;
 
   const project = db
     .select()
     .from(schema.projects)
-    .where(eq(schema.projects.id, session.projectId))
+    .where(eq(schema.projects.id, task.projectId))
     .get();
 
   if (!project) return null;
 
-  const workDir = resolveSessionWorkDir(project.localPath, sessionId);
+  const workDir = resolveTaskWorkDir(project.localPath, getOriginTaskId(taskId));
 
   // Capture ALL changes: staged, unstaged, and untracked new files
   let diffText = "";
@@ -76,15 +157,13 @@ export async function createReviewForSession(sessionId: string): Promise<string 
   const summary = diffSummary(files);
 
   // Build AI summary (for now, use a structured summary; later, call an agent)
-  const aiSummary = generateStructuredSummary(session, files, summary);
+  const aiSummary = generateStructuredSummary(task, files, summary);
 
-  // Count existing reviews for this session to determine round
-  const existingReviews = db
-    .select()
-    .from(schema.reviews)
-    .where(eq(schema.reviews.sessionId, sessionId))
-    .all();
-  const round = existingReviews.length + 1;
+  // Try to capture agent's plan.md from the sandbox VM
+  const planMarkdown = task.sandboxId ? capturePlanFromSandbox(task.sandboxId) : null;
+
+  // Count existing reviews across the entire task chain to determine round
+  const round = countChainReviewRounds(taskId) + 1;
 
   // Create review record
   const reviewId = uuid();
@@ -92,12 +171,13 @@ export async function createReviewForSession(sessionId: string): Promise<string 
   db.insert(schema.reviews)
     .values({
       id: reviewId,
-      workflowRunId: session.workflowRunId,
-      sessionId,
+      workflowRunId: task.workflowRunId,
+      taskId,
       round,
       status: "pending_review",
       aiSummary,
       diffSnapshot: diffText,
+      planMarkdown: planMarkdown || null,
       createdAt: now,
     })
     .run();
@@ -106,7 +186,7 @@ export async function createReviewForSession(sessionId: string): Promise<string 
 }
 
 function generateStructuredSummary(
-  session: { prompt: string; output: string | null },
+  task: { prompt: string; output: string | null },
   files: ReturnType<typeof parseUnifiedDiff>,
   changeSummary: string
 ): string {
@@ -117,8 +197,8 @@ function generateStructuredSummary(
     renamed: files.filter((f) => f.status === "renamed"),
   };
 
-  let md = `## Session Summary\n\n`;
-  md += `**Prompt:** ${session.prompt}\n\n`;
+  let md = `## Task Summary\n\n`;
+  md += `**Prompt:** ${task.prompt}\n\n`;
   md += `### Changes Overview\n\n`;
   md += `${changeSummary}\n\n`;
 

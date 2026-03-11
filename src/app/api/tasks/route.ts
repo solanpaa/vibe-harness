@@ -3,10 +3,28 @@ import { getDb, schema } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { eq } from "drizzle-orm";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const db = getDb();
-  const allSessions = db.select().from(schema.sessions).all();
-  return NextResponse.json(allSessions);
+  const { searchParams } = new URL(request.url);
+
+  // Lightweight listing for review grouping — omits large output field
+  if (searchParams.get("fields") === "summary") {
+    const rows = db
+      .select({
+        id: schema.tasks.id,
+        projectId: schema.tasks.projectId,
+        originTaskId: schema.tasks.originTaskId,
+        prompt: schema.tasks.prompt,
+        status: schema.tasks.status,
+        createdAt: schema.tasks.createdAt,
+      })
+      .from(schema.tasks)
+      .all();
+    return NextResponse.json(rows);
+  }
+
+  const allTasks = db.select().from(schema.tasks).all();
+  return NextResponse.json(allTasks);
 }
 
 export async function POST(request: NextRequest) {
@@ -24,15 +42,15 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date().toISOString();
-  const session = {
+  const task = {
     id: uuid(),
     projectId: body.projectId,
-    subprojectId: body.subprojectId || null,
     workflowRunId: body.workflowRunId || null,
     stageName: body.stageName || null,
     agentDefinitionId: body.agentDefinitionId,
     credentialSetId: body.credentialSetId || null,
     sandboxId: null,
+    originTaskId: body.originTaskId || null,
     status: "pending" as const,
     prompt: body.prompt,
     model: body.model || null,
@@ -43,10 +61,10 @@ export async function POST(request: NextRequest) {
   };
 
   try {
-    db.insert(schema.sessions).values(session).run();
+    db.insert(schema.tasks).values(task).run();
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to create session";
+    const message = e instanceof Error ? e.message : "Failed to create task";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-  return NextResponse.json(session, { status: 201 });
+  return NextResponse.json(task, { status: 201 });
 }

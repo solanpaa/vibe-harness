@@ -22,7 +22,13 @@ export interface SandboxInstance {
   workDir: string;
 }
 
-const activeSandboxes = new Map<string, SandboxInstance>();
+// Persist across Next.js hot reloads in dev mode
+const globalForSandboxes = globalThis as unknown as {
+  __vibeActiveSandboxes?: Map<string, SandboxInstance>;
+};
+const activeSandboxes =
+  globalForSandboxes.__vibeActiveSandboxes ??
+  (globalForSandboxes.__vibeActiveSandboxes = new Map<string, SandboxInstance>());
 
 /**
  * Build the command for launching an agent in a Docker sandbox.
@@ -43,16 +49,23 @@ function buildSandboxCommand(options: SandboxOptions): {
   const args: string[] = ["sandbox", "run"];
   const env = { ...process.env };
 
-  if (options.sandboxName) {
-    args.push("--name", options.sandboxName);
-  }
+  if (options.isContinuation && options.sandboxName) {
+    // Continuing an existing sandbox: just pass the sandbox name directly.
+    // Cannot use --name, -t, agent, or workspace args.
+    args.push(options.sandboxName);
+  } else {
+    // New sandbox
+    if (options.sandboxName) {
+      args.push("--name", options.sandboxName);
+    }
 
-  if (options.dockerImage) {
-    args.push("-t", options.dockerImage);
-  }
+    if (options.dockerImage) {
+      args.push("-t", options.dockerImage);
+    }
 
-  args.push(options.agentCommand);
-  args.push(options.projectDir);
+    args.push(options.agentCommand);
+    args.push(options.projectDir);
+  }
 
   // Agent args after -- separator
   const agentArgs: string[] = ["--yolo"];
@@ -87,7 +100,7 @@ function buildSandboxCommand(options: SandboxOptions): {
 }
 
 export function launchSandbox(
-  sessionId: string,
+  taskId: string,
   options: SandboxOptions
 ): SandboxInstance {
   const { command, args, env } = buildSandboxCommand(options);
@@ -126,39 +139,39 @@ export function launchSandbox(
 
   proc.on("close", (code) => {
     events.emit("close", code);
-    activeSandboxes.delete(sessionId);
+    activeSandboxes.delete(taskId);
   });
 
   proc.on("error", (err) => {
     events.emit("error", err);
-    activeSandboxes.delete(sessionId);
+    activeSandboxes.delete(taskId);
   });
 
   const instance: SandboxInstance = {
-    id: sessionId,
+    id: taskId,
     process: proc,
     output,
     events,
     workDir: options.projectDir,
   };
 
-  activeSandboxes.set(sessionId, instance);
+  activeSandboxes.set(taskId, instance);
   return instance;
 }
 
-export function getSandbox(sessionId: string): SandboxInstance | undefined {
-  return activeSandboxes.get(sessionId);
+export function getSandbox(taskId: string): SandboxInstance | undefined {
+  return activeSandboxes.get(taskId);
 }
 
-export function sendInput(sessionId: string, input: string): boolean {
-  const sandbox = activeSandboxes.get(sessionId);
+export function sendInput(taskId: string, input: string): boolean {
+  const sandbox = activeSandboxes.get(taskId);
   if (!sandbox || !sandbox.process.stdin) return false;
   sandbox.process.stdin.write(input);
   return true;
 }
 
-export function stopSandbox(sessionId: string): boolean {
-  const sandbox = activeSandboxes.get(sessionId);
+export function stopSandbox(taskId: string): boolean {
+  const sandbox = activeSandboxes.get(taskId);
   if (!sandbox) return false;
   sandbox.process.kill("SIGTERM");
   return true;

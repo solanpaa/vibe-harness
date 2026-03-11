@@ -23,7 +23,7 @@ import {
 import { toast } from "sonner";
 import AnsiToHtml from "ansi-to-html";
 
-interface Session {
+interface Task {
   id: string;
   projectId: string;
   agentDefinitionId: string;
@@ -62,6 +62,11 @@ const statusConfig: Record<
     color: "bg-blue-100 text-blue-800",
     label: "Running",
   },
+  awaiting_review: {
+    icon: <GitPullRequestArrow className="h-4 w-4" />,
+    color: "bg-yellow-100 text-yellow-800",
+    label: "Awaiting Review",
+  },
   completed: {
     icon: <CheckCircle className="h-4 w-4" />,
     color: "bg-green-100 text-green-800",
@@ -74,14 +79,14 @@ const statusConfig: Record<
   },
 };
 
-export default function SessionDetailPage({
+export default function TaskDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
   const router = useRouter();
-  const [session, setSession] = useState<Session | null>(null);
+  const [task, setTask] = useState<Task | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [agent, setAgent] = useState<Agent | null>(null);
   const [streamOutput, setStreamOutput] = useState<string[]>([]);
@@ -89,18 +94,18 @@ export default function SessionDetailPage({
   const outputRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const fetchSession = useCallback(() => {
-    return fetch(`/api/sessions/${id}`)
+  const fetchTask = useCallback(() => {
+    return fetch(`/api/tasks/${id}`)
       .then((r) => r.json())
-      .then((s: Session) => {
-        setSession(s);
+      .then((s: Task) => {
+        setTask(s);
         return s;
       });
   }, [id]);
 
-  // Load session and related data
+  // Load task and related data
   useEffect(() => {
-    fetchSession().then((s) => {
+    fetchTask().then((s) => {
       fetch(`/api/projects/${s.projectId}`)
         .then((r) => r.json())
         .then((p: Project) => setProject(p))
@@ -116,14 +121,14 @@ export default function SessionDetailPage({
         setStreamOutput(s.output.split("\n"));
       }
     });
-  }, [id, fetchSession]);
+  }, [id, fetchTask]);
 
-  // Connect to SSE stream when session is running
+  // Connect to SSE stream when task is running
   useEffect(() => {
-    if (!session || session.status !== "running") return;
+    if (!task || task.status !== "running") return;
 
     setIsStreaming(true);
-    const es = new EventSource(`/api/sessions/${id}/stream`);
+    const es = new EventSource(`/api/tasks/${id}/stream`);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -134,12 +139,12 @@ export default function SessionDetailPage({
         } else if (data.type === "close") {
           setIsStreaming(false);
           es.close();
-          fetchSession();
+          fetchTask();
         } else if (data.type === "error") {
           toast.error(data.message);
           setIsStreaming(false);
           es.close();
-          fetchSession();
+          fetchTask();
         }
       } catch {
         setStreamOutput((prev) => [...prev, event.data]);
@@ -149,26 +154,26 @@ export default function SessionDetailPage({
     es.onerror = () => {
       setIsStreaming(false);
       es.close();
-      fetchSession();
+      fetchTask();
     };
 
     return () => {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [session?.status, id, fetchSession]);
+  }, [task?.status, id, fetchTask]);
 
-  // Poll session status every 3s when not streaming
+  // Poll task status every 3s when not streaming
   useEffect(() => {
-    if (!session || isStreaming) return;
-    if (session.status === "completed" || session.status === "failed") return;
+    if (!task || isStreaming) return;
+    if (task.status === "completed" || task.status === "failed") return;
 
     const interval = setInterval(() => {
-      fetchSession();
+      fetchTask();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [session?.status, isStreaming, fetchSession]);
+  }, [task?.status, isStreaming, fetchTask]);
 
   // Auto-scroll output
   useEffect(() => {
@@ -178,15 +183,15 @@ export default function SessionDetailPage({
   }, [streamOutput]);
 
   async function handleStart() {
-    const res = await fetch(`/api/sessions/${id}`, {
+    const res = await fetch(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "start" }),
     });
     if (res.ok) {
       const updated = await res.json();
-      setSession(updated);
-      toast.success("Session started");
+      setTask(updated);
+      toast.success("Task started");
     } else {
       const err = await res.json();
       toast.error(`Failed to start: ${err.error}`);
@@ -194,17 +199,17 @@ export default function SessionDetailPage({
   }
 
   async function handleStop() {
-    const res = await fetch(`/api/sessions/${id}`, {
+    const res = await fetch(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "stop" }),
     });
     if (res.ok) {
       const updated = await res.json();
-      setSession(updated);
+      setTask(updated);
       setIsStreaming(false);
       eventSourceRef.current?.close();
-      toast.success("Session stopped");
+      toast.success("Task stopped");
     }
   }
 
@@ -212,7 +217,7 @@ export default function SessionDetailPage({
     const res = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: id }),
+      body: JSON.stringify({ taskId: id }),
     });
     if (res.ok) {
       const review = await res.json();
@@ -223,28 +228,47 @@ export default function SessionDetailPage({
     }
   }
 
-  async function handleDelete() {
-    if (!window.confirm("Are you sure you want to delete this session?")) return;
-
-    const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+  async function handleGoToReview() {
+    // Find the latest review for this task
+    const res = await fetch("/api/reviews");
     if (res.ok) {
-      toast.success("Session deleted");
-      router.push("/sessions");
-    } else {
-      toast.error("Failed to delete session");
+      const reviews = await res.json();
+      const taskReview = reviews
+        .filter((r: { taskId: string }) => r.taskId === id)
+        .sort((a: { createdAt: string }, b: { createdAt: string }) =>
+          b.createdAt.localeCompare(a.createdAt)
+        )[0];
+      if (taskReview) {
+        router.push(`/reviews/${taskReview.id}`);
+      } else {
+        toast.error("No review found — creating one...");
+        handleCreateReview();
+      }
     }
   }
 
-  if (!session) {
+  async function handleDelete() {
+    if (!window.confirm("Are you sure you want to delete this task?")) return;
+
+    const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success("Task deleted");
+      router.push("/tasks");
+    } else {
+      toast.error("Failed to delete task");
+    }
+  }
+
+  if (!task) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Loading session...
+        Loading task...
       </div>
     );
   }
 
-  const config = statusConfig[session.status] || statusConfig.pending;
+  const config = statusConfig[task.status] || statusConfig.pending;
 
   return (
     <div className="space-y-6">
@@ -252,37 +276,43 @@ export default function SessionDetailPage({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => router.push("/sessions")}
+          onClick={() => router.push("/tasks")}
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back
         </Button>
       </div>
 
-      {/* Session header */}
+      {/* Task header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
-            Session — {project?.name || "..."}
+            Task — {project?.name || "..."}
           </h1>
           <p className="text-muted-foreground text-sm font-mono mt-1">
-            {session.id}
+            {task.id}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {session.status === "pending" && (
+          {task.status === "pending" && (
             <Button onClick={handleStart}>
               <Play className="mr-2 h-4 w-4" />
               Start
             </Button>
           )}
-          {session.status === "running" && (
+          {task.status === "running" && (
             <Button variant="destructive" onClick={handleStop}>
               <Square className="mr-2 h-4 w-4" />
               Stop
             </Button>
           )}
-          {(session.status === "completed" || session.status === "failed") && (
+          {task.status === "awaiting_review" && (
+            <Button onClick={handleGoToReview}>
+              <GitPullRequestArrow className="mr-2 h-4 w-4" />
+              Review Changes
+            </Button>
+          )}
+          {(task.status === "completed" || task.status === "failed") && (
             <Button onClick={handleCreateReview}>
               <GitPullRequestArrow className="mr-2 h-4 w-4" />
               Create Review
@@ -311,11 +341,11 @@ export default function SessionDetailPage({
           </Badge>
         )}
         <span className="text-xs text-muted-foreground flex items-center">
-          Created {new Date(session.createdAt).toLocaleString()}
+          Created {new Date(task.createdAt).toLocaleString()}
         </span>
-        {session.completedAt && (
+        {task.completedAt && (
           <span className="text-xs text-muted-foreground flex items-center">
-            • Completed {new Date(session.completedAt).toLocaleString()}
+            • Completed {new Date(task.completedAt).toLocaleString()}
           </span>
         )}
       </div>
@@ -326,7 +356,7 @@ export default function SessionDetailPage({
           <CardTitle className="text-sm">Prompt</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm whitespace-pre-wrap">{session.prompt}</p>
+          <p className="text-sm whitespace-pre-wrap">{task.prompt}</p>
         </CardContent>
       </Card>
 
@@ -341,12 +371,12 @@ export default function SessionDetailPage({
               <CardTitle className="text-sm">Output</CardTitle>
             </div>
             <div className="flex items-center gap-2">
-              {session.sandboxId && (session.status === "running" || session.status === "completed" || session.status === "failed") && (
+              {task.sandboxId && (task.status === "running" || task.status === "completed" || task.status === "failed") && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const cmd = `GITHUB_TOKEN=$(gh auth token) docker sandbox run ${session.sandboxId}`;
+                    const cmd = `GITHUB_TOKEN=$(gh auth token) docker sandbox run ${task.sandboxId}`;
                     navigator.clipboard.writeText(cmd);
                     toast.success("Copied! Paste in your terminal to open a shell in the sandbox.");
                   }}
@@ -373,9 +403,9 @@ export default function SessionDetailPage({
             >
               {streamOutput.length === 0 ? (
                 <span className="text-gray-600">
-                  {session.status === "pending"
-                    ? "Session not started yet. Click Start to begin."
-                    : session.status === "running"
+                  {task.status === "pending"
+                    ? "Task not started yet. Click Start to begin."
+                    : task.status === "running"
                       ? "Connecting to output stream..."
                       : "No output recorded."}
                 </span>

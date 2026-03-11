@@ -30,8 +30,11 @@ export async function POST(request: NextRequest) {
     const result = await startWorkflowRun({
       workflowTemplateId: body.workflowTemplateId,
       projectId: body.projectId,
-      subprojectId: body.subprojectId,
+      taskDescription: body.taskDescription || body.prompt || "",
+      agentDefinitionId: body.agentDefinitionId,
       credentialSetId: body.credentialSetId,
+      model: body.model,
+      useWorktree: body.useWorktree,
     });
     return NextResponse.json(result, { status: 201 });
   }

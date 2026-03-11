@@ -55,9 +55,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const db = getDb();
-  db.delete(schema.subprojects)
-    .where(eq(schema.subprojects.projectId, id))
-    .run();
   db.delete(schema.projects).where(eq(schema.projects.id, id)).run();
   return NextResponse.json({ ok: true });
 }

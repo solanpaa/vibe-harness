@@ -81,7 +81,7 @@ export default function ProjectsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
           <p className="text-muted-foreground">
-            Manage your git repositories and subprojects
+            Manage your git repositories
           </p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>

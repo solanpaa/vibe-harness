@@ -31,10 +31,13 @@ import {
   Loader2,
   ExternalLink,
   Trash2,
+  GitPullRequestArrow,
+  Workflow,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
 
-interface Session {
+interface Task {
   id: string;
   projectId: string;
   agentDefinitionId: string;
@@ -71,6 +74,10 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string }> = {
     icon: <Loader2 className="h-4 w-4 animate-spin" />,
     color: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
   },
+  awaiting_review: {
+    icon: <GitPullRequestArrow className="h-4 w-4" />,
+    color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+  },
   completed: {
     icon: <CheckCircle className="h-4 w-4" />,
     color: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -94,22 +101,29 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-export default function SessionsPage() {
+export default function TasksPage() {
   return (
     <Suspense>
-      <SessionsContent />
+      <TasksContent />
     </Suspense>
   );
 }
 
-function SessionsContent() {
+interface WorkflowTemplate {
+  id: string;
+  name: string;
+  stages: Array<{ name: string; promptTemplate: string; reviewRequired: boolean }>;
+}
+
+function TasksContent() {
   const searchParams = useSearchParams();
   const urlProjectId = searchParams.get("projectId") ?? "";
 
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [credSets, setCredSets] = useState<CredentialSet[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -118,28 +132,30 @@ function SessionsContent() {
     credentialSetId: "",
     model: "",
     useWorktree: true,
+    workflowTemplateId: "",
     prompt: "",
   });
 
-  const loadSessions = useCallback(() => {
-    fetch("/api/sessions")
+  const loadTasks = useCallback(() => {
+    fetch("/api/tasks")
       .then((r) => r.json())
-      .then(setSessions)
+      .then(setTasks)
       .catch(() => {});
   }, []);
 
   useEffect(() => {
-    loadSessions();
+    loadTasks();
     fetch("/api/projects").then((r) => r.json()).then(setProjects).catch(() => {});
     fetch("/api/agents").then((r) => r.json()).then(setAgents).catch(() => {});
     fetch("/api/credentials").then((r) => r.json()).then(setCredSets).catch(() => {});
-  }, [loadSessions]);
+    fetch("/api/workflows").then((r) => r.json()).then(setWorkflows).catch(() => {});
+  }, [loadTasks]);
 
-  // Poll sessions every 5 seconds
+  // Poll tasks every 5 seconds
   useEffect(() => {
-    const id = setInterval(loadSessions, 5000);
+    const id = setInterval(loadTasks, 5000);
     return () => clearInterval(id);
-  }, [loadSessions]);
+  }, [loadTasks]);
 
   // Auto-select first agent when agents load
   useEffect(() => {
@@ -158,6 +174,9 @@ function SessionsContent() {
     }
   }, [urlProjectId, projects]);
 
+  const selectedWorkflow = workflows.find((w) => w.id === form.workflowTemplateId);
+  const isWorkflowMode = !!form.workflowTemplateId;
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!form.projectId || !form.agentDefinitionId || !form.prompt.trim()) {
@@ -166,37 +185,67 @@ function SessionsContent() {
     }
     setLoading(true);
     try {
-      const createRes = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: form.projectId,
-          agentDefinitionId: form.agentDefinitionId,
-          credentialSetId: form.credentialSetId || null,
-          model: form.model.trim() || null,
-          useWorktree: form.useWorktree,
-          prompt: form.prompt,
-        }),
-      });
-      if (!createRes.ok) {
-        const body = await createRes.json().catch(() => null);
-        toast.error(body?.error ?? "Failed to create session");
-        return;
-      }
-      const session = await createRes.json();
-
-      const startRes = await fetch(`/api/sessions/${session.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start" }),
-      });
-      if (!startRes.ok) {
-        const body = await startRes.json().catch(() => null);
-        toast.error(
-          `Session created but failed to start: ${body?.error ?? "unknown error"}`
-        );
+      if (isWorkflowMode) {
+        // Workflow mode: create workflow run which starts the first stage
+        const res = await fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "start_run",
+            workflowTemplateId: form.workflowTemplateId,
+            projectId: form.projectId,
+            taskDescription: form.prompt,
+            agentDefinitionId: form.agentDefinitionId,
+            credentialSetId: form.credentialSetId || null,
+            model: form.model.trim() || null,
+            useWorktree: form.useWorktree,
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          toast.error(body?.error ?? "Failed to start workflow");
+          return;
+        }
+        const result = await res.json();
+        toast.success(`Workflow started — stage: ${result.stageName}`);
+        setCreateOpen(false);
+        loadTasks();
       } else {
-        toast.success("Session created and started");
+        // One-off task mode
+        const createRes = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: form.projectId,
+            agentDefinitionId: form.agentDefinitionId,
+            credentialSetId: form.credentialSetId || null,
+            model: form.model.trim() || null,
+            useWorktree: form.useWorktree,
+            prompt: form.prompt,
+          }),
+        });
+        if (!createRes.ok) {
+          const body = await createRes.json().catch(() => null);
+          toast.error(body?.error ?? "Failed to create task");
+          return;
+        }
+        const task = await createRes.json();
+
+        const startRes = await fetch(`/api/tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "start" }),
+        });
+        if (!startRes.ok) {
+          const body = await startRes.json().catch(() => null);
+          toast.error(
+            `Task created but failed to start: ${body?.error ?? "unknown error"}`
+          );
+        } else {
+          toast.success("Task created and started");
+        }
+        setCreateOpen(false);
+        loadTasks();
       }
 
       setForm({
@@ -205,30 +254,29 @@ function SessionsContent() {
         credentialSetId: "",
         model: "",
         useWorktree: true,
+        workflowTemplateId: "",
         prompt: "",
       });
-      setCreateOpen(false);
-      loadSessions();
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleDelete(sessionId: string) {
-    if (!window.confirm("Delete this session? This cannot be undone.")) return;
+  async function handleDelete(taskId: string) {
+    if (!window.confirm("Delete this task? This cannot be undone.")) return;
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`, {
+      const res = await fetch(`/api/tasks/${taskId}`, {
         method: "DELETE",
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        toast.error(body?.error ?? "Failed to delete session");
+        toast.error(body?.error ?? "Failed to delete task");
         return;
       }
-      toast.success("Session deleted");
-      loadSessions();
+      toast.success("Task deleted");
+      loadTasks();
     } catch {
-      toast.error("Failed to delete session");
+      toast.error("Failed to delete task");
     }
   }
 
@@ -236,9 +284,9 @@ function SessionsContent() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
           <p className="text-muted-foreground">
-            Agent coding sessions running in Docker sandboxes
+            Agent coding tasks running in Docker sandboxes
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -252,16 +300,16 @@ function SessionsContent() {
             disabled={projects.length === 0}
           >
             <Plus className="mr-2 h-4 w-4" />
-            New Session
+            New Task
           </Button>
         </div>
       </div>
 
-      {/* Create Session Dialog */}
+      {/* Create Task Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Launch Agent Session</DialogTitle>
+            <DialogTitle>Launch Agent Task</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
@@ -328,7 +376,7 @@ function SessionsContent() {
               <Select
                 value={form.credentialSetId}
                 onValueChange={(v) =>
-                  setForm((f) => ({ ...f, credentialSetId: v ?? "" }))
+                  setForm((f) => ({ ...f, credentialSetId: v === "none" ? "" : (v ?? "") }))
                 }
               >
                 <SelectTrigger>
@@ -347,6 +395,47 @@ function SessionsContent() {
               </Select>
             </div>
 
+            <div className="space-y-2">
+              <Label>Workflow (optional)</Label>
+              <Select
+                value={form.workflowTemplateId}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, workflowTemplateId: v === "none" ? "" : (v ?? "") }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="None — one-off task">
+                    {selectedWorkflow?.name ?? "None — one-off task"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None — one-off task</SelectItem>
+                  {workflows.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      <div className="flex items-center gap-2">
+                        <Workflow className="h-3 w-3" />
+                        {w.name} ({w.stages.length} stages)
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedWorkflow && (
+                <div className="flex items-center gap-1 flex-wrap text-xs text-muted-foreground mt-1">
+                  {selectedWorkflow.stages.map((stage, i) => (
+                    <span key={stage.name} className="flex items-center gap-1">
+                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                        {stage.name}
+                      </Badge>
+                      {i < selectedWorkflow.stages.length - 1 && (
+                        <ArrowRight className="h-3 w-3" />
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -362,13 +451,15 @@ function SessionsContent() {
             </div>
 
             <div className="space-y-2">
-              <Label>Prompt *</Label>
+              <Label>{isWorkflowMode ? "Task Description *" : "Prompt *"}</Label>
               <Textarea
                 value={form.prompt}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, prompt: e.target.value }))
                 }
-                placeholder="Describe what you want the agent to do..."
+                placeholder={isWorkflowMode
+                  ? "Describe the feature or task to implement..."
+                  : "Describe what you want the agent to do..."}
                 className="min-h-[120px]"
                 required
               />
@@ -380,10 +471,15 @@ function SessionsContent() {
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Launching...
                 </>
+              ) : isWorkflowMode ? (
+                <>
+                  <Workflow className="mr-2 h-4 w-4" />
+                  Launch Workflow
+                </>
               ) : (
                 <>
                   <Play className="mr-2 h-4 w-4" />
-                  Launch Session
+                  Launch Task
                 </>
               )}
             </Button>
@@ -391,41 +487,41 @@ function SessionsContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Sessions list */}
-      {sessions.length === 0 ? (
+      {/* Tasks list */}
+      {tasks.length === 0 ? (
         <Card>
           <CardContent className="flex items-center justify-center h-48">
             <div className="text-center text-muted-foreground">
               <Terminal className="mx-auto h-12 w-12 mb-4 opacity-50" />
-              <p>No sessions yet.</p>
+              <p>No tasks yet.</p>
               <p className="text-sm">
                 {projects.length === 0
-                  ? "Create a project first, then launch a session."
-                  : 'Click "New Session" to launch an agent.'}
+                  ? "Create a project first, then launch a task."
+                  : 'Click "New Task" to launch an agent.'}
               </p>
             </div>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {[...sessions]
+          {[...tasks]
             .sort(
               (a, b) =>
                 new Date(b.createdAt).getTime() -
                 new Date(a.createdAt).getTime()
             )
-            .map((session) => {
+            .map((task) => {
               const project = projects.find(
-                (p) => p.id === session.projectId
+                (p) => p.id === task.projectId
               );
               const agent = agents.find(
-                (a) => a.id === session.agentDefinitionId
+                (a) => a.id === task.agentDefinitionId
               );
               const config =
-                statusConfig[session.status] || statusConfig.pending;
+                statusConfig[task.status] || statusConfig.pending;
 
               return (
-                <Link key={session.id} href={`/sessions/${session.id}`}>
+                <Link key={task.id} href={`/tasks/${task.id}`}>
                   <Card className="hover:border-foreground/20 transition-colors cursor-pointer">
                     <CardHeader className="py-3">
                       <div className="flex items-center justify-between">
@@ -436,7 +532,7 @@ function SessionsContent() {
                               {project?.name || "Unknown project"}
                             </CardTitle>
                             <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1 max-w-md">
-                              {session.prompt}
+                              {task.prompt}
                             </p>
                           </div>
                         </div>
@@ -447,10 +543,10 @@ function SessionsContent() {
                             </Badge>
                           )}
                           <Badge className={config.color}>
-                            {session.status}
+                            {task.status}
                           </Badge>
                           <span className="text-xs text-muted-foreground">
-                            {relativeTime(session.createdAt)}
+                            {relativeTime(task.createdAt)}
                           </span>
                           <Button
                             variant="ghost"
@@ -459,7 +555,7 @@ function SessionsContent() {
                             onClick={(e) => {
                               e.stopPropagation();
                               e.preventDefault();
-                              handleDelete(session.id);
+                              handleDelete(task.id);
                             }}
                           >
                             <Trash2 className="h-4 w-4" />

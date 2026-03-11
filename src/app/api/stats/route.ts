@@ -6,8 +6,8 @@ export async function GET() {
   const db = getDb();
 
   const projects = db.select().from(schema.projects).all();
-  const allSessions = db.select().from(schema.sessions).all();
-  const activeSessions = allSessions.filter((s) => s.status === "running");
+  const allTasks = db.select().from(schema.tasks).all();
+  const activeTasks = allTasks.filter((s) => s.status === "running" || s.status === "awaiting_review");
   const allReviews = db.select().from(schema.reviews).all();
   const pendingReviews = allReviews.filter((s) => s.status === "pending_review");
   const workflowRuns = db.select().from(schema.workflowRuns).all();
@@ -15,7 +15,7 @@ export async function GET() {
     (w) => w.status === "running" || w.status === "awaiting_review"
   );
 
-  const recentSessions = allSessions
+  const recentTasks = allTasks
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5)
     .map((s) => ({
@@ -25,10 +25,10 @@ export async function GET() {
 
   return NextResponse.json({
     projectCount: projects.length,
-    activeSessionCount: activeSessions.length,
+    activeTaskCount: activeTasks.length,
     pendingReviewCount: pendingReviews.length,
     activeWorkflowCount: activeWorkflows.length,
-    recentSessions,
+    recentTasks,
     pendingReviews: pendingReviews
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, 5),

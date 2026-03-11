@@ -13,19 +13,6 @@ export const projects = sqliteTable("projects", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// ── Subprojects ────────────────────────────────────────────────────
-
-export const subprojects = sqliteTable("subprojects", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  description: text("description"),
-  pathFilter: text("path_filter"),
-  createdAt: text("created_at").notNull(),
-});
-
 // ── Agent Definitions ──────────────────────────────────────────────
 
 export const agentDefinitions = sqliteTable("agent_definitions", {
@@ -84,21 +71,21 @@ export const workflowRuns = sqliteTable("workflow_runs", {
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id),
-  subprojectId: text("subproject_id").references(() => subprojects.id),
+  // The user's high-level task/feature description
+  taskDescription: text("task_description"),
   status: text("status").notNull().default("pending"),
   currentStage: text("current_stage"),
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
 });
 
-// ── Sessions ───────────────────────────────────────────────────────
+// ── Tasks ───────────────────────────────────────────────────────
 
-export const sessions = sqliteTable("sessions", {
+export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id),
-  subprojectId: text("subproject_id").references(() => subprojects.id),
   workflowRunId: text("workflow_run_id").references(() => workflowRuns.id),
   stageName: text("stage_name"),
   agentDefinitionId: text("agent_definition_id")
@@ -108,6 +95,9 @@ export const sessions = sqliteTable("sessions", {
     () => credentialSets.id
   ),
   sandboxId: text("sandbox_id"),
+  // Links rerun tasks back to the first task in the chain.
+  // NULL means this IS the origin task.
+  originTaskId: text("origin_task_id"),
   status: text("status").notNull().default("pending"),
   prompt: text("prompt").notNull(),
   model: text("model"),
@@ -122,13 +112,15 @@ export const sessions = sqliteTable("sessions", {
 export const reviews = sqliteTable("reviews", {
   id: text("id").primaryKey(),
   workflowRunId: text("workflow_run_id").references(() => workflowRuns.id),
-  sessionId: text("session_id")
+  taskId: text("task_id")
     .notNull()
-    .references(() => sessions.id),
+    .references(() => tasks.id),
   round: integer("round").notNull().default(1),
   status: text("status").notNull().default("pending_review"),
   aiSummary: text("ai_summary"),
   diffSnapshot: text("diff_snapshot"),
+  // Agent's plan.md content captured from the sandbox
+  planMarkdown: text("plan_markdown"),
   createdAt: text("created_at").notNull(),
 });
 

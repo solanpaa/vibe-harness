@@ -5,13 +5,13 @@ import fs from "fs";
 const WORKTREE_DIR = ".vibe-harness-worktrees";
 
 /**
- * Create a git worktree for a session.
+ * Create a git worktree for a task.
  * Returns the worktree path. If the project isn't a git repo,
  * returns the project dir as-is (no isolation).
  */
 export function createWorktree(
   projectDir: string,
-  sessionId: string,
+  taskId: string,
   branchName?: string
 ): { worktreePath: string; branch: string; isWorktree: boolean } {
   // Check if it's a git repo
@@ -24,8 +24,8 @@ export function createWorktree(
     return { worktreePath: projectDir, branch: "", isWorktree: false };
   }
 
-  const shortId = sessionId.slice(0, 8);
-  const branch = branchName || `vibe-harness/session-${shortId}`;
+  const shortId = taskId.slice(0, 8);
+  const branch = branchName || `vibe-harness/task-${shortId}`;
   const worktreeBase = path.join(projectDir, WORKTREE_DIR);
   const worktreePath = path.join(worktreeBase, shortId);
 
@@ -68,10 +68,10 @@ export function createWorktree(
 }
 
 /**
- * Remove a git worktree after a session is done.
+ * Remove a git worktree after a task is done.
  */
-export function removeWorktree(projectDir: string, sessionId: string): void {
-  const shortId = sessionId.slice(0, 8);
+export function removeWorktree(projectDir: string, taskId: string): void {
+  const shortId = taskId.slice(0, 8);
   const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
 
   if (!fs.existsSync(worktreePath)) return;
@@ -89,6 +89,54 @@ export function removeWorktree(projectDir: string, sessionId: string): void {
     } catch {
       // ignore
     }
+  }
+}
+
+/**
+ * Commit all changes in a worktree and merge the branch back into
+ * whichever branch the main working tree is currently on (i.e. the
+ * branch the worktree was forked from).
+ */
+export function commitAndMergeWorktree(
+  projectDir: string,
+  taskId: string,
+  commitMessage: string
+): { merged: boolean; branch: string; error?: string } {
+  const shortId = taskId.slice(0, 8);
+  const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
+
+  if (!fs.existsSync(worktreePath)) {
+    return { merged: false, branch: "", error: "Worktree not found" };
+  }
+
+  const branch = `vibe-harness/task-${shortId}`;
+
+  try {
+    // Stage and commit all changes in the worktree
+    execSync("git add -A", { cwd: worktreePath, stdio: "pipe" });
+
+    // Check if there's anything to commit
+    try {
+      execSync("git diff --cached --quiet", { cwd: worktreePath, stdio: "pipe" });
+      // No changes staged — nothing to commit, but branch may already have commits
+    } catch {
+      // There are staged changes — commit them
+      execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+        cwd: worktreePath,
+        stdio: "pipe",
+      });
+    }
+
+    // Merge into whatever branch the main working tree is on
+    execSync(`git merge "${branch}" --no-ff -m "Merge approved task ${shortId}"`, {
+      cwd: projectDir,
+      stdio: "pipe",
+    });
+
+    return { merged: true, branch };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { merged: false, branch, error: msg };
   }
 }
 

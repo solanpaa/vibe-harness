@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { DiffView, type InlineComment } from "@/components/diff-viewer/DiffView";
 import { FileTree } from "@/components/diff-viewer/FileTree";
@@ -14,12 +15,13 @@ import { toast } from "sonner";
 
 interface Review {
   id: string;
-  sessionId: string;
+  taskId: string;
   workflowRunId: string | null;
   round: number;
   status: string;
   aiSummary: string | null;
   diffSnapshot: string | null;
+  planMarkdown: string | null;
   createdAt: string;
 }
 
@@ -84,9 +86,22 @@ export default function ReviewDetailPage({
       const result = await res.json();
       setReview((prev) => prev ? { ...prev, status: result.status } : null);
       if (action === "approve") {
-        toast.success("Changes approved!");
+        if (result.merged) {
+          toast.success("Changes approved and merged!");
+        } else if (result.mergeError) {
+          toast.success("Changes approved! Merge failed — merge the branch manually.", {
+            duration: 6000,
+          });
+        } else {
+          toast.success("Changes approved!");
+        }
+        if (result.workflowAdvanced?.nextStage) {
+          toast.info(`Workflow advancing to stage: ${result.workflowAdvanced.nextStage}`);
+        } else if (result.workflowAdvanced?.completed) {
+          toast.success("Workflow completed!");
+        }
       } else {
-        toast.success("Changes requested — new agent session will be spawned");
+        toast.success("Changes requested — new agent run will be spawned");
       }
     }
   }
@@ -124,6 +139,58 @@ export default function ReviewDetailPage({
         round={review.round}
         status={review.status}
       />
+
+      {/* Agent's Plan */}
+      {review.planMarkdown && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Agent Plan</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              {review.planMarkdown.split("\n").map((line, i) => {
+                if (line.startsWith("## ")) {
+                  return (
+                    <h2 key={i} className="text-base font-semibold mt-4 mb-2">
+                      {line.slice(3)}
+                    </h2>
+                  );
+                }
+                if (line.startsWith("### ")) {
+                  return (
+                    <h3 key={i} className="text-sm font-semibold mt-3 mb-1">
+                      {line.slice(4)}
+                    </h3>
+                  );
+                }
+                if (line.startsWith("# ")) {
+                  return (
+                    <h1 key={i} className="text-lg font-bold mt-4 mb-2">
+                      {line.slice(2)}
+                    </h1>
+                  );
+                }
+                if (line.startsWith("- ")) {
+                  return (
+                    <li key={i} className="text-sm ml-4">
+                      {line.slice(2)}
+                    </li>
+                  );
+                }
+                if (line.startsWith("```")) {
+                  return null;
+                }
+                if (line.trim() === "") return <br key={i} />;
+                return (
+                  <p key={i} className="text-sm">
+                    {line}
+                  </p>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Action buttons */}
       {isPending && (

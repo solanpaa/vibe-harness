@@ -1,9 +1,21 @@
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
-import { startSession } from "./session-manager";
-import { createReviewForSession } from "./review-service";
+import { startTask } from "./task-manager";
 import type { WorkflowStage } from "@/types/domain";
+
+/**
+ * Build a combined prompt from the task description and stage instructions.
+ */
+function buildStagePrompt(taskDescription: string, stage: WorkflowStage): string {
+  return [
+    `## Task`,
+    taskDescription,
+    ``,
+    `## Current Stage: ${stage.name}`,
+    stage.promptTemplate,
+  ].join("\n");
+}
 
 /**
  * Create a workflow template with stages.
@@ -29,12 +41,16 @@ export function createWorkflowTemplate(input: {
 
 /**
  * Start a workflow run — executes the first stage.
+ * taskDescription is the user's high-level feature/task description.
  */
 export async function startWorkflowRun(input: {
   workflowTemplateId: string;
   projectId: string;
-  subprojectId?: string | null;
+  taskDescription: string;
+  agentDefinitionId?: string | null;
   credentialSetId?: string | null;
+  model?: string | null;
+  useWorktree?: boolean;
 }) {
   const db = getDb();
 
@@ -53,14 +69,14 @@ export async function startWorkflowRun(input: {
   const firstStage = stages[0];
   const now = new Date().toISOString();
 
-  // Create workflow run
+  // Create workflow run with task description
   const runId = uuid();
   db.insert(schema.workflowRuns)
     .values({
       id: runId,
       workflowTemplateId: template.id,
       projectId: input.projectId,
-      subprojectId: input.subprojectId || null,
+      taskDescription: input.taskDescription,
       status: "running",
       currentStage: firstStage.name,
       createdAt: now,
@@ -77,58 +93,65 @@ export async function startWorkflowRun(input: {
 
   if (!project) throw new Error("Project not found");
 
-  // Get default agent
-  const agent = firstStage.agentDefinitionId
+  // Get agent — use provided, stage-specific, or first available
+  const agentId = input.agentDefinitionId || firstStage.agentDefinitionId;
+  const agent = agentId
     ? db
         .select()
         .from(schema.agentDefinitions)
-        .where(eq(schema.agentDefinitions.id, firstStage.agentDefinitionId))
+        .where(eq(schema.agentDefinitions.id, agentId))
         .get()
     : db.select().from(schema.agentDefinitions).get();
 
   if (!agent) throw new Error("No agent definition found");
 
-  // Create and start session for the first stage
-  const sessionId = uuid();
-  db.insert(schema.sessions)
+  // Build combined prompt: task description + stage instructions
+  const prompt = buildStagePrompt(input.taskDescription, firstStage);
+
+  // Create and start task for the first stage
+  const taskId = uuid();
+  db.insert(schema.tasks)
     .values({
-      id: sessionId,
+      id: taskId,
       projectId: input.projectId,
-      subprojectId: input.subprojectId || null,
       workflowRunId: runId,
       stageName: firstStage.name,
       agentDefinitionId: agent.id,
       credentialSetId: input.credentialSetId || null,
       sandboxId: null,
       status: "pending",
-      prompt: firstStage.promptTemplate,
+      prompt,
+      model: input.model || null,
+      useWorktree: input.useWorktree !== false ? 1 : 0,
       output: null,
       createdAt: now,
       completedAt: null,
     })
     .run();
 
-  const agentCommand =
-    agent.commandTemplate || "claude";
+  const agentCommand = agent.commandTemplate || "claude";
 
-  startSession({
-    sessionId,
+  startTask({
+    taskId,
     projectDir: project.localPath,
     agentCommand,
     credentialSetId: input.credentialSetId,
-    prompt: firstStage.promptTemplate,
+    prompt,
+    model: input.model,
+    useWorktree: input.useWorktree,
   });
 
-  return { runId, sessionId, stageName: firstStage.name };
+  return { runId, taskId, stageName: firstStage.name };
 }
 
 /**
  * Advance a workflow to the next stage after a review is approved.
+ * Uses --continue to preserve agent context across stages.
  */
 export async function advanceWorkflow(workflowRunId: string): Promise<{
   completed: boolean;
   nextStage?: string;
-  sessionId?: string;
+  taskId?: string;
 } | null> {
   const db = getDb();
 
@@ -172,31 +195,51 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
 
   if (!project) return null;
 
+  // Find the FIRST task in this workflow run (the origin) for --continue
+  const firstTask = db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.workflowRunId, workflowRunId))
+    .all()
+    .filter((t) => !t.originTaskId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+
+  if (!firstTask) return null;
+
   const agent = nextStage.agentDefinitionId
     ? db
         .select()
         .from(schema.agentDefinitions)
         .where(eq(schema.agentDefinitions.id, nextStage.agentDefinitionId))
         .get()
-    : db.select().from(schema.agentDefinitions).get();
+    : db
+        .select()
+        .from(schema.agentDefinitions)
+        .where(eq(schema.agentDefinitions.id, firstTask.agentDefinitionId))
+        .get();
 
   if (!agent) return null;
 
-  const now = new Date().toISOString();
-  const sessionId = uuid();
+  // Build combined prompt with task description + next stage instructions
+  const prompt = buildStagePrompt(run.taskDescription || firstTask.prompt, nextStage);
 
-  db.insert(schema.sessions)
+  const now = new Date().toISOString();
+  const taskId = uuid();
+
+  db.insert(schema.tasks)
     .values({
-      id: sessionId,
+      id: taskId,
       projectId: run.projectId,
-      subprojectId: run.subprojectId,
       workflowRunId,
       stageName: nextStage.name,
       agentDefinitionId: agent.id,
-      credentialSetId: null,
+      credentialSetId: firstTask.credentialSetId,
       sandboxId: null,
+      originTaskId: firstTask.id,
       status: "pending",
-      prompt: nextStage.promptTemplate,
+      prompt,
+      model: firstTask.model,
+      useWorktree: firstTask.useWorktree,
       output: null,
       createdAt: now,
       completedAt: null,
@@ -204,21 +247,25 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     .run();
 
   db.update(schema.workflowRuns)
-    .set({ currentStage: nextStage.name })
+    .set({ currentStage: nextStage.name, status: "running" })
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .run();
 
-  const agentCommand =
-    agent.commandTemplate || "claude";
+  const agentCommand = agent.commandTemplate || "claude";
 
-  startSession({
-    sessionId,
+  startTask({
+    taskId,
     projectDir: project.localPath,
     agentCommand,
-    prompt: nextStage.promptTemplate,
+    credentialSetId: firstTask.credentialSetId,
+    prompt,
+    model: firstTask.model,
+    useWorktree: firstTask.useWorktree === 1,
+    isContinuation: true,
+    originTaskId: firstTask.id,
   });
 
-  return { completed: false, nextStage: nextStage.name, sessionId };
+  return { completed: false, nextStage: nextStage.name, taskId };
 }
 
 /** Get default workflow template (plan → implement → review → done) */

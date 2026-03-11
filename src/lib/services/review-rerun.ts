@@ -1,22 +1,18 @@
-import { spawn } from "child_process";
-import { EventEmitter } from "events";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
-import { bundleCommentsAsPrompt } from "./review-service";
-import path from "path";
-import fs from "fs";
-
-const WORKTREE_DIR = ".vibe-harness-worktrees";
+import { bundleCommentsAsPrompt, getOriginTaskId } from "./review-service";
+import { startTask } from "./task-manager";
 
 /**
  * Handle "request changes" on a review:
  * 1. Bundle inline comments into a structured prompt
  * 2. Run copilot --continue in the SAME sandbox with the feedback as prompt
- * 3. Create a new session record linked to the same worktree
+ * 3. Create a new task record linked to the same worktree via originTaskId
+ * 4. Task manager auto-creates review when the task completes (awaiting_review)
  */
 export async function rerunWithComments(reviewId: string): Promise<{
-  sessionId: string;
+  taskId: string;
   reviewRound: number;
 } | null> {
   const db = getDb();
@@ -28,24 +24,24 @@ export async function rerunWithComments(reviewId: string): Promise<{
     .get();
   if (!review) return null;
 
-  const originalSession = db
+  const originalTask = db
     .select()
-    .from(schema.sessions)
-    .where(eq(schema.sessions.id, review.sessionId))
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, review.taskId))
     .get();
-  if (!originalSession) return null;
+  if (!originalTask) return null;
 
   const project = db
     .select()
     .from(schema.projects)
-    .where(eq(schema.projects.id, originalSession.projectId))
+    .where(eq(schema.projects.id, originalTask.projectId))
     .get();
   if (!project) return null;
 
   const agent = db
     .select()
     .from(schema.agentDefinitions)
-    .where(eq(schema.agentDefinitions.id, originalSession.agentDefinitionId))
+    .where(eq(schema.agentDefinitions.id, originalTask.agentDefinitionId))
     .get();
   if (!agent) return null;
 
@@ -57,86 +53,53 @@ export async function rerunWithComments(reviewId: string): Promise<{
     commentPrompt,
   ].join("\n");
 
-  // Resolve the SAME worktree that the original session used
-  const originalShortId = originalSession.id.slice(0, 8);
-  const worktreePath = path.join(project.localPath, WORKTREE_DIR, originalShortId);
-  const workDir = fs.existsSync(worktreePath) ? worktreePath : project.localPath;
+  // Track origin: if the original task already has an origin, use it;
+  // otherwise, the original task IS the origin.
+  const originId = getOriginTaskId(originalTask.id);
 
-  // Reuse the original sandbox name
-  const sandboxName = originalSession.sandboxId || `vibe-${originalShortId}`;
-
-  // Create a new session record (for tracking), linked to same worktree
+  // Create a new task record linked to the same chain
   const now = new Date().toISOString();
-  const newSessionId = uuid();
-  db.insert(schema.sessions)
+  const newTaskId = uuid();
+  db.insert(schema.tasks)
     .values({
-      id: newSessionId,
-      projectId: originalSession.projectId,
-      subprojectId: originalSession.subprojectId,
-      workflowRunId: originalSession.workflowRunId,
-      stageName: originalSession.stageName,
-      agentDefinitionId: originalSession.agentDefinitionId,
-      credentialSetId: originalSession.credentialSetId,
-      sandboxId: sandboxName,
-      status: "running",
+      id: newTaskId,
+      projectId: originalTask.projectId,
+      workflowRunId: originalTask.workflowRunId,
+      stageName: originalTask.stageName,
+      agentDefinitionId: originalTask.agentDefinitionId,
+      credentialSetId: originalTask.credentialSetId,
+      sandboxId: null,
+      originTaskId: originId,
+      status: "pending",
       prompt: combinedPrompt,
-      model: originalSession.model,
-      useWorktree: originalSession.useWorktree,
+      model: originalTask.model,
+      useWorktree: originalTask.useWorktree,
       output: null,
       createdAt: now,
       completedAt: null,
     })
     .run();
 
-  // Run copilot --continue in the same sandbox
-  // docker sandbox run <sandbox-name> -- --yolo --continue -p "review comments"
-  const args = ["sandbox", "run", sandboxName, "--", "--yolo", "--continue", "-p", combinedPrompt];
+  const agentCommand = agent.commandTemplate || "claude";
 
-  if (originalSession.model) {
-    args.push("--model", originalSession.model);
-  }
-
-  const env = { ...process.env };
-  // Inject GH token
-  if (!env.GITHUB_TOKEN && !env.GH_TOKEN) {
-    try {
-      const token = require("child_process")
-        .execSync("gh auth token", { encoding: "utf-8" })
-        .trim();
-      if (token) env.GITHUB_TOKEN = token;
-    } catch {}
-  }
-
-  const proc = spawn("docker", args, {
-    env,
-    cwd: workDir,
-    stdio: ["pipe", "pipe", "pipe"],
+  // Use startTask which properly registers sandbox, creates worktree, etc.
+  const sandbox = startTask({
+    taskId: newTaskId,
+    projectDir: project.localPath,
+    agentCommand,
+    credentialSetId: originalTask.credentialSetId,
+    dockerImage: agent.dockerImage,
+    prompt: combinedPrompt,
+    model: originalTask.model,
+    useWorktree: originalTask.useWorktree === 1,
+    isContinuation: true,
+    originTaskId: originId,
   });
 
-  const output: string[] = [];
-
-  proc.stdout?.on("data", (data: Buffer) => {
-    output.push(data.toString());
-  });
-
-  proc.stderr?.on("data", (data: Buffer) => {
-    output.push(data.toString());
-  });
-
-  proc.on("close", (code) => {
-    const status = code === 0 ? "completed" : "failed";
-    db.update(schema.sessions)
-      .set({
-        status,
-        output: output.join(""),
-        completedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.sessions.id, newSessionId))
-      .run();
-  });
+  // startTask auto-creates review on successful completion (awaiting_review)
 
   return {
-    sessionId: newSessionId,
+    taskId: newTaskId,
     reviewRound: review.round + 1,
   };
 }

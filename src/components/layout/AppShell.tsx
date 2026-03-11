@@ -28,7 +28,7 @@ import {
 const navItems = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Projects", href: "/projects", icon: FolderGit2 },
-  { title: "Sessions", href: "/sessions", icon: Terminal },
+  { title: "Tasks", href: "/tasks", icon: Terminal },
   { title: "Reviews", href: "/reviews", icon: GitPullRequestArrow },
   { title: "Credentials", href: "/credentials", icon: KeyRound },
   { title: "Workflows", href: "/workflows", icon: Workflow },

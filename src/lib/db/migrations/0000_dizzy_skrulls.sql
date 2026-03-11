@@ -52,59 +52,50 @@ CREATE TABLE `review_comments` (
 CREATE TABLE `reviews` (
 	`id` text PRIMARY KEY NOT NULL,
 	`workflow_run_id` text,
-	`session_id` text NOT NULL,
+	`task_id` text NOT NULL,
 	`round` integer DEFAULT 1 NOT NULL,
 	`status` text DEFAULT 'pending_review' NOT NULL,
 	`ai_summary` text,
 	`diff_snapshot` text,
+	`plan_markdown` text,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`workflow_run_id`) REFERENCES `workflow_runs`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`session_id`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE TABLE `sessions` (
+CREATE TABLE `tasks` (
 	`id` text PRIMARY KEY NOT NULL,
 	`project_id` text NOT NULL,
-	`subproject_id` text,
 	`workflow_run_id` text,
 	`stage_name` text,
 	`agent_definition_id` text NOT NULL,
 	`credential_set_id` text,
 	`sandbox_id` text,
+	`origin_task_id` text,
 	`status` text DEFAULT 'pending' NOT NULL,
 	`prompt` text NOT NULL,
+	`model` text,
+	`use_worktree` integer DEFAULT 1 NOT NULL,
 	`output` text,
 	`created_at` text NOT NULL,
 	`completed_at` text,
 	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`subproject_id`) REFERENCES `subprojects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`workflow_run_id`) REFERENCES `workflow_runs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent_definition_id`) REFERENCES `agent_definitions`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`credential_set_id`) REFERENCES `credential_sets`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE TABLE `subprojects` (
-	`id` text PRIMARY KEY NOT NULL,
-	`project_id` text NOT NULL,
-	`name` text NOT NULL,
-	`description` text,
-	`path_filter` text,
-	`created_at` text NOT NULL,
-	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `workflow_runs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`workflow_template_id` text NOT NULL,
 	`project_id` text NOT NULL,
-	`subproject_id` text,
+	`task_description` text,
 	`status` text DEFAULT 'pending' NOT NULL,
 	`current_stage` text,
 	`created_at` text NOT NULL,
 	`completed_at` text,
 	FOREIGN KEY (`workflow_template_id`) REFERENCES `workflow_templates`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`subproject_id`) REFERENCES `subprojects`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `workflow_templates` (

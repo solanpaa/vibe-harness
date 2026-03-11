@@ -6,17 +6,21 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Check, MessageSquare, Clock } from "lucide-react";
 
 interface Review {
   id: string;
-  sessionId: string;
+  taskId: string;
   workflowRunId: string | null;
   round: number;
   status: string;
   aiSummary: string | null;
   createdAt: string;
+}
+
+interface TaskInfo {
+  id: string;
+  originTaskId: string | null;
 }
 
 export default function ReviewHistoryPage({
@@ -30,20 +34,36 @@ export default function ReviewHistoryPage({
   const [allReviews, setAllReviews] = useState<Review[]>([]);
 
   useEffect(() => {
-    // Load the current review to get its sessionId
+    // Load the current review to find its task chain
     fetch(`/api/reviews/${id}`)
       .then((r) => r.json())
-      .then((review: Review) => {
+      .then(async (review: Review) => {
         setCurrentReview(review);
-        // Load all reviews (filter by sessionId on the client for now)
-        fetch("/api/reviews")
-          .then((r) => r.json())
-          .then((reviews: Review[]) => {
-            const related = reviews
-              .filter((r) => r.sessionId === review.sessionId || r.workflowRunId === review.workflowRunId)
-              .sort((a, b) => a.round - b.round);
-            setAllReviews(related);
-          });
+
+        // Get the session to find the origin session ID
+        const taskRes = await fetch(`/api/tasks/${review.taskId}`);
+        const taskInfo: TaskInfo = await taskRes.json();
+        const originId = taskInfo.originTaskId || taskInfo.id;
+
+        // Load all sessions to find the full chain
+        const tasksRes = await fetch("/api/tasks?fields=summary");
+        const allTasks: TaskInfo[] = await tasksRes.json();
+        const chainTaskIds = new Set(
+          allTasks
+            .filter(
+              (s) =>
+                s.id === originId || s.originTaskId === originId
+            )
+            .map((s) => s.id)
+        );
+
+        // Load all reviews and filter to those belonging to the chain
+        const reviewsRes = await fetch("/api/reviews");
+        const reviews: Review[] = await reviewsRes.json();
+        const related = reviews
+          .filter((r) => chainTaskIds.has(r.taskId))
+          .sort((a, b) => a.round - b.round);
+        setAllReviews(related);
       });
   }, [id]);
 
@@ -79,7 +99,7 @@ export default function ReviewHistoryPage({
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Review History</h1>
         <p className="text-muted-foreground">
-          All review rounds for this session
+          All review rounds for this task
         </p>
       </div>
 
@@ -112,7 +132,7 @@ export default function ReviewHistoryPage({
                     </CardTitle>
                     <div className="flex items-center gap-2">
                       <Badge className={statusColors[review.status] || ""}>
-                        {review.status.replace("_", " ")}
+                        {review.status.replaceAll("_", " ")}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {new Date(review.createdAt).toLocaleString()}

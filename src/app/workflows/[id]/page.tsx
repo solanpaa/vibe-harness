@@ -6,12 +6,18 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
   CheckCircle,
   CircleDot,
   Clock,
   Loader2,
+  Pencil,
   Play,
+  Plus,
+  Save,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,6 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -33,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   CredentialSet,
   Project,
@@ -167,10 +175,16 @@ export default function WorkflowDetailPage({
   const [runForm, setRunForm] = useState({
     projectId: "",
     credentialSetId: "",
+    taskDescription: "",
   });
 
   // Collapsible prompt templates
   const [expandedStages, setExpandedStages] = useState<Set<string>>(new Set());
+  // Editing state
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editStages, setEditStages] = useState<WorkflowStage[]>([]);
 
   const toggleStage = (name: string) =>
     setExpandedStages((prev) => {
@@ -179,6 +193,76 @@ export default function WorkflowDetailPage({
       else next.add(name);
       return next;
     });
+
+  const startEditing = () => {
+    if (!template) return;
+    setEditName(template.name);
+    setEditDescription(template.description || "");
+    setEditStages(template.stages.map((s) => ({ ...s })));
+    setEditing(true);
+  };
+
+  const cancelEditing = () => setEditing(false);
+
+  const saveEditing = async () => {
+    if (editStages.length === 0) {
+      toast.error("Workflow must have at least one stage");
+      return;
+    }
+    if (editStages.some((s) => !s.name.trim())) {
+      toast.error("All stages must have a name");
+      return;
+    }
+    const res = await fetch(`/api/workflows/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: editName,
+        description: editDescription,
+        stages: editStages,
+      }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setTemplate(updated);
+      setEditing(false);
+      toast.success("Workflow updated");
+    } else {
+      toast.error("Failed to save workflow");
+    }
+  };
+
+  const addStage = () => {
+    setEditStages((prev) => [
+      ...prev,
+      {
+        name: `stage-${prev.length + 1}`,
+        promptTemplate: "",
+        autoAdvance: false,
+        reviewRequired: true,
+      },
+    ]);
+  };
+
+  const removeStage = (idx: number) => {
+    setEditStages((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const moveStage = (idx: number, dir: -1 | 1) => {
+    setEditStages((prev) => {
+      const next = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  };
+
+  const updateStage = (idx: number, patch: Partial<WorkflowStage>) => {
+    setEditStages((prev) =>
+      prev.map((s, i) => (i === idx ? { ...s, ...patch } : s))
+    );
+  };
 
   /* ---- data loading ---- */
 
@@ -227,8 +311,8 @@ export default function WorkflowDetailPage({
 
   const handleStartRun = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!runForm.projectId) {
-      toast.error("Please select a project");
+    if (!runForm.projectId || !runForm.taskDescription.trim()) {
+      toast.error("Please select a project and describe the task");
       return;
     }
     setStarting(true);
@@ -240,6 +324,7 @@ export default function WorkflowDetailPage({
           action: "start_run",
           workflowTemplateId: id,
           projectId: runForm.projectId,
+          taskDescription: runForm.taskDescription,
           credentialSetId: runForm.credentialSetId || undefined,
         }),
       });
@@ -251,10 +336,10 @@ export default function WorkflowDetailPage({
       const result = await res.json();
       toast.success("Workflow run started");
       setRunOpen(false);
-      setRunForm({ projectId: "", credentialSetId: "" });
+      setRunForm({ projectId: "", credentialSetId: "", taskDescription: "" });
       // Navigate to the session that was created for the first stage
-      if (result.sessionId) {
-        router.push(`/sessions/${result.sessionId}`);
+      if (result.taskId) {
+        router.push(`/tasks/${result.taskId}`);
       } else {
         loadData();
       }
@@ -363,58 +448,196 @@ export default function WorkflowDetailPage({
           <CardTitle>Stage Progression</CardTitle>
         </CardHeader>
         <CardContent>
-          <StagePipeline stages={template.stages} />
+          <StagePipeline stages={editing ? editStages : template.stages} />
         </CardContent>
       </Card>
 
       {/* Stage definitions */}
       <Card>
         <CardHeader>
-          <CardTitle>
-            Stages{" "}
-            <Badge variant="secondary" className="ml-2">
-              {template.stages.length}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {template.stages.map((stage, idx) => (
-            <div
-              key={stage.name}
-              className="rounded-lg border p-4 transition-colors hover:bg-muted/50"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                    {idx + 1}
-                  </span>
-                  <span className="font-medium">{stage.name}</span>
-                  <div className="flex gap-1.5">
-                    {stage.reviewRequired && (
-                      <Badge variant="outline">Review Required</Badge>
-                    )}
-                    {stage.autoAdvance && (
-                      <Badge variant="secondary">Auto-advance</Badge>
-                    )}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => toggleStage(stage.name)}
-                >
-                  {expandedStages.has(stage.name)
-                    ? "Hide prompt"
-                    : "Show prompt"}
+          <div className="flex items-center justify-between">
+            <CardTitle>
+              Stages{" "}
+              <Badge variant="secondary" className="ml-2">
+                {editing ? editStages.length : template.stages.length}
+              </Badge>
+            </CardTitle>
+            {!editing ? (
+              <Button variant="outline" size="sm" onClick={startEditing}>
+                <Pencil className="mr-1 h-3 w-3" />
+                Edit
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={saveEditing}>
+                  <Save className="mr-1 h-3 w-3" />
+                  Save
+                </Button>
+                <Button variant="ghost" size="sm" onClick={cancelEditing}>
+                  <X className="mr-1 h-3 w-3" />
+                  Cancel
                 </Button>
               </div>
-              {expandedStages.has(stage.name) && (
-                <pre className="mt-3 max-h-60 overflow-auto rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
-                  {stage.promptTemplate}
-                </pre>
-              )}
-            </div>
-          ))}
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {editing ? (
+            <>
+              {/* Editable name & description */}
+              <div className="space-y-3 mb-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">Workflow Name</Label>
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Description</Label>
+                  <Input
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="Optional description"
+                  />
+                </div>
+              </div>
+              <Separator />
+              {/* Editable stages */}
+              {editStages.map((stage, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-lg border p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                        {idx + 1}
+                      </span>
+                      <Input
+                        value={stage.name}
+                        onChange={(e) =>
+                          updateStage(idx, { name: e.target.value })
+                        }
+                        className="h-8 w-48 text-sm font-medium"
+                        placeholder="Stage name"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        disabled={idx === 0}
+                        onClick={() => moveStage(idx, -1)}
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        disabled={idx === editStages.length - 1}
+                        onClick={() => moveStage(idx, 1)}
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive"
+                        onClick={() => removeStage(idx)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  <Textarea
+                    value={stage.promptTemplate}
+                    onChange={(e) =>
+                      updateStage(idx, { promptTemplate: e.target.value })
+                    }
+                    placeholder="Prompt template for this stage..."
+                    className="text-sm min-h-[80px]"
+                  />
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={stage.reviewRequired}
+                        onChange={(e) =>
+                          updateStage(idx, {
+                            reviewRequired: e.target.checked,
+                          })
+                        }
+                      />
+                      Review required
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={stage.autoAdvance}
+                        onChange={(e) =>
+                          updateStage(idx, {
+                            autoAdvance: e.target.checked,
+                          })
+                        }
+                      />
+                      Auto-advance
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={addStage}
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add Stage
+              </Button>
+            </>
+          ) : (
+            /* Read-only stages */
+            template.stages.map((stage, idx) => (
+              <div
+                key={stage.name}
+                className="rounded-lg border p-4 transition-colors hover:bg-muted/50"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                      {idx + 1}
+                    </span>
+                    <span className="font-medium">{stage.name}</span>
+                    <div className="flex gap-1.5">
+                      {stage.reviewRequired && (
+                        <Badge variant="outline">Review Required</Badge>
+                      )}
+                      {stage.autoAdvance && (
+                        <Badge variant="secondary">Auto-advance</Badge>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toggleStage(stage.name)}
+                  >
+                    {expandedStages.has(stage.name)
+                      ? "Hide prompt"
+                      : "Show prompt"}
+                  </Button>
+                </div>
+                {expandedStages.has(stage.name) && (
+                  <pre className="mt-3 max-h-60 overflow-auto rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
+                    {stage.promptTemplate}
+                  </pre>
+                )}
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 
@@ -519,6 +742,19 @@ export default function WorkflowDetailPage({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Task Description *</Label>
+              <Textarea
+                value={runForm.taskDescription}
+                onChange={(e) =>
+                  setRunForm((f) => ({ ...f, taskDescription: e.target.value }))
+                }
+                placeholder="Describe the feature or task to implement..."
+                className="min-h-[100px]"
+                required
+              />
             </div>
 
             <Button type="submit" className="w-full" disabled={starting}>

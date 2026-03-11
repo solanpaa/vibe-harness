@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getSessionSandbox } from "@/lib/services/session-manager";
+import { getTaskSandbox } from "@/lib/services/task-manager";
 
 export async function GET(
   request: NextRequest,
@@ -10,11 +10,11 @@ export async function GET(
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      const sandbox = getSessionSandbox(id);
+      const sandbox = getTaskSandbox(id);
 
       if (!sandbox) {
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Session not found or not running" })}\n\n`)
+          encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Task not found or not running" })}\n\n`)
         );
         controller.close();
         return;

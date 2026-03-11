@@ -45,26 +45,6 @@ export const CreateProjectSchema = z.object({
 });
 export type CreateProject = z.infer<typeof CreateProjectSchema>;
 
-// ── Subprojects ────────────────────────────────────────────────────
-
-export const SubprojectSchema = z.object({
-  id: z.string().uuid(),
-  projectId: z.string().uuid(),
-  name: z.string().min(1),
-  description: z.string().optional(),
-  pathFilter: z.string().optional(),
-  createdAt: z.string().datetime(),
-});
-export type Subproject = z.infer<typeof SubprojectSchema>;
-
-export const CreateSubprojectSchema = z.object({
-  projectId: z.string().uuid(),
-  name: z.string().min(1),
-  description: z.string().optional(),
-  pathFilter: z.string().optional(),
-});
-export type CreateSubproject = z.infer<typeof CreateSubprojectSchema>;
-
 // ── Credentials ────────────────────────────────────────────────────
 
 export const CredentialEntryType = z.enum([
@@ -114,42 +94,42 @@ export const WorkflowTemplateSchema = z.object({
 });
 export type WorkflowTemplate = z.infer<typeof WorkflowTemplateSchema>;
 
-// ── Sessions ───────────────────────────────────────────────────────
+// ── Tasks ───────────────────────────────────────────────────────
 
-export const SessionStatus = z.enum([
+export const TaskStatus = z.enum([
   "pending",
   "running",
   "paused",
+  "awaiting_review",
   "completed",
   "failed",
 ]);
-export type SessionStatus = z.infer<typeof SessionStatus>;
+export type TaskStatus = z.infer<typeof TaskStatus>;
 
-export const SessionSchema = z.object({
+export const TaskSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
-  subprojectId: z.string().uuid().optional().nullable(),
   workflowRunId: z.string().uuid().optional().nullable(),
   stageName: z.string().optional().nullable(),
   agentDefinitionId: z.string().uuid(),
   credentialSetId: z.string().uuid().optional().nullable(),
   sandboxId: z.string().optional().nullable(),
-  status: SessionStatus,
+  originTaskId: z.string().uuid().optional().nullable(),
+  status: TaskStatus,
   prompt: z.string(),
   output: z.string().optional(),
   createdAt: z.string().datetime(),
   completedAt: z.string().datetime().optional().nullable(),
 });
-export type Session = z.infer<typeof SessionSchema>;
+export type Task = z.infer<typeof TaskSchema>;
 
-export const CreateSessionSchema = z.object({
+export const CreateTaskSchema = z.object({
   projectId: z.string().uuid(),
-  subprojectId: z.string().uuid().optional().nullable(),
   agentDefinitionId: z.string().uuid(),
   credentialSetId: z.string().uuid().optional().nullable(),
   prompt: z.string().min(1),
 });
-export type CreateSession = z.infer<typeof CreateSessionSchema>;
+export type CreateTask = z.infer<typeof CreateTaskSchema>;
 
 // ── Workflow Runs ──────────────────────────────────────────────────
 
@@ -166,7 +146,7 @@ export const WorkflowRunSchema = z.object({
   id: z.string().uuid(),
   workflowTemplateId: z.string().uuid(),
   projectId: z.string().uuid(),
-  subprojectId: z.string().uuid().optional().nullable(),
+  taskDescription: z.string().optional().nullable(),
   status: WorkflowRunStatus,
   currentStage: z.string().optional().nullable(),
   createdAt: z.string().datetime(),
@@ -186,7 +166,7 @@ export type ReviewStatus = z.infer<typeof ReviewStatus>;
 export const ReviewSchema = z.object({
   id: z.string().uuid(),
   workflowRunId: z.string().uuid().optional().nullable(),
-  sessionId: z.string().uuid(),
+  taskId: z.string().uuid(),
   round: z.number().int().min(1),
   status: ReviewStatus,
   aiSummary: z.string().optional().nullable(),

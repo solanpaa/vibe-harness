@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { createReviewForSession } from "@/lib/services/review-service";
+import { createReviewForTask } from "@/lib/services/review-service";
 
 export async function GET() {
   const db = getDb();
@@ -12,15 +12,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
-  if (!body.sessionId) {
-    return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+  if (!body.taskId) {
+    return NextResponse.json({ error: "taskId is required" }, { status: 400 });
   }
 
   try {
-    const reviewId = await createReviewForSession(body.sessionId);
+    const reviewId = await createReviewForTask(body.taskId);
     if (!reviewId) {
       return NextResponse.json(
-        { error: "Could not create review — session or project not found" },
+        { error: "Could not create review — task or project not found" },
         { status: 404 }
       );
     }

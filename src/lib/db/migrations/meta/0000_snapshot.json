@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d1efbd8d-0336-4a1d-b50e-affbbaeeb68c",
+  "id": "8b67bf7b-75b3-4d86-bd21-faccab18618c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agent_definitions": {
@@ -344,8 +344,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "session_id": {
-          "name": "session_id",
+        "task_id": {
+          "name": "task_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -381,6 +381,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "plan_markdown": {
+          "name": "plan_markdown",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -404,12 +411,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "reviews_session_id_sessions_id_fk": {
-          "name": "reviews_session_id_sessions_id_fk",
+        "reviews_task_id_tasks_id_fk": {
+          "name": "reviews_task_id_tasks_id_fk",
           "tableFrom": "reviews",
-          "tableTo": "sessions",
+          "tableTo": "tasks",
           "columnsFrom": [
-            "session_id"
+            "task_id"
           ],
           "columnsTo": [
             "id"
@@ -422,8 +429,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "sessions": {
-      "name": "sessions",
+    "tasks": {
+      "name": "tasks",
       "columns": {
         "id": {
           "name": "id",
@@ -437,13 +444,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "subproject_id": {
-          "name": "subproject_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "workflow_run_id": {
@@ -481,6 +481,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "origin_task_id": {
+          "name": "origin_task_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -495,6 +502,21 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "use_worktree": {
+          "name": "use_worktree",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
         },
         "output": {
           "name": "output",
@@ -520,9 +542,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "sessions_project_id_projects_id_fk": {
-          "name": "sessions_project_id_projects_id_fk",
-          "tableFrom": "sessions",
+        "tasks_project_id_projects_id_fk": {
+          "name": "tasks_project_id_projects_id_fk",
+          "tableFrom": "tasks",
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
@@ -533,22 +555,9 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "sessions_subproject_id_subprojects_id_fk": {
-          "name": "sessions_subproject_id_subprojects_id_fk",
-          "tableFrom": "sessions",
-          "tableTo": "subprojects",
-          "columnsFrom": [
-            "subproject_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "sessions_workflow_run_id_workflow_runs_id_fk": {
-          "name": "sessions_workflow_run_id_workflow_runs_id_fk",
-          "tableFrom": "sessions",
+        "tasks_workflow_run_id_workflow_runs_id_fk": {
+          "name": "tasks_workflow_run_id_workflow_runs_id_fk",
+          "tableFrom": "tasks",
           "tableTo": "workflow_runs",
           "columnsFrom": [
             "workflow_run_id"
@@ -559,9 +568,9 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "sessions_agent_definition_id_agent_definitions_id_fk": {
-          "name": "sessions_agent_definition_id_agent_definitions_id_fk",
-          "tableFrom": "sessions",
+        "tasks_agent_definition_id_agent_definitions_id_fk": {
+          "name": "tasks_agent_definition_id_agent_definitions_id_fk",
+          "tableFrom": "tasks",
           "tableTo": "agent_definitions",
           "columnsFrom": [
             "agent_definition_id"
@@ -572,9 +581,9 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "sessions_credential_set_id_credential_sets_id_fk": {
-          "name": "sessions_credential_set_id_credential_sets_id_fk",
-          "tableFrom": "sessions",
+        "tasks_credential_set_id_credential_sets_id_fk": {
+          "name": "tasks_credential_set_id_credential_sets_id_fk",
+          "tableFrom": "tasks",
           "tableTo": "credential_sets",
           "columnsFrom": [
             "credential_set_id"
@@ -583,72 +592,6 @@
             "id"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "subprojects": {
-      "name": "subprojects",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "path_filter": {
-          "name": "path_filter",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "subprojects_project_id_projects_id_fk": {
-          "name": "subprojects_project_id_projects_id_fk",
-          "tableFrom": "subprojects",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -680,8 +623,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "subproject_id": {
-          "name": "subproject_id",
+        "task_description": {
+          "name": "task_description",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -738,19 +681,6 @@
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "workflow_runs_subproject_id_subprojects_id_fk": {
-          "name": "workflow_runs_subproject_id_subprojects_id_fk",
-          "tableFrom": "workflow_runs",
-          "tableTo": "subprojects",
-          "columnsFrom": [
-            "subproject_id"
           ],
           "columnsTo": [
             "id"

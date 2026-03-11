@@ -19,6 +19,44 @@ export async function GET(
   return NextResponse.json({ ...template, stages: JSON.parse(template.stages) });
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const db = getDb();
+  const body = await request.json();
+
+  const existing = db
+    .select()
+    .from(schema.workflowTemplates)
+    .where(eq(schema.workflowTemplates.id, id))
+    .get();
+  if (!existing) {
+    return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+  }
+
+  const updates: Record<string, string> = {
+    updatedAt: new Date().toISOString(),
+  };
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.description !== undefined) updates.description = body.description;
+  if (body.stages !== undefined) updates.stages = JSON.stringify(body.stages);
+
+  db.update(schema.workflowTemplates)
+    .set(updates)
+    .where(eq(schema.workflowTemplates.id, id))
+    .run();
+
+  const updated = db
+    .select()
+    .from(schema.workflowTemplates)
+    .where(eq(schema.workflowTemplates.id, id))
+    .get();
+
+  return NextResponse.json({ ...updated!, stages: JSON.parse(updated!.stages) });
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
