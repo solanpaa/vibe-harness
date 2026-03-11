@@ -3,8 +3,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Terminal, Loader2, TerminalSquare } from "lucide-react";
+import { Terminal, Loader2, TerminalSquare, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // ---- Local event types (client-side, no server imports) -------------------
 
@@ -22,22 +24,41 @@ function stripOsc(line: string): string {
   return line.replace(/\]0;[^\x07\x1b]*(\x07|\x1b\\)?/g, "");
 }
 
+/** Shorten long file paths — keep last 2-3 segments */
+function shortenPath(p: string): string {
+  // Strip common worktree prefixes
+  const worktreeMatch = p.match(/\.vibe-harness-worktrees\/[^/]+\/(.+)/);
+  if (worktreeMatch) return worktreeMatch[1];
+  // Strip /Users/.../personal/project/ style prefixes
+  const segments = p.split("/");
+  if (segments.length > 4) {
+    return "…/" + segments.slice(-3).join("/");
+  }
+  return p;
+}
+
 /** Extract a short detail string for a tool_start event */
 function toolDetail(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "bash":
-    case "shell":
-      return (args.command as string) ?? (args.cmd as string) ?? "";
+    case "shell": {
+      const cmd = (args.command as string) ?? (args.cmd as string) ?? "";
+      // Shorten paths within bash commands
+      return cmd.replace(/\/\S*\.vibe-harness-worktrees\/[^/\s]+\//g, "");
+    }
     case "edit":
     case "view":
     case "create":
-      return (args.path as string) ?? (args.file_path as string) ?? "";
+      return shortenPath((args.path as string) ?? (args.file_path as string) ?? "");
     case "grep":
       return (args.pattern as string) ?? "";
     case "glob":
       return (args.pattern as string) ?? "";
+    case "sql":
+      return (args.description as string) ?? "";
+    case "task":
+      return (args.description as string) ?? "";
     default: {
-      // Show first string argument as a short hint
       for (const v of Object.values(args)) {
         if (typeof v === "string" && v.length > 0) return v;
       }
@@ -68,10 +89,8 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
       return { kind: "reasoning", content };
     }
     case "tool.execution_start": {
-      // Skip sub-agent tool events (nested tools have parentToolCallId)
       if (data.parentToolCallId) return null;
       const name = (data.toolName as string) ?? (data.name as string) ?? "tool";
-      // Skip internal tools that don't need display
       if (name === "report_intent") return null;
       const args = (data.arguments as Record<string, unknown>) ?? {};
       return { kind: "tool_start", name, detail: toolDetail(name, args) };
@@ -86,7 +105,6 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
         durationMs: usage?.sessionDurationMs as number | undefined,
       };
     }
-    // Skip these event types entirely
     case "tool.execution_complete":
     case "assistant.message_delta":
     case "assistant.reasoning_delta":
@@ -106,25 +124,18 @@ function parseLine(line: string): TerminalEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
-  // Try to parse as JSONL event
   try {
     const parsed = JSON.parse(trimmed);
     if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string") {
       return mapJsonlEvent(parsed);
     }
   } catch {
-    // If it looks like a JSONL line (or fragment), skip it silently.
-    // Raw JSON is never useful to show to users.
     if (trimmed.startsWith("{") || trimmed.startsWith('"type"')) {
       return null;
     }
   }
 
-  // Skip Copilot CLI stderr progress lines (✓tool, ▶tool, etc.)
-  // The JSONL events already capture tool execution info.
   if (/^[✓▶⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(trimmed)) return null;
-
-  // Skip common non-informative lines
   if (trimmed === "tool" || trimmed.startsWith("Compiling")) return null;
 
   return { kind: "raw", text: line };
@@ -134,11 +145,11 @@ function parseLine(line: string): TerminalEvent | null {
 
 function MessageBlock({ content }: { content: string }) {
   return (
-    <div className="rounded-md px-3 py-2 my-1" style={{ backgroundColor: "#111827" }}>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[10px] font-medium text-gray-400">🤖 Copilot</span>
+    <div className="rounded-lg px-4 py-3 my-2 border border-gray-700/50" style={{ backgroundColor: "#111827" }}>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[11px] font-semibold text-blue-400">Copilot</span>
       </div>
-      <div className="text-sm text-gray-100 whitespace-pre-wrap break-words leading-relaxed">
+      <div className="text-[13px] text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
         {content}
       </div>
     </div>
@@ -146,22 +157,79 @@ function MessageBlock({ content }: { content: string }) {
 }
 
 function ReasoningBlock({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > 150;
+  const display = isLong && !expanded ? content.slice(0, 150) + "…" : content;
+
   return (
-    <div className="rounded-md px-3 py-1.5 my-0.5" style={{ backgroundColor: "#0d1117" }}>
-      <div className="text-[10px] font-medium text-gray-500 mb-0.5">💭 Thinking</div>
-      <div className="text-xs text-gray-500 whitespace-pre-wrap break-words leading-relaxed italic">
-        {content}
+    <div
+      className="rounded px-3 py-1.5 my-1 cursor-pointer hover:bg-gray-800/50 transition-colors"
+      style={{ backgroundColor: "#080c14" }}
+      onClick={() => isLong && setExpanded(!expanded)}
+    >
+      <div className="flex items-start gap-1">
+        <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">›</span>
+        <div className="text-[11px] text-gray-500 italic leading-relaxed min-w-0 reasoning-markdown">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => <span>{children} </span>,
+              strong: ({ children }) => <strong className="text-gray-400 font-semibold">{children}</strong>,
+              em: ({ children }) => <em>{children}</em>,
+              code: ({ children }) => <code className="text-gray-400 bg-gray-800/50 rounded px-1 text-[10px]">{children}</code>,
+              a: ({ children }) => <span className="text-gray-400">{children}</span>,
+              ul: ({ children }) => <span>{children}</span>,
+              ol: ({ children }) => <span>{children}</span>,
+              li: ({ children }) => <span>• {children} </span>,
+            }}
+          >
+            {display}
+          </ReactMarkdown>
+        </div>
+        {isLong && (
+          <ChevronRight className={`h-3 w-3 text-gray-600 shrink-0 mt-0.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
+        )}
       </div>
     </div>
   );
 }
 
+/** Tool name → icon mapping */
+function toolIcon(name: string): string {
+  switch (name) {
+    case "bash":
+    case "shell":
+      return "$";
+    case "edit":
+      return "✏";
+    case "view":
+    case "read_bash":
+      return "↗";
+    case "create":
+      return "+";
+    case "grep":
+    case "glob":
+      return "🔍";
+    case "task":
+      return "⚡";
+    case "sql":
+      return "⊞";
+    default:
+      return "▶";
+  }
+}
+
 function ToolStartLine({ name, detail }: { name: string; detail: string }) {
-  const truncated = detail.length > 120 ? detail.slice(0, 120) + "…" : detail;
+  const truncated = detail.length > 100 ? detail.slice(0, 100) + "…" : detail;
+  const icon = toolIcon(name);
+
   return (
-    <div className="font-mono text-xs text-gray-500 py-0.5 truncate">
-      ▶ <span className="text-gray-400">{name}</span>
-      {truncated && <span className="text-gray-600"> {truncated}</span>}
+    <div className="font-mono text-[11px] py-0.5 flex items-baseline gap-1.5 min-w-0">
+      <span className="text-gray-600 shrink-0">{icon}</span>
+      <span className="text-gray-400 font-semibold shrink-0">{name}</span>
+      {truncated && (
+        <span className="text-gray-600 truncate">{truncated}</span>
+      )}
     </div>
   );
 }
@@ -176,7 +244,6 @@ function ResultCard({
   durationMs?: number;
 }) {
   const ok = exitCode === 0;
-  const borderColor = ok ? "border-green-800" : "border-red-800";
   const formatDuration = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
     const s = Math.round(ms / 1000);
@@ -188,20 +255,23 @@ function ResultCard({
 
   return (
     <div
-      className={`mt-2 rounded-md border ${borderColor} px-3 py-2`}
+      className={`mt-3 rounded-lg border px-4 py-2.5 ${ok ? "border-green-800/60" : "border-red-800/60"}`}
       style={{ backgroundColor: "#0a0f1a" }}
     >
-      <div className="text-xs font-medium text-gray-300 mb-1">Session Result</div>
-      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-400">
-        <span>
-          Exit code:{" "}
-          <span className={ok ? "text-green-400" : "text-red-400"}>{exitCode}</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
+        <span className="flex items-center gap-1.5">
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${ok ? "bg-green-500" : "bg-red-500"}`} />
+          <span className={ok ? "text-green-400" : "text-red-400"}>
+            {ok ? "Completed" : `Failed (${exitCode})`}
+          </span>
         </span>
         {premiumRequests != null && (
-          <span>Premium requests: <span className="text-gray-200">{premiumRequests}</span></span>
+          <span>
+            {premiumRequests} premium {premiumRequests === 1 ? "request" : "requests"}
+          </span>
         )}
         {durationMs != null && (
-          <span>Duration: <span className="text-gray-200">{formatDuration(durationMs)}</span></span>
+          <span>{formatDuration(durationMs)}</span>
         )}
       </div>
     </div>
@@ -210,7 +280,7 @@ function ResultCard({
 
 function RawLine({ text }: { text: string }) {
   return (
-    <div className="font-mono text-xs text-green-400 whitespace-pre-wrap break-all">
+    <div className="font-mono text-xs text-green-400/70 whitespace-pre-wrap break-all">
       {stripOsc(text)}
     </div>
   );
