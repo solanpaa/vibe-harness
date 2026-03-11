@@ -9,6 +9,7 @@ export interface SandboxOptions {
   dockerImage?: string | null;
   prompt?: string;
   agentArgs?: string[];
+  sandboxName?: string;
 }
 
 export interface SandboxInstance {
@@ -16,20 +17,21 @@ export interface SandboxInstance {
   process: ChildProcess;
   output: string[];
   events: EventEmitter;
+  workDir: string; // actual working directory (may be worktree)
 }
 
 const activeSandboxes = new Map<string, SandboxInstance>();
 
 /**
- * Build the full command + env for launching an agent in a Docker sandbox.
- * Uses `docker sandbox run` CLI with proper flags.
+ * Build the command for launching an agent in a Docker sandbox.
  *
- * docker sandbox run [options] <agent> [agent-options]
- *   --workspace <path>     Project directory (exposed at same path inside sandbox)
- *   -e KEY=VALUE           Environment variables
- *   -v host:sandbox[:ro]   Volume/file mounts
- *   --credentials host     Use host credentials
- *   --name <name>          Named sandbox
+ * Syntax: docker sandbox run [OPTIONS] AGENT [WORKSPACE] [EXTRA_WORKSPACE...] [-- AGENT_ARGS...]
+ *
+ * Credentials (GITHUB_TOKEN, etc.) are picked up from the host's shell
+ * environment — Docker Desktop daemon reads them. Credential vault env vars
+ * are injected into the spawned process env so the daemon inherits them.
+ *
+ * See: https://docs.docker.com/ai/sandboxes/agents/copilot/
  */
 function buildSandboxCommand(options: SandboxOptions): {
   command: string;
@@ -39,40 +41,34 @@ function buildSandboxCommand(options: SandboxOptions): {
   const args: string[] = ["sandbox", "run"];
   const env = { ...process.env };
 
-  // Workspace (project directory)
-  args.push("--workspace", options.projectDir);
+  // Sandbox name (for easy identification)
+  if (options.sandboxName) {
+    args.push("--name", options.sandboxName);
+  }
 
-  // Custom Docker image/template (for agents like Copilot CLI)
+  // Custom template image (e.g., for custom agent setups)
   if (options.dockerImage) {
     args.push("-t", options.dockerImage);
   }
 
-  // Inject credentials from vault
-  if (options.credentialSetId) {
-    const creds = buildSandboxCredentials(options.credentialSetId);
-
-    // Environment variables
-    for (const [key, value] of Object.entries(creds.envVars)) {
-      args.push("-e", `${key}=${value}`);
-    }
-
-    // File/directory mounts
-    for (const mount of creds.fileMounts) {
-      args.push("-v", `${mount.key}:${mount.value}`);
-    }
-
-    // Use host credentials if any docker logins are configured
-    if (creds.dockerLogins.length > 0) {
-      args.push("--credentials", "host");
-    }
-  }
-
-  // Agent name (e.g., "claude", "gemini", "copilot")
+  // Agent name (e.g., "copilot", "claude", "gemini")
   args.push(options.agentCommand);
 
-  // Agent-specific args (e.g., "--yolo" for copilot)
+  // Workspace directory (positional arg after agent name)
+  args.push(options.projectDir);
+
+  // Agent-specific args after -- separator (e.g., "--yolo" for copilot)
   if (options.agentArgs?.length) {
     args.push("--", ...options.agentArgs);
+  }
+
+  // Inject credential vault env vars into the process environment
+  // so the Docker daemon can pick them up
+  if (options.credentialSetId) {
+    const creds = buildSandboxCredentials(options.credentialSetId);
+    for (const [key, value] of Object.entries(creds.envVars)) {
+      env[key] = value;
+    }
   }
 
   return { command: "docker", args, env };
@@ -125,6 +121,7 @@ export function launchSandbox(
     process: proc,
     output,
     events,
+    workDir: options.projectDir,
   };
 
   activeSandboxes.set(sessionId, instance);
