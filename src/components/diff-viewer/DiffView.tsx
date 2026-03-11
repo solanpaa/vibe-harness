@@ -151,6 +151,28 @@ export function DiffView({
                                   "bg-red-50 dark:bg-red-950/30"
                               )}
                             >
+                              {/* Comment button — left gutter */}
+                              <div className="w-6 shrink-0 flex items-center justify-center">
+                                {!readOnly && onAddComment ? (
+                                  <button
+                                    className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700"
+                                    onClick={() =>
+                                      startComment(
+                                        file.path,
+                                        line.newLineNumber ??
+                                          line.oldLineNumber ??
+                                          null,
+                                        line.type === "delete"
+                                          ? "left"
+                                          : "right"
+                                      )
+                                    }
+                                    title="Add comment"
+                                  >
+                                    <MessageSquarePlus className="h-3 w-3" />
+                                  </button>
+                                ) : null}
+                              </div>
                               {/* Line numbers */}
                               <div className="w-12 shrink-0 text-right pr-2 text-muted-foreground select-none border-r">
                                 {line.oldLineNumber ?? ""}
@@ -171,33 +193,13 @@ export function DiffView({
                               <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
                                 {line.content}
                               </pre>
-                              {/* Comment button */}
-                              {!readOnly && onAddComment && (
-                                <button
-                                  className="opacity-0 group-hover:opacity-100 px-2 text-blue-500 hover:text-blue-700"
-                                  onClick={() =>
-                                    startComment(
-                                      file.path,
-                                      line.newLineNumber ??
-                                        line.oldLineNumber ??
-                                        null,
-                                      line.type === "delete"
-                                        ? "left"
-                                        : "right"
-                                    )
-                                  }
-                                  title="Add comment"
-                                >
-                                  <MessageSquarePlus className="h-3 w-3" />
-                                </button>
-                              )}
                             </div>
 
                             {/* Existing comments */}
                             {lineComments.map((c) => (
                               <div
                                 key={c.id}
-                                className="ml-24 mr-4 my-1 p-2 rounded border bg-yellow-50 dark:bg-yellow-950/20 text-xs"
+                                className="ml-[6.5rem] mr-4 my-1 p-2 rounded border bg-yellow-50 dark:bg-yellow-950/20 text-xs"
                               >
                                 <p className="whitespace-pre-wrap">{c.body}</p>
                               </div>
@@ -205,7 +207,7 @@ export function DiffView({
 
                             {/* Comment form */}
                             {isCommenting && (
-                              <div className="ml-24 mr-4 my-2 space-y-2">
+                              <div className="ml-[6.5rem] mr-4 my-2 space-y-2">
                                 <Textarea
                                   value={commentText}
                                   onChange={(e) =>

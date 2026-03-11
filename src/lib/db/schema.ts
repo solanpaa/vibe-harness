@@ -73,6 +73,7 @@ export const workflowRuns = sqliteTable("workflow_runs", {
     .references(() => projects.id),
   // The user's high-level task/feature description
   taskDescription: text("task_description"),
+  title: text("title"),
   status: text("status").notNull().default("pending"),
   currentStage: text("current_stage"),
   createdAt: text("created_at").notNull(),
@@ -100,6 +101,7 @@ export const tasks = sqliteTable("tasks", {
   originTaskId: text("origin_task_id"),
   status: text("status").notNull().default("pending"),
   prompt: text("prompt").notNull(),
+  title: text("title"),
   model: text("model"),
   useWorktree: integer("use_worktree").notNull().default(1), // 1=true, 0=false
   output: text("output"),

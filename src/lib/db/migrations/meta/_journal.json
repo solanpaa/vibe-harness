@@ -8,6 +8,13 @@
       "when": 1773255571925,
       "tag": "0000_dizzy_skrulls",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1773259782018,
+      "tag": "0001_clumsy_the_anarchist",
+      "breakpoints": true
     }
   ]
 }

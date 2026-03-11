@@ -75,21 +75,21 @@ export function WorkflowGroup({
     selection?.kind === "review" && selection.reviewId === reviewId;
 
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-px">
       {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 cursor-pointer"
+        className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted/60 cursor-pointer"
       >
         {expanded ? (
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
         )}
-        <Workflow className="size-4 shrink-0 text-muted-foreground" />
+        <Workflow className="size-3.5 shrink-0 text-muted-foreground" />
         <span
-          className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+          className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight hover:underline"
           onClick={(e) => {
             e.stopPropagation();
             if (bestTask) {
@@ -100,13 +100,13 @@ export function WorkflowGroup({
         >
           {runTitle ?? workflowName}
         </span>
-        <span className="shrink-0 text-xs text-muted-foreground">
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {completedCount}/{stages.length}
         </span>
         <Badge
           variant="secondary"
           className={cn(
-            "shrink-0 text-[10px] leading-tight capitalize",
+            "shrink-0 text-[10px] leading-none px-1.5 py-0 h-4 capitalize",
             statusBadgeClass[runStatus] ?? "",
           )}
         >
@@ -116,10 +116,9 @@ export function WorkflowGroup({
 
       {/* Stage tasks with injected review items (review above its task) */}
       {expanded && (
-        <div className="ml-3 border-l-2 border-border pl-1 space-y-0.5">
+        <div className="ml-3 border-l border-border/60 pl-1 space-y-px">
           {sortedTasks.map((task) => (
             <div key={task.id}>
-              {/* Review appears above its parent task */}
               {task.latestReview && (
                 <ReviewFeedItem
                   reviewId={task.latestReview.id}

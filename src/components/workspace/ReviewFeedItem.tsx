@@ -2,7 +2,6 @@
 
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 
 export interface ReviewFeedItemProps {
   reviewId: string;
@@ -13,13 +12,10 @@ export interface ReviewFeedItemProps {
   onClick: () => void;
 }
 
-const statusBadgeClass: Record<string, string> = {
-  pending_review:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
-  approved:
-    "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
-  changes_requested:
-    "bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+const statusDot: Record<string, string> = {
+  pending_review: "bg-yellow-500",
+  approved: "bg-green-500",
+  changes_requested: "bg-orange-500",
 };
 
 const statusLabel: Record<string, string> = {
@@ -40,27 +36,21 @@ export function ReviewFeedItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-        isNested ? "pl-4" : "pl-2",
+        "flex w-full items-center gap-1.5 rounded-md px-2 py-0.5 text-left transition-colors cursor-pointer",
+        isNested ? "pl-3" : "pl-2",
         isSelected ? "bg-accent" : "hover:bg-muted/60",
       )}
     >
-      <Star className="size-4 shrink-0 text-amber-500 fill-amber-500/20" />
-      <span className="text-sm font-medium">Review</span>
-      {round > 1 && (
-        <span className="text-xs text-muted-foreground">
-          Round {round}
+      <Star className="size-3 shrink-0 text-amber-500 fill-amber-500/30" />
+      <span className="text-[12px] text-muted-foreground">
+        Review{round > 1 ? ` · R${round}` : ""}
+      </span>
+      <span className="ml-auto flex items-center gap-1">
+        <span className={cn("size-1.5 rounded-full", statusDot[status] ?? "bg-gray-400")} />
+        <span className="text-[11px] text-muted-foreground">
+          {statusLabel[status] ?? status.replace(/_/g, " ")}
         </span>
-      )}
-      <Badge
-        variant="secondary"
-        className={cn(
-          "ml-auto shrink-0 text-[10px] leading-tight",
-          statusBadgeClass[status] ?? "",
-        )}
-      >
-        {statusLabel[status] ?? status.replace(/_/g, " ")}
-      </Badge>
+      </span>
     </button>
   );
 }

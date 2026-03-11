@@ -222,6 +222,11 @@ export function ReviewDetailPanel({
   const hasDiff = diffFiles.length > 0;
   const hasPlan = !!activeReview?.planMarkdown;
 
+  // Collapse agent plan by default when there are code changes to review
+  useEffect(() => {
+    setPlanExpanded(!hasDiff);
+  }, [activeReview?.id, hasDiff]);
+
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   async function handleAddComment(comment: InlineComment) {

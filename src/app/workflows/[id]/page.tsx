@@ -339,7 +339,7 @@ export default function WorkflowDetailPage({
       setRunForm({ projectId: "", credentialSetId: "", taskDescription: "" });
       // Navigate to the session that was created for the first stage
       if (result.taskId) {
-        router.push(`/tasks/${result.taskId}`);
+        router.push(`/`);
       } else {
         loadData();
       }

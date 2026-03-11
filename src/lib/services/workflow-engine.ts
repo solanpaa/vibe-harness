@@ -2,6 +2,7 @@ import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { startTask } from "./task-manager";
+import { generateTitle } from "@/lib/services/title-generator";
 import type { WorkflowStage } from "@/types/domain";
 
 /**
@@ -84,6 +85,18 @@ export async function startWorkflowRun(input: {
     })
     .run();
 
+  // Fire-and-forget title generation for the workflow run
+  if (input.taskDescription) {
+    generateTitle(input.taskDescription).then((title) => {
+      if (title) {
+        db.update(schema.workflowRuns)
+          .set({ title })
+          .where(eq(schema.workflowRuns.id, runId))
+          .run();
+      }
+    }).catch(() => {});
+  }
+
   // Get the project for the local path
   const project = db
     .select()
@@ -128,6 +141,16 @@ export async function startWorkflowRun(input: {
       completedAt: null,
     })
     .run();
+
+  // Fire-and-forget title generation for the task
+  generateTitle(input.taskDescription).then((title) => {
+    if (title) {
+      db.update(schema.tasks)
+        .set({ title })
+        .where(eq(schema.tasks.id, taskId))
+        .run();
+    }
+  }).catch(() => {});
 
   const agentCommand = agent.commandTemplate || "claude";
 

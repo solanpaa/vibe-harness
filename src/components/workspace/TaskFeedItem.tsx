@@ -18,12 +18,25 @@ export interface TaskFeedItemProps {
 }
 
 const statusIcon: Record<string, React.ReactNode> = {
-  pending: <Clock className="size-4 text-gray-400" />,
-  running: <Loader2 className="size-4 animate-spin text-blue-500" />,
-  awaiting_review: <GitPullRequestArrow className="size-4 text-yellow-500" />,
-  completed: <CheckCircle className="size-4 text-green-500" />,
-  failed: <XCircle className="size-4 text-red-500" />,
+  pending: <Clock className="size-3.5 text-gray-400" />,
+  running: <Loader2 className="size-3.5 animate-spin text-blue-500" />,
+  awaiting_review: <GitPullRequestArrow className="size-3.5 text-yellow-500" />,
+  completed: <CheckCircle className="size-3.5 text-green-500" />,
+  failed: <XCircle className="size-3.5 text-red-500" />,
 };
+
+/** Strip markdown syntax for clean preview text */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/#{1,6}\s*/g, "")      // headings
+    .replace(/\*\*(.+?)\*\*/g, "$1") // bold
+    .replace(/\*(.+?)\*/g, "$1")     // italic
+    .replace(/`(.+?)`/g, "$1")       // inline code
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1") // links
+    .replace(/\n+/g, " ")           // newlines → spaces
+    .replace(/\s{2,}/g, " ")        // collapse whitespace
+    .trim();
+}
 
 export function TaskFeedItem({
   task,
@@ -32,41 +45,41 @@ export function TaskFeedItem({
   onClick,
 }: TaskFeedItemProps) {
   const icon = statusIcon[task.status] ?? (
-    <Clock className="size-4 text-gray-400" />
+    <Clock className="size-3.5 text-gray-400" />
   );
 
   const label = isNested
     ? task.title ?? task.stageName ?? "Unknown stage"
     : task.title ?? task.projectName;
 
+  const promptPreview = stripMarkdown(task.prompt);
+
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-        isNested ? "pl-4" : "pl-2",
+        "flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left transition-colors cursor-pointer",
+        isNested ? "pl-3" : "pl-2",
         isSelected
           ? "bg-accent"
           : "hover:bg-muted/60",
       )}
     >
-      {/* Status icon */}
       <span className="mt-0.5 shrink-0">{icon}</span>
 
-      {/* Content */}
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-1">
-          <span className="truncate text-sm font-medium">{label}</span>
-        </span>
-        <span className="flex items-center justify-between gap-1">
-          <span className="truncate text-xs text-muted-foreground">
-            {task.prompt}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
+          <span className="truncate text-[13px] font-medium leading-tight">{label}</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
             {relativeTimeShort(task.createdAt)}
           </span>
         </span>
+        {(!isNested || !task.stageName) && (
+          <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+            {promptPreview}
+          </span>
+        )}
       </span>
     </button>
   );

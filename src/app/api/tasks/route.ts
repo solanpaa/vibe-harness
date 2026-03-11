@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { v4 as uuid } from "uuid";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
+import { generateTitle } from "@/lib/services/title-generator";
 
 export async function GET(request: NextRequest) {
   const db = getDb();
@@ -21,6 +22,105 @@ export async function GET(request: NextRequest) {
       .from(schema.tasks)
       .all();
     return NextResponse.json(rows);
+  }
+
+  // Enriched listing — tasks with related project, agent, workflow, and review data
+  if (searchParams.get("include") === "enriched") {
+    const rows = db
+      .select({
+        id: schema.tasks.id,
+        projectId: schema.tasks.projectId,
+        projectName: schema.projects.name,
+        title: schema.tasks.title,
+        agentName: schema.agentDefinitions.name,
+        agentType: schema.agentDefinitions.type,
+        workflowRunId: schema.tasks.workflowRunId,
+        stageName: schema.tasks.stageName,
+        originTaskId: schema.tasks.originTaskId,
+        status: schema.tasks.status,
+        prompt: schema.tasks.prompt,
+        model: schema.tasks.model,
+        sandboxId: schema.tasks.sandboxId,
+        createdAt: schema.tasks.createdAt,
+        completedAt: schema.tasks.completedAt,
+        wrTitle: schema.workflowRuns.title,
+        wrCurrentStage: schema.workflowRuns.currentStage,
+        wrStatus: schema.workflowRuns.status,
+        wtName: schema.workflowTemplates.name,
+        wtStages: schema.workflowTemplates.stages,
+      })
+      .from(schema.tasks)
+      .innerJoin(schema.projects, eq(schema.tasks.projectId, schema.projects.id))
+      .innerJoin(
+        schema.agentDefinitions,
+        eq(schema.tasks.agentDefinitionId, schema.agentDefinitions.id),
+      )
+      .leftJoin(
+        schema.workflowRuns,
+        eq(schema.tasks.workflowRunId, schema.workflowRuns.id),
+      )
+      .leftJoin(
+        schema.workflowTemplates,
+        eq(schema.workflowRuns.workflowTemplateId, schema.workflowTemplates.id),
+      )
+      .orderBy(desc(schema.tasks.createdAt))
+      .all();
+
+    // Build a map of taskId → latest review (highest round)
+    const reviewMap = new Map<
+      string,
+      { id: string; round: number; status: string }
+    >();
+    const allReviews = db
+      .select({
+        id: schema.reviews.id,
+        taskId: schema.reviews.taskId,
+        round: schema.reviews.round,
+        status: schema.reviews.status,
+      })
+      .from(schema.reviews)
+      .all();
+    for (const r of allReviews) {
+      const existing = reviewMap.get(r.taskId);
+      if (!existing || r.round > existing.round) {
+        reviewMap.set(r.taskId, { id: r.id, round: r.round, status: r.status });
+      }
+    }
+
+    const enriched = rows.map((row) => ({
+      id: row.id,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      title: row.title,
+      agentName: row.agentName,
+      agentType: row.agentType,
+      workflowRunId: row.workflowRunId,
+      stageName: row.stageName,
+      originTaskId: row.originTaskId,
+      status: row.status,
+      prompt: row.prompt,
+      model: row.model,
+      sandboxId: row.sandboxId,
+      createdAt: row.createdAt,
+      completedAt: row.completedAt,
+      latestReview: reviewMap.get(row.id) ?? null,
+      workflow: row.workflowRunId && row.wtName
+        ? {
+            runId: row.workflowRunId,
+            runTitle: row.wrTitle,
+            templateName: row.wtName,
+            currentStage: row.wrCurrentStage ?? "",
+            runStatus: row.wrStatus ?? "unknown",
+            stages: JSON.parse(row.wtStages ?? "[]") as Array<{
+              name: string;
+              promptTemplate: string;
+              reviewRequired: boolean;
+            }>,
+          }
+        : null,
+    }));
+
+    return NextResponse.json(enriched);
   }
 
   const allTasks = db.select().from(schema.tasks).all();
@@ -66,5 +166,16 @@ export async function POST(request: NextRequest) {
     const message = e instanceof Error ? e.message : "Failed to create task";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+
+  // Fire-and-forget title generation
+  generateTitle(task.prompt).then((title) => {
+    if (title) {
+      db.update(schema.tasks)
+        .set({ title })
+        .where(eq(schema.tasks.id, task.id))
+        .run();
+    }
+  }).catch(() => {});
+
   return NextResponse.json(task, { status: 201 });
 }

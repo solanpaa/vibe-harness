@@ -102,7 +102,7 @@ export default function ProjectDetailPage({
             <Trash2 className="mr-2 h-4 w-4" />
             Delete Project
           </Button>
-          <Button onClick={() => router.push(`/tasks?projectId=${id}`)}>
+          <Button onClick={() => router.push(`/`)}>
             <Play className="mr-2 h-4 w-4" />
             Launch Task
           </Button>

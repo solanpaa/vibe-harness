@@ -215,7 +215,7 @@ export function TaskFeed({
 
       {/* Feed */}
       <ScrollArea className="flex-1">
-        <div className="space-y-4 p-3 pt-0">
+        <div className="space-y-3 p-3 pt-0">
           {loading && tasks.length === 0 && (
             <p className="py-8 text-center text-sm text-muted-foreground">
               Loading tasks…
@@ -229,8 +229,8 @@ export function TaskFeed({
           )}
 
           {groups.map((group) => (
-            <div key={group.label} className="space-y-1">
-              <h3 className="px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <div key={group.label} className="space-y-px">
+              <h3 className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {group.label}
               </h3>
 
@@ -243,9 +243,8 @@ export function TaskFeed({
                         isSelected={isTaskSelected(entry.task.id)}
                         onClick={() => onSelectTask(entry.task.id)}
                       />
-                      {/* Nested review for standalone tasks */}
                       {entry.task.latestReview && (
-                        <div className="ml-3 border-l-2 border-border pl-1">
+                        <div className="ml-3 border-l border-border/60 pl-1">
                           <ReviewFeedItem
                             reviewId={entry.task.latestReview.id}
                             round={entry.task.latestReview.round}
