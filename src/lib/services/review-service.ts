@@ -1,14 +1,30 @@
 import { execSync } from "child_process";
+import path from "path";
+import fs from "fs";
 import { getDb, schema } from "@/lib/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { parseUnifiedDiff, diffSummary } from "./diff-service";
 
+const WORKTREE_DIR = ".vibe-harness-worktrees";
+
+/**
+ * Resolve the working directory for a session — worktree if it exists,
+ * otherwise the project root.
+ */
+function resolveSessionWorkDir(projectDir: string, sessionId: string): string {
+  const shortId = sessionId.slice(0, 8);
+  const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
+  if (fs.existsSync(worktreePath)) {
+    return worktreePath;
+  }
+  return projectDir;
+}
+
 /**
  * Create a review after an agent session completes.
- * 1. Capture git diff in the project directory
- * 2. Generate a summary
- * 3. Store as a Review record
+ * Captures git diff from the worktree (includes uncommitted changes),
+ * generates a summary, and stores as a Review record.
  */
 export async function createReviewForSession(sessionId: string): Promise<string | null> {
   const db = getDb();
@@ -29,19 +45,24 @@ export async function createReviewForSession(sessionId: string): Promise<string 
 
   if (!project) return null;
 
-  // Capture git diff
+  const workDir = resolveSessionWorkDir(project.localPath, sessionId);
+
+  // Capture ALL changes: staged, unstaged, and untracked new files
   let diffText = "";
   try {
+    // First, add untracked files to the index so they show up in the diff
+    execSync("git add -N .", { cwd: workDir, stdio: "pipe" });
+    // Then diff everything against HEAD
     diffText = execSync("git diff HEAD", {
-      cwd: project.localPath,
+      cwd: workDir,
       encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024, // 10MB
+      maxBuffer: 10 * 1024 * 1024,
     });
   } catch {
-    // If git diff fails (not a git repo, no changes, etc.), capture staged + unstaged
     try {
+      // Fallback: just diff working tree
       diffText = execSync("git diff", {
-        cwd: project.localPath,
+        cwd: workDir,
         encoding: "utf-8",
         maxBuffer: 10 * 1024 * 1024,
       });

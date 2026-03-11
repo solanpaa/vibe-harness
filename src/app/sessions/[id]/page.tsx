@@ -18,14 +18,17 @@ import {
   Terminal,
   GitPullRequestArrow,
   Trash2,
+  TerminalSquare,
 } from "lucide-react";
 import { toast } from "sonner";
+import AnsiToHtml from "ansi-to-html";
 
 interface Session {
   id: string;
   projectId: string;
   agentDefinitionId: string;
   credentialSetId: string | null;
+  sandboxId: string | null;
   status: string;
   prompt: string;
   output: string | null;
@@ -337,12 +340,27 @@ export default function SessionDetailPage({
               <Terminal className="h-4 w-4" />
               <CardTitle className="text-sm">Output</CardTitle>
             </div>
-            {isStreaming && (
-              <Badge className="bg-blue-100 text-blue-800">
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                Live
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {session.sandboxId && (session.status === "running" || session.status === "completed" || session.status === "failed") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`docker sandbox run ${session.sandboxId}`);
+                    toast.success("Copied! Paste in your terminal to open a shell in the sandbox.");
+                  }}
+                >
+                  <TerminalSquare className="mr-1 h-3 w-3" />
+                  Open Shell
+                </Button>
+              )}
+              {isStreaming && (
+                <Badge className="bg-blue-100 text-blue-800">
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  Live
+                </Badge>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -361,9 +379,29 @@ export default function SessionDetailPage({
                       : "No output recorded."}
                 </span>
               ) : (
-                streamOutput.map((line, i) => (
-                  <div key={i}>{line}</div>
-                ))
+                streamOutput.map((line, i) => {
+                  const ansi = new AnsiToHtml({
+                    fg: "#4ade80",
+                    bg: "#030712",
+                    newline: false,
+                    escapeXML: true,
+                    colors: {
+                      0: "#1e1e1e", 1: "#f87171", 2: "#4ade80", 3: "#facc15",
+                      4: "#60a5fa", 5: "#c084fc", 6: "#22d3ee", 7: "#e5e7eb",
+                      8: "#6b7280", 9: "#fca5a5", 10: "#86efac", 11: "#fde68a",
+                      12: "#93c5fd", 13: "#d8b4fe", 14: "#67e8f9", 15: "#f9fafb",
+                    },
+                  });
+                  // Strip OSC sequences (terminal title, etc.)
+                  const cleaned = line.replace(/\]0;[^\x07\x1b]*(\x07|\x1b\\)?/g, "");
+                  const html = ansi.toHtml(cleaned);
+                  return (
+                    <div
+                      key={i}
+                      dangerouslySetInnerHTML={{ __html: html }}
+                    />
+                  );
+                })
               )}
             </div>
           </ScrollArea>
