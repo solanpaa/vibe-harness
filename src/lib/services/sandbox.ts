@@ -129,21 +129,47 @@ export function launchSandbox(
     stdio: ["pipe", "pipe", "pipe"],
   });
 
+  // Buffer stdout data and split on newlines to emit individual JSONL lines.
+  // Node's data events deliver arbitrary chunks, not line-delimited output.
+  let stdoutBuf = "";
   proc.stdout?.on("data", (data: Buffer) => {
-    const line = data.toString();
-    output.push(line);
-    // Parse JSONL and emit typed event alongside raw output
-    const parsed = jsonlParser.parseLine(line);
-    events.emit("output", line, parsed);
+    stdoutBuf += data.toString();
+    const lines = stdoutBuf.split("\n");
+    // Keep the last (potentially incomplete) segment in the buffer
+    stdoutBuf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line) continue;
+      output.push(line + "\n");
+      const parsed = jsonlParser.parseLine(line);
+      events.emit("output", line, parsed);
+    }
   });
 
+  // Buffer stderr the same way
+  let stderrBuf = "";
   proc.stderr?.on("data", (data: Buffer) => {
-    const line = data.toString();
-    output.push(line);
-    events.emit("output", line, null);
+    stderrBuf += data.toString();
+    const lines = stderrBuf.split("\n");
+    stderrBuf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line) continue;
+      output.push(line + "\n");
+      events.emit("output", line, null);
+    }
   });
 
   proc.on("close", (code) => {
+    // Flush remaining buffered data
+    if (stdoutBuf) {
+      output.push(stdoutBuf);
+      jsonlParser.parseLine(stdoutBuf);
+      events.emit("output", stdoutBuf, null);
+    }
+    if (stderrBuf) {
+      output.push(stderrBuf);
+      events.emit("output", stderrBuf, null);
+    }
+
     events.emit("close", code);
     // Finalize parsed output before cleanup
     const instance = activeSandboxes.get(taskId);

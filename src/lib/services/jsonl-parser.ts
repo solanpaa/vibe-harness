@@ -57,14 +57,21 @@ export interface AssistantReasoningDeltaData {
 
 export interface ToolExecutionStartData {
   toolCallId: string;
-  name: string;
+  toolName?: string;
+  name?: string;
+  parentToolCallId?: string;
   arguments: Record<string, unknown>;
 }
 
 export interface ToolExecutionCompleteData {
   toolCallId: string;
-  name: string;
-  result: string;
+  toolName?: string;
+  name?: string;
+  parentToolCallId?: string;
+  success?: boolean;
+  result?: unknown;
+  model?: string;
+  interactionId?: string;
 }
 
 export interface ResultUsage {
@@ -294,8 +301,9 @@ export class CopilotJsonlParser {
 
       case "tool.execution_start": {
         const e = event as ToolExecutionStartEvent;
+        const toolName = e.data.toolName || e.data.name || "unknown";
         this.toolExecutions.push({
-          name: e.data.name,
+          name: toolName,
           startedAt: e.timestamp ?? new Date().toISOString(),
         });
         break;

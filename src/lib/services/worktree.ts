@@ -141,6 +141,29 @@ export function commitAndMergeWorktree(
 }
 
 /**
+ * Fast-forward merge a task branch into the main working tree's current branch.
+ * Use after the AI has committed and rebased the task branch.
+ */
+export function fastForwardMerge(
+  projectDir: string,
+  taskId: string
+): { merged: boolean; branch: string; error?: string } {
+  const shortId = taskId.slice(0, 8);
+  const branch = `vibe-harness/task-${shortId}`;
+
+  try {
+    execSync(`git merge "${branch}" --ff-only`, {
+      cwd: projectDir,
+      stdio: "pipe",
+    });
+    return { merged: true, branch };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { merged: false, branch, error: msg };
+  }
+}
+
+/**
  * Get the diff between a worktree and the main branch.
  */
 export function getWorktreeDiff(

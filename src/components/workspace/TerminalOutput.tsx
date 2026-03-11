@@ -63,12 +63,19 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
       return { kind: "message", content };
     }
     case "tool.execution_start": {
-      const name = (data.name as string) ?? "tool";
+      // Skip sub-agent tool events (nested tools have parentToolCallId)
+      if (data.parentToolCallId) return null;
+      const name = (data.toolName as string) ?? (data.name as string) ?? "tool";
+      // Skip internal tools that don't need display
+      if (name === "report_intent") return null;
       const args = (data.arguments as Record<string, unknown>) ?? {};
       return { kind: "tool_start", name, detail: toolDetail(name, args) };
     }
     case "tool.execution_complete": {
-      const name = (data.name as string) ?? "tool";
+      // Skip sub-agent tool completions
+      if (data.parentToolCallId) return null;
+      const name = (data.toolName as string) ?? (data.name as string) ?? "tool";
+      if (name === "report_intent") return null;
       return { kind: "tool_complete", name };
     }
     case "result": {
