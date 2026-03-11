@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { rerunWithComments } from "@/lib/services/review-rerun";
+import { createReviewForSession } from "@/lib/services/review-service";
 
 export async function POST(
   request: NextRequest,
@@ -35,12 +37,23 @@ export async function POST(
       .where(eq(schema.reviews.id, id))
       .run();
 
-    // TODO: Collect comments, bundle into prompt, spawn new session (round N+1)
-    // This will be implemented in the review-rerun todo
+    // Bundle comments into prompt and spawn a new agent session
+    const result = await rerunWithComments(id);
+
+    if (result) {
+      return NextResponse.json({
+        status: "changes_requested",
+        reviewId: id,
+        newSessionId: result.sessionId,
+        newRound: result.reviewRound,
+        message: `New agent session spawned for round ${result.reviewRound}`,
+      });
+    }
+
     return NextResponse.json({
       status: "changes_requested",
       reviewId: id,
-      message: "Review comments submitted. A new agent session will be spawned.",
+      message: "Review comments submitted. Could not auto-spawn session.",
     });
   }
 
