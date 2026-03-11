@@ -18,10 +18,10 @@ export interface TaskFeedItemProps {
 }
 
 const statusIcon: Record<string, React.ReactNode> = {
-  pending: <Clock className="size-3.5 text-gray-400" />,
+  pending: <Clock className="size-3.5 text-muted-foreground/50" />,
   running: <Loader2 className="size-3.5 animate-spin text-blue-500" />,
   awaiting_review: <GitPullRequestArrow className="size-3.5 text-yellow-500" />,
-  completed: <CheckCircle className="size-3.5 text-green-500" />,
+  completed: <CheckCircle className="size-3.5 text-muted-foreground/40" />,
   failed: <XCircle className="size-3.5 text-red-500" />,
 };
 
@@ -45,7 +45,7 @@ export function TaskFeedItem({
   onClick,
 }: TaskFeedItemProps) {
   const icon = statusIcon[task.status] ?? (
-    <Clock className="size-3.5 text-gray-400" />
+    <Clock className="size-3.5 text-muted-foreground/50" />
   );
 
   const label = isNested

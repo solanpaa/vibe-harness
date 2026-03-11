@@ -1,6 +1,5 @@
 "use client";
 
-import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ReviewFeedItemProps {
@@ -41,8 +40,8 @@ export function ReviewFeedItem({
         isSelected ? "bg-accent" : "hover:bg-muted/60",
       )}
     >
-      <Star className="size-3 shrink-0 text-amber-500 fill-amber-500/30" />
-      <span className="text-[12px] text-muted-foreground">
+      <span className="size-3 shrink-0 text-[11px] leading-3 text-center text-muted-foreground/60">★</span>
+      <span className="text-[12px] text-muted-foreground/70">
         Review{round > 1 ? ` · R${round}` : ""}
       </span>
       <span className="ml-auto flex items-center gap-1">
