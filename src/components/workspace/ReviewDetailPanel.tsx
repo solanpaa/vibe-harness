@@ -26,6 +26,7 @@ import {
   GENERAL_COMMENT_FILE_PATH,
   type GeneralComment,
 } from "./GeneralComments";
+import { Markdown } from "@/components/ui/markdown";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -469,43 +470,7 @@ export function ReviewDetailPanel({
               {planExpanded && (
                 <Card>
                   <CardContent className="pt-4">
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
-                      {activeReview.planMarkdown!.split("\n").map((line, i) => {
-                        if (line.startsWith("### ")) {
-                          return (
-                            <h3 key={i} className="text-sm font-semibold mt-3 mb-1">
-                              {line.slice(4)}
-                            </h3>
-                          );
-                        }
-                        if (line.startsWith("## ")) {
-                          return (
-                            <h2 key={i} className="text-base font-semibold mt-4 mb-2">
-                              {line.slice(3)}
-                            </h2>
-                          );
-                        }
-                        if (line.startsWith("# ")) {
-                          return (
-                            <h1 key={i} className="text-lg font-bold mt-4 mb-2">
-                              {line.slice(2)}
-                            </h1>
-                          );
-                        }
-                        if (line.startsWith("- ")) {
-                          return (
-                            <li key={i} className="text-sm ml-4">
-                              {line.slice(2)}
-                            </li>
-                          );
-                        }
-                        if (line.startsWith("```")) return null;
-                        if (line.trim() === "") return <br key={i} />;
-                        return (
-                          <p key={i} className="text-sm">{line}</p>
-                        );
-                      })}
-                    </div>
+                    <Markdown>{activeReview.planMarkdown!}</Markdown>
                   </CardContent>
                 </Card>
               )}

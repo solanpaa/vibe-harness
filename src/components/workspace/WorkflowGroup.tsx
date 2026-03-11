@@ -60,12 +60,12 @@ export function WorkflowGroup({
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )[0];
 
-  // Sort tasks by their position in the stages array
+  // Sort tasks by their position in the stages array (latest stage first)
   const stageOrder = new Map(stages.map((s, i) => [s.name, i]));
   const sortedTasks = [...tasks].sort((a, b) => {
     const aIdx = stageOrder.get(a.stageName ?? "") ?? Infinity;
     const bIdx = stageOrder.get(b.stageName ?? "") ?? Infinity;
-    return aIdx - bIdx;
+    return bIdx - aIdx;
   });
 
   const isTaskSelected = (taskId: string) =>

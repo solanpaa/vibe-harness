@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Markdown } from "@/components/ui/markdown";
 
 interface ReviewSummaryProps {
   summary: string;
@@ -30,45 +31,7 @@ export function ReviewSummary({ summary, round, status }: ReviewSummaryProps) {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          {summary.split("\n").map((line, i) => {
-            if (line.startsWith("## ")) {
-              return (
-                <h2 key={i} className="text-base font-semibold mt-4 mb-2">
-                  {line.slice(3)}
-                </h2>
-              );
-            }
-            if (line.startsWith("### ")) {
-              return (
-                <h3 key={i} className="text-sm font-semibold mt-3 mb-1">
-                  {line.slice(4)}
-                </h3>
-              );
-            }
-            if (line.startsWith("- ")) {
-              return (
-                <li key={i} className="text-sm ml-4">
-                  {line.slice(2)}
-                </li>
-              );
-            }
-            if (line.startsWith("**")) {
-              const content = line.replace(/\*\*/g, "");
-              return (
-                <p key={i} className="text-sm font-medium">
-                  {content}
-                </p>
-              );
-            }
-            if (line.trim() === "") return <br key={i} />;
-            return (
-              <p key={i} className="text-sm">
-                {line}
-              </p>
-            );
-          })}
-        </div>
+        <Markdown>{summary}</Markdown>
       </CardContent>
     </Card>
   );
