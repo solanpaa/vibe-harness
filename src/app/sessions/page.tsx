@@ -116,6 +116,8 @@ function SessionsContent() {
     projectId: "",
     agentDefinitionId: "",
     credentialSetId: "",
+    model: "",
+    useWorktree: true,
     prompt: "",
   });
 
@@ -171,6 +173,8 @@ function SessionsContent() {
           projectId: form.projectId,
           agentDefinitionId: form.agentDefinitionId,
           credentialSetId: form.credentialSetId || null,
+          model: form.model.trim() || null,
+          useWorktree: form.useWorktree,
           prompt: form.prompt,
         }),
       });
@@ -199,6 +203,8 @@ function SessionsContent() {
         projectId: urlProjectId || "",
         agentDefinitionId: agents[0]?.id ?? "",
         credentialSetId: "",
+        model: "",
+        useWorktree: true,
         prompt: "",
       });
       setCreateOpen(false);
@@ -305,6 +311,19 @@ function SessionsContent() {
             </div>
 
             <div className="space-y-2">
+              <Label>Model (optional)</Label>
+              <input
+                type="text"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={form.model}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, model: e.target.value }))
+                }
+                placeholder="claude-opus-4.6"
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label>Credential Set (optional)</Label>
               <Select
                 value={form.credentialSetId}
@@ -326,6 +345,20 @@ function SessionsContent() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="useWorktree"
+                checked={form.useWorktree}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, useWorktree: e.target.checked }))
+                }
+              />
+              <Label htmlFor="useWorktree">
+                Use Git Worktree (isolated copy of the repo)
+              </Label>
             </div>
 
             <div className="space-y-2">

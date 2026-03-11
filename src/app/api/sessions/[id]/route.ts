@@ -68,6 +68,8 @@ export async function PATCH(
         credentialSetId: session.credentialSetId,
         dockerImage: agent.dockerImage,
         prompt: session.prompt,
+        model: session.model,
+        useWorktree: session.useWorktree === 1,
       });
       const updated = db
         .select()

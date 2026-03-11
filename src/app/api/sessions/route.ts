@@ -35,6 +35,8 @@ export async function POST(request: NextRequest) {
     sandboxId: null,
     status: "pending" as const,
     prompt: body.prompt,
+    model: body.model || null,
+    useWorktree: body.useWorktree !== false ? 1 : 0,
     output: null,
     createdAt: now,
     completedAt: null,

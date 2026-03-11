@@ -8,6 +8,8 @@ export interface SandboxOptions {
   credentialSetId?: string | null;
   dockerImage?: string | null;
   prompt?: string;
+  model?: string | null;
+  isContinuation?: boolean;
   agentArgs?: string[];
   sandboxName?: string;
 }
@@ -17,7 +19,7 @@ export interface SandboxInstance {
   process: ChildProcess;
   output: string[];
   events: EventEmitter;
-  workDir: string; // actual working directory (may be worktree)
+  workDir: string;
 }
 
 const activeSandboxes = new Map<string, SandboxInstance>();
@@ -25,13 +27,13 @@ const activeSandboxes = new Map<string, SandboxInstance>();
 /**
  * Build the command for launching an agent in a Docker sandbox.
  *
- * Syntax: docker sandbox run [OPTIONS] AGENT [WORKSPACE] [EXTRA_WORKSPACE...] [-- AGENT_ARGS...]
+ * Syntax: docker sandbox run [OPTIONS] AGENT [WORKSPACE] [-- AGENT_ARGS...]
  *
- * Credentials (GITHUB_TOKEN, etc.) are picked up from the host's shell
- * environment — Docker Desktop daemon reads them. Credential vault env vars
- * are injected into the spawned process env so the daemon inherits them.
- *
- * See: https://docs.docker.com/ai/sandboxes/agents/copilot/
+ * Agent args for Copilot CLI:
+ *   --yolo              Autonomous mode (no approval prompts)
+ *   -p "prompt"         Pass prompt directly
+ *   --model <model>     Select model (e.g. claude-opus-4.6)
+ *   --continue          Continue previous sandbox session
  */
 function buildSandboxCommand(options: SandboxOptions): {
   command: string;
@@ -41,29 +43,39 @@ function buildSandboxCommand(options: SandboxOptions): {
   const args: string[] = ["sandbox", "run"];
   const env = { ...process.env };
 
-  // Sandbox name (for easy identification)
   if (options.sandboxName) {
     args.push("--name", options.sandboxName);
   }
 
-  // Custom template image (e.g., for custom agent setups)
   if (options.dockerImage) {
     args.push("-t", options.dockerImage);
   }
 
-  // Agent name (e.g., "copilot", "claude", "gemini")
   args.push(options.agentCommand);
-
-  // Workspace directory (positional arg after agent name)
   args.push(options.projectDir);
 
-  // Agent-specific args after -- separator (e.g., "--yolo" for copilot)
-  if (options.agentArgs?.length) {
-    args.push("--", ...options.agentArgs);
+  // Agent args after -- separator
+  const agentArgs: string[] = ["--yolo"];
+
+  if (options.prompt) {
+    agentArgs.push("-p", options.prompt);
   }
 
-  // Inject credential vault env vars into the process environment
-  // so the Docker daemon can pick them up
+  if (options.model) {
+    agentArgs.push("--model", options.model);
+  }
+
+  if (options.isContinuation) {
+    agentArgs.push("--continue");
+  }
+
+  if (options.agentArgs?.length) {
+    agentArgs.push(...options.agentArgs);
+  }
+
+  args.push("--", ...agentArgs);
+
+  // Inject credential vault env vars
   if (options.credentialSetId) {
     const creds = buildSandboxCredentials(options.credentialSetId);
     for (const [key, value] of Object.entries(creds.envVars)) {
@@ -74,7 +86,6 @@ function buildSandboxCommand(options: SandboxOptions): {
   return { command: "docker", args, env };
 }
 
-/** Launch a Docker sandbox for an agent session */
 export function launchSandbox(
   sessionId: string,
   options: SandboxOptions
@@ -83,7 +94,24 @@ export function launchSandbox(
   const events = new EventEmitter();
   const output: string[] = [];
 
-  const proc = spawn(command, args, {
+  // Try to get GITHUB_TOKEN from gh CLI if not already set
+  if (!env.GITHUB_TOKEN && !env.GH_TOKEN) {
+    try {
+      const { execSync } = require("child_process");
+      const token = execSync("gh auth token", { encoding: "utf-8" }).trim();
+      if (token) env.GITHUB_TOKEN = token;
+    } catch {
+      // gh CLI not available or not authenticated — sandbox will handle auth
+    }
+  }
+
+  // Use `script` to wrap the command in a PTY so docker sandbox
+  // outputs properly (it requires a TTY for interactive output)
+  const fullCmd = [command, ...args].map((a) =>
+    a.includes(" ") || a.includes('"') ? `'${a.replace(/'/g, "'\\''")}'` : a
+  ).join(" ");
+
+  const proc = spawn("script", ["-q", "/dev/null", "/bin/sh", "-c", fullCmd], {
     env,
     cwd: options.projectDir,
     stdio: ["pipe", "pipe", "pipe"],
@@ -111,11 +139,6 @@ export function launchSandbox(
     activeSandboxes.delete(sessionId);
   });
 
-  // If there's a prompt, send it to stdin
-  if (options.prompt && proc.stdin) {
-    proc.stdin.write(options.prompt + "\n");
-  }
-
   const instance: SandboxInstance = {
     id: sessionId,
     process: proc,
@@ -128,12 +151,10 @@ export function launchSandbox(
   return instance;
 }
 
-/** Get an active sandbox by session ID */
 export function getSandbox(sessionId: string): SandboxInstance | undefined {
   return activeSandboxes.get(sessionId);
 }
 
-/** Send input to an active sandbox */
 export function sendInput(sessionId: string, input: string): boolean {
   const sandbox = activeSandboxes.get(sessionId);
   if (!sandbox || !sandbox.process.stdin) return false;
@@ -141,20 +162,13 @@ export function sendInput(sessionId: string, input: string): boolean {
   return true;
 }
 
-/** Stop a sandbox */
 export function stopSandbox(sessionId: string): boolean {
   const sandbox = activeSandboxes.get(sessionId);
   if (!sandbox) return false;
   sandbox.process.kill("SIGTERM");
-  setTimeout(() => {
-    if (activeSandboxes.has(sessionId)) {
-      sandbox.process.kill("SIGKILL");
-    }
-  }, 5000);
   return true;
 }
 
-/** List all active sandbox IDs */
 export function listActiveSandboxes(): string[] {
   return Array.from(activeSandboxes.keys());
 }

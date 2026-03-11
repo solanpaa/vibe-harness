@@ -10,7 +10,9 @@ export interface StartSessionOptions {
   credentialSetId?: string | null;
   dockerImage?: string | null;
   prompt: string;
-  useWorktree?: boolean; // default: true
+  model?: string | null;
+  useWorktree?: boolean;
+  isContinuation?: boolean;
 }
 
 /** Start a session by launching its sandbox, optionally in a git worktree */
@@ -41,6 +43,8 @@ export function startSession(options: StartSessionOptions) {
     credentialSetId: options.credentialSetId,
     dockerImage: options.dockerImage,
     prompt: options.prompt,
+    model: options.model,
+    isContinuation: options.isContinuation,
     sandboxName: `vibe-${shortId}`,
   });
 

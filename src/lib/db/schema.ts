@@ -110,6 +110,8 @@ export const sessions = sqliteTable("sessions", {
   sandboxId: text("sandbox_id"),
   status: text("status").notNull().default("pending"),
   prompt: text("prompt").notNull(),
+  model: text("model"),
+  useWorktree: integer("use_worktree").notNull().default(1), // 1=true, 0=false
   output: text("output"),
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
