@@ -7,11 +7,6 @@ import {
   Play,
   Square,
   Trash2,
-  Loader2,
-  Clock,
-  CheckCircle,
-  XCircle,
-  GitPullRequestArrow,
   Workflow,
   ChevronDown,
   ChevronRight,
@@ -20,41 +15,7 @@ import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./TerminalOutput";
 import { Markdown } from "@/components/ui/markdown";
-
-// ─── Status configuration ────────────────────────────────────────────────────
-
-const statusConfig: Record<
-  string,
-  { icon: React.ReactNode; color: string; label: string }
-> = {
-  pending: {
-    icon: <Clock className="h-4 w-4" />,
-    color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
-    label: "Pending",
-  },
-  running: {
-    icon: <Loader2 className="h-4 w-4 animate-spin" />,
-    color: "bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
-    label: "Running",
-  },
-  awaiting_review: {
-    icon: <GitPullRequestArrow className="h-4 w-4" />,
-    color:
-      "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
-    label: "Awaiting Review",
-  },
-  completed: {
-    icon: <CheckCircle className="h-4 w-4" />,
-    color:
-      "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
-    label: "Completed",
-  },
-  failed: {
-    icon: <XCircle className="h-4 w-4" />,
-    color: "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200",
-    label: "Failed",
-  },
-};
+import { taskStatusConfig } from "@/lib/status-config";
 
 // ─── Detailed task (includes output) ─────────────────────────────────────────
 
@@ -167,7 +128,7 @@ export function TaskDetailPanel({
     onTaskChanged?.();
   }
 
-  const config = statusConfig[detail?.status ?? task.status] ?? statusConfig.pending;
+  const config = taskStatusConfig[detail?.status ?? task.status] ?? taskStatusConfig.pending;
   const currentStatus = detail?.status ?? task.status;
 
   return (
@@ -216,7 +177,7 @@ export function TaskDetailPanel({
 
         {/* Metadata badges */}
         <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <Badge className={config.color}>
+          <Badge className={config.colorClass}>
             <span className="mr-1">{config.icon}</span>
             {config.label}
           </Badge>

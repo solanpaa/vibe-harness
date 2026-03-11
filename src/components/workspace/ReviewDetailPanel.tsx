@@ -24,6 +24,7 @@ import {
   type GeneralComment,
 } from "./GeneralComments";
 import { Markdown } from "@/components/ui/markdown";
+import { reviewStatusConfig } from "@/lib/status-config";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -53,23 +54,6 @@ interface TaskInfo {
   id: string;
   originTaskId: string | null;
 }
-
-// ─── Status styling ──────────────────────────────────────────────────────────
-
-const statusColors: Record<string, string> = {
-  pending_review:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  changes_requested:
-    "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-  approved:
-    "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-};
-
-const statusLabel: Record<string, string> = {
-  pending_review: "Pending Review",
-  changes_requested: "Changes Requested",
-  approved: "Approved",
-};
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -355,8 +339,8 @@ export function ReviewDetailPanel({
                 <h2 className="text-lg font-semibold leading-tight">
                   Review — Round {activeReview.round}
                 </h2>
-                <Badge className={statusColors[activeReview.status] ?? ""}>
-                  {statusLabel[activeReview.status] ?? activeReview.status.replace(/_/g, " ")}
+                <Badge className={reviewStatusConfig[activeReview.status]?.colorClass ?? ""}>
+                  {reviewStatusConfig[activeReview.status]?.label ?? activeReview.status.replace(/_/g, " ")}
                 </Badge>
               </div>
               <button

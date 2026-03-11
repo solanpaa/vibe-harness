@@ -1,14 +1,9 @@
 "use client";
 
-import {
-  Clock,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  GitPullRequestArrow,
-} from "lucide-react";
+import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EnrichedTask } from "./TaskFeed";
+import { taskFeedIcon } from "@/lib/status-config";
 
 export interface TaskFeedItemProps {
   task: EnrichedTask;
@@ -16,14 +11,6 @@ export interface TaskFeedItemProps {
   isNested?: boolean;
   onClick: () => void;
 }
-
-const statusIcon: Record<string, React.ReactNode> = {
-  pending: <Clock className="size-3.5 text-muted-foreground/50" />,
-  running: <Loader2 className="size-3.5 animate-spin text-blue-500" />,
-  awaiting_review: <GitPullRequestArrow className="size-3.5 text-yellow-500" />,
-  completed: <CheckCircle className="size-3.5 text-muted-foreground/40" />,
-  failed: <XCircle className="size-3.5 text-red-500" />,
-};
 
 /** Strip markdown syntax for clean preview text */
 function stripMarkdown(text: string): string {
@@ -44,7 +31,7 @@ export function TaskFeedItem({
   isNested = false,
   onClick,
 }: TaskFeedItemProps) {
-  const icon = statusIcon[task.status] ?? (
+  const icon = taskFeedIcon[task.status] ?? (
     <Clock className="size-3.5 text-muted-foreground/50" />
   );
 

@@ -8,6 +8,7 @@ import { TaskFeedItem } from "./TaskFeedItem";
 import { ReviewFeedItem } from "./ReviewFeedItem";
 import type { EnrichedTask } from "./TaskFeed";
 import type { Selection } from "@/lib/types";
+import { taskBadgeClass } from "@/lib/status-config";
 
 export interface WorkflowGroupProps {
   workflowName: string;
@@ -20,19 +21,6 @@ export interface WorkflowGroupProps {
   onSelectTask: (taskId: string) => void;
   onSelectReview: (reviewId: string, taskId: string) => void;
 }
-
-const statusBadgeClass: Record<string, string> = {
-  pending:
-    "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
-  running:
-    "bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
-  awaiting_review:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
-  completed:
-    "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
-  failed:
-    "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200",
-};
 
 export function WorkflowGroup({
   workflowName,
@@ -132,7 +120,7 @@ export function WorkflowGroup({
           variant="secondary"
           className={cn(
             "shrink-0 text-[10px] leading-none px-1.5 py-0 h-4 capitalize",
-            statusBadgeClass[runStatus] ?? "",
+            taskBadgeClass[runStatus] ?? "",
           )}
         >
           {runStatus.replace(/_/g, " ")}
