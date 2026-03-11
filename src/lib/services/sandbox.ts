@@ -6,7 +6,9 @@ export interface SandboxOptions {
   projectDir: string;
   agentCommand: string;
   credentialSetId?: string | null;
+  dockerImage?: string | null;
   prompt?: string;
+  agentArgs?: string[];
 }
 
 export interface SandboxInstance {
@@ -40,6 +42,11 @@ function buildSandboxCommand(options: SandboxOptions): {
   // Workspace (project directory)
   args.push("--workspace", options.projectDir);
 
+  // Custom Docker image/template (for agents like Copilot CLI)
+  if (options.dockerImage) {
+    args.push("-t", options.dockerImage);
+  }
+
   // Inject credentials from vault
   if (options.credentialSetId) {
     const creds = buildSandboxCredentials(options.credentialSetId);
@@ -60,8 +67,13 @@ function buildSandboxCommand(options: SandboxOptions): {
     }
   }
 
-  // Agent name (e.g., "claude", "gemini")
+  // Agent name (e.g., "claude", "gemini", "copilot")
   args.push(options.agentCommand);
+
+  // Agent-specific args (e.g., "--yolo" for copilot)
+  if (options.agentArgs?.length) {
+    args.push("--", ...options.agentArgs);
+  }
 
   return { command: "docker", args, env };
 }

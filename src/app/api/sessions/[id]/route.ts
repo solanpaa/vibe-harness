@@ -66,6 +66,7 @@ export async function PATCH(
         projectDir: project.localPath,
         agentCommand,
         credentialSetId: session.credentialSetId,
+        dockerImage: agent.dockerImage,
         prompt: session.prompt,
       });
       const updated = db

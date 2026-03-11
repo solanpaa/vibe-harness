@@ -8,6 +8,7 @@ export interface StartSessionOptions {
   projectDir: string;
   agentCommand: string;
   credentialSetId?: string | null;
+  dockerImage?: string | null;
   prompt: string;
 }
 
@@ -18,6 +19,7 @@ export function startSession(options: StartSessionOptions) {
     projectDir: options.projectDir,
     agentCommand: options.agentCommand,
     credentialSetId: options.credentialSetId,
+    dockerImage: options.dockerImage,
     prompt: options.prompt,
   });
 
