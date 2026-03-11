@@ -267,7 +267,9 @@ function SessionsContent() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a project..." />
+                  <SelectValue placeholder="Select a project...">
+                    {projects.find((p) => p.id === form.projectId)?.name}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {projects.map((p) => (
@@ -288,7 +290,9 @@ function SessionsContent() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select an agent..." />
+                  <SelectValue placeholder="Select an agent...">
+                    {(() => { const a = agents.find((a) => a.id === form.agentDefinitionId); return a ? `${a.name} (${a.type})` : undefined; })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {agents.map((a) => (
@@ -309,7 +313,9 @@ function SessionsContent() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="None" />
+                  <SelectValue placeholder="None">
+                    {credSets.find((c) => c.id === form.credentialSetId)?.name ?? (form.credentialSetId ? undefined : "None")}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>

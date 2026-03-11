@@ -293,7 +293,9 @@ export default function CredentialsPage() {
                                   }
                                 >
                                   <SelectTrigger>
-                                    <SelectValue />
+                                    <SelectValue>
+                                      {entryForm.type === "env_var" ? "Environment Variable" : entryForm.type === "file_mount" ? "File Mount" : "Docker Login"}
+                                    </SelectValue>
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="env_var">
