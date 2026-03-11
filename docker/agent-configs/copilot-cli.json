@@ -1,7 +1,18 @@
 {
-  "id": "copilot-cli-default",
-  "name": "GitHub Copilot CLI",
-  "type": "copilot_cli",
-  "commandTemplate": "docker sandbox run copilot {{projectDir}}",
-  "description": "GitHub Copilot CLI running in a Docker sandbox"
+  "agents": [
+    {
+      "id": "claude",
+      "name": "Claude (Docker Sandbox)",
+      "type": "claude_code",
+      "commandTemplate": "claude",
+      "description": "Claude Code running in a Docker sandbox"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini (Docker Sandbox)",
+      "type": "custom",
+      "commandTemplate": "gemini",
+      "description": "Gemini CLI running in a Docker sandbox"
+    }
+  ]
 }

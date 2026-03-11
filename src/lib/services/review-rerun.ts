@@ -91,7 +91,7 @@ export async function rerunWithComments(reviewId: string): Promise<{
     .run();
 
   // Extract agent command from template
-  const agentCommand = agent.commandTemplate.split(" ").slice(-1)[0] || "copilot";
+  const agentCommand = agent.commandTemplate || "claude";
 
   // Start the session
   startSession({

@@ -20,7 +20,14 @@ const activeSandboxes = new Map<string, SandboxInstance>();
 
 /**
  * Build the full command + env for launching an agent in a Docker sandbox.
- * Uses `docker sandbox run` with credential injection.
+ * Uses `docker sandbox run` CLI with proper flags.
+ *
+ * docker sandbox run [options] <agent> [agent-options]
+ *   --workspace <path>     Project directory (exposed at same path inside sandbox)
+ *   -e KEY=VALUE           Environment variables
+ *   -v host:sandbox[:ro]   Volume/file mounts
+ *   --credentials host     Use host credentials
+ *   --name <name>          Named sandbox
  */
 function buildSandboxCommand(options: SandboxOptions): {
   command: string;
@@ -30,25 +37,31 @@ function buildSandboxCommand(options: SandboxOptions): {
   const args: string[] = ["sandbox", "run"];
   const env = { ...process.env };
 
-  // Inject credentials
+  // Workspace (project directory)
+  args.push("--workspace", options.projectDir);
+
+  // Inject credentials from vault
   if (options.credentialSetId) {
     const creds = buildSandboxCredentials(options.credentialSetId);
+
+    // Environment variables
     for (const [key, value] of Object.entries(creds.envVars)) {
-      args.push("--env", `${key}=${value}`);
+      args.push("-e", `${key}=${value}`);
     }
+
+    // File/directory mounts
     for (const mount of creds.fileMounts) {
-      args.push("--mount", `${mount.key}:${mount.value}`);
+      args.push("-v", `${mount.key}:${mount.value}`);
+    }
+
+    // Use host credentials if any docker logins are configured
+    if (creds.dockerLogins.length > 0) {
+      args.push("--credentials", "host");
     }
   }
 
-  // Mount project directory
-  args.push("--mount", `${options.projectDir}:${options.projectDir}`);
-
-  // Agent command (e.g., "copilot" for docker sandbox run copilot)
+  // Agent name (e.g., "claude", "gemini")
   args.push(options.agentCommand);
-
-  // Project directory
-  args.push(options.projectDir);
 
   return { command: "docker", args, env };
 }

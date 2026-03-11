@@ -109,7 +109,7 @@ export async function startWorkflowRun(input: {
     .run();
 
   const agentCommand =
-    agent.commandTemplate.split(" ").slice(-1)[0] || "copilot";
+    agent.commandTemplate || "claude";
 
   startSession({
     sessionId,
@@ -209,7 +209,7 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     .run();
 
   const agentCommand =
-    agent.commandTemplate.split(" ").slice(-1)[0] || "copilot";
+    agent.commandTemplate || "claude";
 
   startSession({
     sessionId,
