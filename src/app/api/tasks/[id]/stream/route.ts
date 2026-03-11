@@ -25,6 +25,16 @@ function formatSseMessage(line: string): string {
   if (event) {
     return `data: ${JSON.stringify({ type: "jsonl_event", event })}\n\n`;
   }
+  // Skip lines that look like broken/truncated JSONL — raw JSON is never useful to stream
+  const trimmed = line.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith('"type"')) {
+    return "";
+  }
+  // Skip Copilot CLI stderr progress indicators (✓tool, spinner chars, etc.)
+  if (/^[✓▶⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(trimmed)) {
+    return "";
+  }
+  if (!trimmed) return "";
   return `data: ${JSON.stringify({ type: "output", data: line })}\n\n`;
 }
 
@@ -49,13 +59,19 @@ export async function GET(
 
       // Send existing output
       for (const line of sandbox.output) {
-        controller.enqueue(encoder.encode(formatSseMessage(line)));
+        const msg = formatSseMessage(line);
+        if (msg) {
+          controller.enqueue(encoder.encode(msg));
+        }
       }
 
       // Stream new output
       const onOutput = (data: string) => {
         try {
-          controller.enqueue(encoder.encode(formatSseMessage(data)));
+          const msg = formatSseMessage(data);
+          if (msg) {
+            controller.enqueue(encoder.encode(msg));
+          }
         } catch {
           // Stream closed
         }

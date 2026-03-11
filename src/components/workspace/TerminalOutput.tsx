@@ -107,14 +107,28 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
 function parseLine(line: string): TerminalEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
+
+  // Try to parse as JSONL event
   try {
     const parsed = JSON.parse(trimmed);
     if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string") {
       return mapJsonlEvent(parsed);
     }
   } catch {
-    // Not JSON — fall through to raw
+    // If it looks like a JSONL line (or fragment), skip it silently.
+    // Raw JSON is never useful to show to users.
+    if (trimmed.startsWith("{") || trimmed.startsWith('"type"')) {
+      return null;
+    }
   }
+
+  // Skip Copilot CLI stderr progress lines (✓tool, ▶tool, etc.)
+  // The JSONL events already capture tool execution info.
+  if (/^[✓▶⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(trimmed)) return null;
+
+  // Skip common non-informative lines
+  if (trimmed === "tool" || trimmed.startsWith("Compiling")) return null;
+
   return { kind: "raw", text: line };
 }
 
