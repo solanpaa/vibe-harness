@@ -1,0 +1,7 @@
+{
+  "id": "copilot-cli-default",
+  "name": "GitHub Copilot CLI",
+  "type": "copilot_cli",
+  "commandTemplate": "docker sandbox run copilot {{projectDir}}",
+  "description": "GitHub Copilot CLI running in a Docker sandbox"
+}
