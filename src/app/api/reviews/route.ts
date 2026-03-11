@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
-import { v4 as uuid } from "uuid";
 import { eq } from "drizzle-orm";
+import { createReviewForSession } from "@/lib/services/review-service";
 
 export async function GET() {
   const db = getDb();
@@ -10,19 +10,31 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
   const body = await request.json();
-  const now = new Date().toISOString();
-  const review = {
-    id: uuid(),
-    workflowRunId: body.workflowRunId || null,
-    sessionId: body.sessionId,
-    round: body.round || 1,
-    status: "pending_review" as const,
-    aiSummary: body.aiSummary || null,
-    diffSnapshot: body.diffSnapshot || null,
-    createdAt: now,
-  };
-  db.insert(schema.reviews).values(review).run();
-  return NextResponse.json(review, { status: 201 });
+
+  if (!body.sessionId) {
+    return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+  }
+
+  try {
+    const reviewId = await createReviewForSession(body.sessionId);
+    if (!reviewId) {
+      return NextResponse.json(
+        { error: "Could not create review — session or project not found" },
+        { status: 404 }
+      );
+    }
+
+    const db = getDb();
+    const review = db
+      .select()
+      .from(schema.reviews)
+      .where(eq(schema.reviews.id, reviewId))
+      .get();
+
+    return NextResponse.json(review, { status: 201 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to create review";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

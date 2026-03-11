@@ -346,7 +346,8 @@ export default function SessionDetailPage({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    navigator.clipboard.writeText(`docker sandbox run ${session.sandboxId}`);
+                    const cmd = `GITHUB_TOKEN=$(gh auth token) docker sandbox run ${session.sandboxId}`;
+                    navigator.clipboard.writeText(cmd);
                     toast.success("Copied! Paste in your terminal to open a shell in the sandbox.");
                   }}
                 >
