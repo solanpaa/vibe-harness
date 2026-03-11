@@ -97,21 +97,16 @@ export function launchSandbox(
   // Try to get GITHUB_TOKEN from gh CLI if not already set
   if (!env.GITHUB_TOKEN && !env.GH_TOKEN) {
     try {
-      const { execSync } = require("child_process");
-      const token = execSync("gh auth token", { encoding: "utf-8" }).trim();
+      const token = require("child_process")
+        .execSync("gh auth token", { encoding: "utf-8" })
+        .trim();
       if (token) env.GITHUB_TOKEN = token;
     } catch {
-      // gh CLI not available or not authenticated — sandbox will handle auth
+      // gh CLI not available or not authenticated
     }
   }
 
-  // Use `script` to wrap the command in a PTY so docker sandbox
-  // outputs properly (it requires a TTY for interactive output)
-  const fullCmd = [command, ...args].map((a) =>
-    a.includes(" ") || a.includes('"') ? `'${a.replace(/'/g, "'\\''")}'` : a
-  ).join(" ");
-
-  const proc = spawn("script", ["-q", "/dev/null", "/bin/sh", "-c", fullCmd], {
+  const proc = spawn(command, args, {
     env,
     cwd: options.projectDir,
     stdio: ["pipe", "pipe", "pipe"],
