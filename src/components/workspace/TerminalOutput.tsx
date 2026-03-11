@@ -10,8 +10,8 @@ import { toast } from "sonner";
 
 type TerminalEvent =
   | { kind: "message"; content: string }
+  | { kind: "reasoning"; content: string }
   | { kind: "tool_start"; name: string; detail: string }
-  | { kind: "tool_complete"; name: string }
   | { kind: "result"; exitCode: number; premiumRequests?: number; durationMs?: number }
   | { kind: "raw"; text: string };
 
@@ -62,6 +62,11 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
       if (!content) return null;
       return { kind: "message", content };
     }
+    case "assistant.reasoning": {
+      const content = (data.content as string) ?? "";
+      if (!content) return null;
+      return { kind: "reasoning", content };
+    }
     case "tool.execution_start": {
       // Skip sub-agent tool events (nested tools have parentToolCallId)
       if (data.parentToolCallId) return null;
@@ -70,13 +75,6 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
       if (name === "report_intent") return null;
       const args = (data.arguments as Record<string, unknown>) ?? {};
       return { kind: "tool_start", name, detail: toolDetail(name, args) };
-    }
-    case "tool.execution_complete": {
-      // Skip sub-agent tool completions
-      if (data.parentToolCallId) return null;
-      const name = (data.toolName as string) ?? (data.name as string) ?? "tool";
-      if (name === "report_intent") return null;
-      return { kind: "tool_complete", name };
     }
     case "result": {
       const exitCode = (event.exitCode as number) ?? 0;
@@ -89,8 +87,8 @@ function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | null {
       };
     }
     // Skip these event types entirely
+    case "tool.execution_complete":
     case "assistant.message_delta":
-    case "assistant.reasoning":
     case "assistant.reasoning_delta":
     case "assistant.turn_start":
     case "assistant.turn_end":
@@ -147,22 +145,23 @@ function MessageBlock({ content }: { content: string }) {
   );
 }
 
-function ToolStartLine({ name, detail }: { name: string; detail: string }) {
-  const truncated = detail.length > 120 ? detail.slice(0, 120) + "…" : detail;
+function ReasoningBlock({ content }: { content: string }) {
   return (
-    <div className="font-mono text-xs text-gray-500 py-0.5 truncate">
-      <span className="mr-1.5">▶</span>
-      <span className="text-gray-400">{name}</span>
-      {truncated && <span className="ml-1.5 text-gray-600">{truncated}</span>}
+    <div className="rounded-md px-3 py-1.5 my-0.5" style={{ backgroundColor: "#0d1117" }}>
+      <div className="text-[10px] font-medium text-gray-500 mb-0.5">💭 Thinking</div>
+      <div className="text-xs text-gray-500 whitespace-pre-wrap break-words leading-relaxed italic">
+        {content}
+      </div>
     </div>
   );
 }
 
-function ToolCompleteLine({ name }: { name: string }) {
+function ToolStartLine({ name, detail }: { name: string; detail: string }) {
+  const truncated = detail.length > 120 ? detail.slice(0, 120) + "…" : detail;
   return (
-    <div className="font-mono text-xs text-green-600 py-0.5">
-      <span className="mr-1.5">✓</span>
-      <span>{name}</span>
+    <div className="font-mono text-xs text-gray-500 py-0.5 truncate">
+      ▶ <span className="text-gray-400">{name}</span>
+      {truncated && <span className="text-gray-600"> {truncated}</span>}
     </div>
   );
 }
@@ -221,10 +220,10 @@ function renderEvent(ev: TerminalEvent, index: number) {
   switch (ev.kind) {
     case "message":
       return <MessageBlock key={index} content={ev.content} />;
+    case "reasoning":
+      return <ReasoningBlock key={index} content={ev.content} />;
     case "tool_start":
       return <ToolStartLine key={index} name={ev.name} detail={ev.detail} />;
-    case "tool_complete":
-      return <ToolCompleteLine key={index} name={ev.name} />;
     case "result":
       return (
         <ResultCard
