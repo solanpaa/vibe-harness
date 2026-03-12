@@ -36,11 +36,3 @@ RUN export PATH="$HOME/.local/bin:$PATH" \
     && python3.14 --version || $HOME/.local/bin/uv run --python 3.14 python --version \
     && uv --version \
     && uvx --version
-
-# Wrap copilot binary to always inject --acp --stdio --yolo flags.
-# Docker sandbox calls `copilot` via its own entrypoint — we can't change
-# the CMD, but we can replace the binary with a wrapper script.
-RUN mv /home/agent/.local/bin/copilot /home/agent/.local/bin/copilot-real \
-    && printf '#!/bin/sh\nexec /home/agent/.local/bin/copilot-real --yolo --acp --stdio "$@"\n' \
-       > /home/agent/.local/bin/copilot \
-    && chmod +x /home/agent/.local/bin/copilot

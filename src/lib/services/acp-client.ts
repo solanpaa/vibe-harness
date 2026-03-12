@@ -136,9 +136,12 @@ export function launchAcpSession(
         createArgs.push(...options.extraWorkspaces);
       }
       console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
+      // Docker Desktop bakes host env vars into the sandbox at creation time.
+      // Prefix with env -u NODE_OPTIONS to ensure Next.js dev flags don't leak
+      // into the sandbox (copilot CLI rejects --no-warnings as unknown option).
       const createEnv = { ...env };
       delete createEnv.NODE_OPTIONS;
-      const result = execSync(`docker ${createArgs.join(" ")}`, {
+      const result = execSync(`env -u NODE_OPTIONS docker ${createArgs.join(" ")}`, {
         env: createEnv,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -159,6 +162,11 @@ export function launchAcpSession(
   // Step 2: Exec copilot in ACP mode inside the sandbox
   // Using -i (interactive) to keep stdin open for the NDJSON stream
   const execArgs = ["sandbox", "exec", "-i"];
+
+  // Explicitly clear NODE_OPTIONS — Docker sandbox daemon forwards host env
+  // vars independently of the spawn env, so deleting from spawnEnv isn't enough.
+  // Next.js dev sets NODE_OPTIONS=--no-warnings which copilot CLI rejects.
+  execArgs.push("-e", "NODE_OPTIONS=");
 
   // Pass GitHub token for authentication
   if (env.GITHUB_TOKEN) {
