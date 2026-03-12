@@ -118,8 +118,10 @@ export function launchAcpSession(
       }
       createArgs.push(options.agentCommand, options.projectDir);
       console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
+      const createEnv = { ...env };
+      delete createEnv.NODE_OPTIONS;
       const result = execSync(`docker ${createArgs.join(" ")}`, {
-        env,
+        env: createEnv,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 120_000,
@@ -158,8 +160,12 @@ export function launchAcpSession(
   execArgs.push(...copilotArgs);
 
   console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
+  // Strip NODE_OPTIONS to prevent Next.js flags (e.g. --no-warnings)
+  // from leaking into the copilot process inside the sandbox
+  const spawnEnv = { ...env };
+  delete spawnEnv.NODE_OPTIONS;
   const proc = spawn("docker", execArgs, {
-    env,
+    env: spawnEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
