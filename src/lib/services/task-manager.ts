@@ -16,15 +16,15 @@ export interface StartTaskOptions {
   taskId: string;
   projectDir: string;
   agentCommand: string;
-  agentType?: string; // copilot_cli | copilot_cli_acp
+  agentType?: string;
   credentialSetId?: string | null;
   dockerImage?: string | null;
   prompt: string;
   model?: string | null;
   useWorktree?: boolean;
   isContinuation?: boolean;
-  // When set, reuse the worktree from this task instead of creating a new one
   originTaskId?: string | null;
+  loadSessionId?: string | null; // Resume ACP session from previous stage
 }
 
 /** Start a task by launching its sandbox, optionally in a git worktree */
@@ -80,6 +80,7 @@ export function startTask(options: StartTaskOptions) {
     model: options.model,
     isContinuation: options.isContinuation,
     sandboxName,
+    loadSessionId: options.loadSessionId,
   });
 
   db.update(schema.tasks)
@@ -133,6 +134,7 @@ export function startTask(options: StartTaskOptions) {
     const lastMsg = session.messages.filter((m) => m.role === "assistant").pop();
     const lastAiMessage = lastMsg?.content || null;
 
+    // Store ACP session ID on workflow run so next stage can load it
     const currentTask = db
       .select({
         workflowRunId: schema.tasks.workflowRunId,
@@ -142,6 +144,13 @@ export function startTask(options: StartTaskOptions) {
       .from(schema.tasks)
       .where(eq(schema.tasks.id, options.taskId))
       .get();
+
+    if (currentTask?.workflowRunId && session.sessionId) {
+      db.update(schema.workflowRuns)
+        .set({ acpSessionId: session.sessionId })
+        .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+        .run();
+    }
 
     if (code === 0) {
       const stageConfig =

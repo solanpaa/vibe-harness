@@ -317,6 +317,9 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     useWorktree: firstTask.useWorktree === 1,
     isContinuation: !isFreshSession,
     originTaskId: firstTask.id,
+    // Pass the ACP session ID so the next stage can use session/load
+    // to resume the conversation with full history
+    loadSessionId: run.acpSessionId || null,
   });
 
   return { completed: false, nextStage: nextStage.name, taskId };

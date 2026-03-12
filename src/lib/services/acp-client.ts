@@ -63,6 +63,7 @@ export interface AcpLaunchOptions {
   model?: string | null;
   sandboxName?: string;
   isContinuation?: boolean;
+  loadSessionId?: string | null; // Resume existing ACP session (for workflow stage continuation)
 }
 
 // ---- Global session store (survives Next.js hot reloads) ------------------
@@ -328,7 +329,7 @@ export function launchAcpSession(
   });
 
   // Initialize connection asynchronously
-  initializeSession(session, options).catch((err) => {
+  initializeSession(session, { ...options, loadSessionId: options.loadSessionId }).catch((err) => {
     console.error("ACP init failed:", err);
     session.status = "error";
     events.emit("error", err);
@@ -337,7 +338,10 @@ export function launchAcpSession(
   return session;
 }
 
-async function initializeSession(session: AcpSession, options: AcpLaunchOptions) {
+async function initializeSession(
+  session: AcpSession,
+  options: AcpLaunchOptions & { loadSessionId?: string | null }
+) {
   // Sandbox is already created — exec connects directly to copilot ACP.
   // Give copilot a moment to start inside the sandbox.
   await new Promise((r) => setTimeout(r, 1000));
@@ -353,30 +357,52 @@ async function initializeSession(session: AcpSession, options: AcpLaunchOptions)
     clientCapabilities: {},
   });
 
-  console.log("[ACP] Initialized, creating session...");
-
   const absCwd = path.resolve(options.projectDir);
-  console.log(`[ACP] session/new cwd: ${absCwd}`);
-  try {
-    // Add timeout — session/new can hang if cwd doesn't exist in sandbox
-    const sessionPromise = session.connection.newSession({
-      cwd: absCwd,
-      mcpServers: [],
-    });
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("session/new timed out after 30s")), 30_000)
-    );
-    const sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
 
-    session.sessionId = sessionResult.sessionId;
-    console.log(`[ACP] Session created: ${session.sessionId}`);
-    session.status = "ready";
-    session.events.emit("status", "ready");
-    session.events.emit("ready");
-  } catch (err) {
-    console.error("[ACP] session/new failed:", err);
-    throw err;
+  if (options.loadSessionId) {
+    // Resume existing session — agent replays conversation history
+    console.log(`[ACP] Loading session: ${options.loadSessionId}`);
+    try {
+      const loadResult = await session.connection.loadSession({
+        sessionId: options.loadSessionId,
+        cwd: absCwd,
+        mcpServers: [],
+      });
+      // loadSession uses the same sessionId we passed
+      session.sessionId = options.loadSessionId;
+      console.log(`[ACP] Session loaded: ${session.sessionId}`);
+    } catch (err) {
+      console.warn("[ACP] session/load failed, falling back to session/new:", err);
+      // Fall back to new session if load fails
+      const sessionResult = await session.connection.newSession({
+        cwd: absCwd,
+        mcpServers: [],
+      });
+      session.sessionId = sessionResult.sessionId;
+      console.log(`[ACP] Fallback session created: ${session.sessionId}`);
+    }
+  } else {
+    // Create fresh session
+    console.log(`[ACP] Creating new session, cwd: ${absCwd}`);
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("session/new timed out after 30s")), 30_000)
+      );
+      const sessionResult = await Promise.race([
+        session.connection.newSession({ cwd: absCwd, mcpServers: [] }),
+        timeoutPromise,
+      ]);
+      session.sessionId = sessionResult.sessionId;
+      console.log(`[ACP] Session created: ${session.sessionId}`);
+    } catch (err) {
+      console.error("[ACP] session/new failed:", err);
+      throw err;
+    }
   }
+
+  session.status = "ready";
+  session.events.emit("status", "ready");
+  session.events.emit("ready");
 }
 
 // ---- Public API -----------------------------------------------------------

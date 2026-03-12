@@ -1,0 +1,1 @@
+ALTER TABLE `workflow_runs` ADD `acp_session_id` text;

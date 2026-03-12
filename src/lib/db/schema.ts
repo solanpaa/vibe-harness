@@ -71,11 +71,12 @@ export const workflowRuns = sqliteTable("workflow_runs", {
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id),
-  // The user's high-level task/feature description
   taskDescription: text("task_description"),
   title: text("title"),
   status: text("status").notNull().default("pending"),
   currentStage: text("current_stage"),
+  // ACP session ID from first stage — used by subsequent stages via session/load
+  acpSessionId: text("acp_session_id"),
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
 });
