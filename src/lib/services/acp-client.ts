@@ -183,31 +183,50 @@ export function launchAcpSession(
   if (options.isContinuation) {
     copilotArgs.push("--continue");
   }
-  // Pass MCP servers via --additional-mcp-config CLI flag (JSON string).
-  // The ACP mcpServers param in session/new is not yet honored by copilot CLI,
-  // so we inject them as CLI args instead.
+  // Pass MCP servers via --additional-mcp-config CLI flag.
+  // Write config as a file inside the sandbox and reference it with @path
+  // to avoid shell escaping issues with inline JSON.
   if (options.mcpServers?.length) {
     const mcpServers: Record<string, unknown> = {};
     for (const server of options.mcpServers) {
       if ("url" in server) {
         mcpServers[server.name] = {
-          type: server.type,
+          type: "http",
           url: server.url,
+          tools: ["*"],
           ...(("headers" in server && server.headers?.length)
             ? { headers: Object.fromEntries(server.headers.map((h: { name: string; value: string }) => [h.name, h.value])) }
             : {}),
         };
       } else if ("command" in server) {
         mcpServers[server.name] = {
-          type: "stdio",
+          type: "local",
           command: server.command,
           args: server.args,
+          tools: ["*"],
           env: server.env ? Object.fromEntries(server.env.map((e: { name: string; value: string }) => [e.name, e.value])) : {},
         };
       }
     }
-    copilotArgs.push("--additional-mcp-config", JSON.stringify({ mcpServers }));
-    console.log(`[ACP] Injecting ${options.mcpServers.length} MCP server(s) via --additional-mcp-config`);
+    const mcpConfigJson = JSON.stringify({ mcpServers });
+    const mcpConfigPath = "/tmp/vibe-mcp-config.json";
+    try {
+      const writeEnv = { ...env };
+      delete writeEnv.NODE_OPTIONS;
+      // Write config file into the sandbox. Use spawn with stdin pipe to avoid
+      // any shell escaping issues with the JSON content.
+      const writeResult = execSync(
+        `docker sandbox exec -i ${sandboxName} tee ${mcpConfigPath}`,
+        { input: mcpConfigJson, env: writeEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
+      );
+      copilotArgs.push("--additional-mcp-config", `@${mcpConfigPath}`);
+      console.log(`[ACP] Wrote MCP config to sandbox:${mcpConfigPath}`);
+      console.log(`[ACP] MCP config: ${mcpConfigJson}`);
+    } catch (err) {
+      // Fallback: pass inline JSON
+      console.warn(`[ACP] Failed to write MCP config file, using inline JSON:`, err instanceof Error ? err.message : err);
+      copilotArgs.push("--additional-mcp-config", JSON.stringify({ mcpServers }));
+    }
 
     // Allow sandbox network access to MCP server hosts.
     // Docker sandbox uses a network proxy that blocks local connections by default.
@@ -217,8 +236,6 @@ export function launchAcpSession(
           const url = new URL(server.url);
           const allowEnv = { ...env };
           delete allowEnv.NODE_OPTIONS;
-          // Allow both the hostname and localhost (the proxy resolves
-          // host.docker.internal → localhost on the host side)
           const hosts = new Set([url.hostname, "localhost", "127.0.0.1"]);
           const allowArgs = Array.from(hosts).flatMap(h => ["--allow-host", h]);
           execSync(`docker sandbox network proxy ${sandboxName} ${allowArgs.join(" ")}`, {

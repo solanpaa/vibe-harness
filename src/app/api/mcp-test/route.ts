@@ -84,6 +84,21 @@ const sessions = new Map<
 >();
 
 async function handleMcpRequest(request: Request): Promise<Response> {
+  // Ensure Accept header includes required types — some MCP clients
+  // (e.g. copilot CLI) may not send the full Accept header.
+  const accept = request.headers.get("accept") || "";
+  if (!accept.includes("text/event-stream") || !accept.includes("application/json")) {
+    const headers = new Headers(request.headers);
+    headers.set("accept", "application/json, text/event-stream");
+    request = new Request(request.url, {
+      method: request.method,
+      headers,
+      body: request.body,
+      // @ts-expect-error duplex required for streaming body in Node.js
+      duplex: "half",
+    });
+  }
+
   const sessionId = request.headers.get("mcp-session-id");
 
   // Route to existing session if we have one
