@@ -318,8 +318,9 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     isContinuation: !isFreshSession,
     originTaskId: firstTask.id,
     // Pass the ACP session ID so the next stage can use session/load
-    // to resume the conversation with full history
-    loadSessionId: run.acpSessionId || null,
+    // to resume the conversation with full history.
+    // For fresh sessions, don't load — context is injected in the prompt instead.
+    loadSessionId: isFreshSession ? null : (run.acpSessionId || null),
   });
 
   return { completed: false, nextStage: nextStage.name, taskId };
