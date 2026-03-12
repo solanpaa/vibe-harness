@@ -33,6 +33,15 @@ RUN export PATH="$HOME/.local/bin:$PATH" \
     && node --version \
     && npm --version \
     && pnpm --version \
-    && python3.14 --version || $HOME/.local/bin/uv run --python 3.14 python --version \
+    && python3.14 --version || $HOME/.local/bin/uv python install 3.14 \
     && uv --version \
     && uvx --version
+
+# Pre-configure MCP server for vibe-harness integration.
+# Uses a stdio bridge script that proxies tool calls back to the host via curl
+# (Node.js fetch doesn't respect HTTP_PROXY inside Docker sandboxes).
+COPY --chown=agent:agent mcp-bridge/vibe-mcp-bridge.js /home/agent/.local/bin/vibe-mcp-bridge.js
+RUN chmod +x /home/agent/.local/bin/vibe-mcp-bridge.js \
+    && mkdir -p /home/agent/.copilot \
+    && printf '{"mcpServers":{"vibe-harness":{"type":"local","command":"node","args":["/home/agent/.local/bin/vibe-mcp-bridge.js"],"env":{},"tools":["*"]}}}\n' \
+       > /home/agent/.copilot/mcp-config.json
