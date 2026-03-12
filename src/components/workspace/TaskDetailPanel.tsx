@@ -9,6 +9,7 @@ import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./terminal";
 import { ComparisonBanner } from "./ComparisonBanner";
 import { TaskHeader } from "./TaskHeader";
+import { ProposalReviewPanel } from "./ProposalReviewPanel";
 import { taskStatusConfig } from "@/lib/status-config";
 
 // ─── Detailed task (includes output) ─────────────────────────────────────────
@@ -48,11 +49,23 @@ export function TaskDetailPanel({
   onTaskChanged,
 }: TaskDetailPanelProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [workflowRunStatus, setWorkflowRunStatus] = useState<string | null>(null);
 
   const fetchDetail = useCallback(() => {
     fetch(`/api/tasks/${task.id}`)
       .then((r) => r.json())
-      .then((data: TaskDetail) => setDetail(data))
+      .then((data: TaskDetail) => {
+        setDetail(data);
+        // Fetch workflow run status to detect awaiting_split_review
+        if (data.workflowRunId) {
+          fetch(`/api/workflows/runs/${data.workflowRunId}`)
+            .then((r) => r.json())
+            .then((run) => setWorkflowRunStatus(run.status ?? null))
+            .catch(() => {});
+        } else {
+          setWorkflowRunStatus(null);
+        }
+      })
       .catch(() => {});
   }, [task.id]);
 
@@ -163,6 +176,17 @@ export function TaskDetailPanel({
           comparisonGroupId={detail.comparisonGroupId}
           currentTaskId={task.id}
           onTaskChanged={onTaskChanged}
+        />
+      )}
+
+      {/* Proposal review panel (shown when workflow is awaiting split review) */}
+      {workflowRunStatus === "awaiting_split_review" && (
+        <ProposalReviewPanel
+          taskId={task.id}
+          onLaunched={() => {
+            fetchDetail();
+            onTaskChanged?.();
+          }}
         />
       )}
 
