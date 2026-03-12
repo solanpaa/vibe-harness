@@ -53,6 +53,7 @@ export interface TaskFeedProps {
   onSelectReview: (reviewId: string, taskId: string) => void;
   onNewTask: () => void;
   onDeleteRun?: (runId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
   loading?: boolean;
 }
 
@@ -180,6 +181,7 @@ export function TaskFeed({
   onSelectReview,
   onNewTask,
   onDeleteRun,
+  onDeleteTask,
   loading = false,
 }: TaskFeedProps) {
   const [search, setSearch] = useState("");
@@ -274,6 +276,7 @@ export function TaskFeed({
                         task={entry.task}
                         isSelected={isTaskSelected(entry.task.id)}
                         onClick={() => onSelectTask(entry.task.id)}
+                        onDelete={onDeleteTask}
                       />
                       {entry.task.latestReview && (
                         <div className="ml-3 border-l border-border/60 pl-1">
@@ -344,6 +347,7 @@ export function TaskFeed({
                             isSelected={isTaskSelected(task.id)}
                             isNested
                             onClick={() => onSelectTask(task.id)}
+                            onDelete={onDeleteTask}
                           />
                           {task.latestReview && (
                             <div className="ml-3 border-l border-border/60 pl-1">

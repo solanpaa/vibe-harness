@@ -1,15 +1,22 @@
 "use client";
 
-import { Clock } from "lucide-react";
+import { Clock, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EnrichedTask } from "./TaskFeed";
 import { taskFeedIcon } from "@/lib/status-config";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 export interface TaskFeedItemProps {
   task: EnrichedTask;
   isSelected: boolean;
   isNested?: boolean;
   onClick: () => void;
+  onDelete?: (taskId: string) => void;
 }
 
 /** Strip markdown syntax for clean preview text */
@@ -30,6 +37,7 @@ export function TaskFeedItem({
   isSelected,
   isNested = false,
   onClick,
+  onDelete,
 }: TaskFeedItemProps) {
   const icon = taskFeedIcon[task.status] ?? (
     <Clock className="size-3.5 text-muted-foreground/50" />
@@ -42,33 +50,46 @@ export function TaskFeedItem({
   const promptPreview = stripMarkdown(task.prompt);
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left transition-colors cursor-pointer",
-        isNested ? "pl-3" : "pl-2",
-        isSelected
-          ? "bg-accent"
-          : "hover:bg-muted/60",
-      )}
-    >
-      <span className="mt-0.5 shrink-0">{icon}</span>
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <button
+          type="button"
+          onClick={onClick}
+          className={cn(
+            "flex w-full items-start gap-1.5 rounded-md px-2 py-1 text-left transition-colors cursor-pointer",
+            isNested ? "pl-3" : "pl-2",
+            isSelected
+              ? "bg-accent"
+              : "hover:bg-muted/60",
+          )}
+        >
+          <span className="mt-0.5 shrink-0">{icon}</span>
 
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center justify-between gap-1">
-          <span className="truncate text-[13px] font-medium leading-tight">{label}</span>
-          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-            {relativeTimeShort(task.createdAt)}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-1">
+              <span className="truncate text-[13px] font-medium leading-tight">{label}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                {relativeTimeShort(task.createdAt)}
+              </span>
+            </span>
+            {(!isNested || !task.stageName) && (
+              <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+                {promptPreview}
+              </span>
+            )}
           </span>
-        </span>
-        {(!isNested || !task.stageName) && (
-          <span className="block truncate text-[11px] leading-tight text-muted-foreground">
-            {promptPreview}
-          </span>
-        )}
-      </span>
-    </button>
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          className="text-destructive"
+          onClick={() => onDelete?.(task.id)}
+        >
+          <Trash2 className="size-3.5" />
+          Delete task
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

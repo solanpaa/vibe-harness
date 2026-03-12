@@ -150,6 +150,28 @@ export default function WorkspacePage() {
     }
   }
 
+  async function handleDeleteTask(taskId: string) {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Failed to delete task");
+        return;
+      }
+      toast.success("Task deleted");
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      if (
+        selection &&
+        ((selection.kind === "task" && selection.taskId === taskId) ||
+          (selection.kind === "review" && selection.taskId === taskId))
+      ) {
+        setSelection(null);
+      }
+    } catch {
+      toast.error("Failed to delete task");
+    }
+  }
+
   function renderDetailPanel() {
     if (!selection) {
       return (
@@ -209,6 +231,7 @@ export default function WorkspacePage() {
             onSelectReview={handleSelectReview}
             onNewTask={() => setCreateOpen(true)}
             onDeleteRun={handleDeleteRun}
+            onDeleteTask={handleDeleteTask}
             loading={loading}
           />
         }
