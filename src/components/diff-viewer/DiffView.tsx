@@ -6,7 +6,6 @@ import type { DiffFile, DiffHunk, DiffLine } from "@/lib/services/diff-service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ChevronRight,
   ChevronDown,
@@ -119,7 +118,7 @@ export function DiffView({
 
             {/* Diff content */}
             {isExpanded && (
-              <ScrollArea className="max-h-[600px]">
+              <div>
                 <div className="text-xs font-mono">
                   {file.hunks.map((hunk, hi) => (
                     <div key={hi}>
@@ -242,7 +241,7 @@ export function DiffView({
                     </div>
                   ))}
                 </div>
-              </ScrollArea>
+              </div>
             )}
           </div>
         );
