@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Terminal } from "lucide-react";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { TaskFeed, type EnrichedTask } from "@/components/workspace/TaskFeed";
@@ -8,6 +8,7 @@ import { TaskDetailPanel } from "@/components/workspace/TaskDetailPanel";
 import { ReviewDetailPanel } from "@/components/workspace/ReviewDetailPanel";
 import { NewTaskModal } from "@/components/workspace/NewTaskModal";
 import type { Selection } from "@/lib/types";
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 
 export default function WorkspacePage() {
   const [tasks, setTasks] = useState<EnrichedTask[]>([]);
@@ -46,6 +47,63 @@ export default function WorkspacePage() {
       : selection?.kind === "review"
         ? selection.taskId
         : null;
+
+  // Build flat list of selectable task IDs for arrow navigation
+  const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+  const selectedIndex = selectedTaskId ? taskIds.indexOf(selectedTaskId) : -1;
+
+  useKeyboardShortcuts(
+    useMemo(
+      () => [
+        {
+          key: "n",
+          meta: true,
+          handler: () => setCreateOpen(true),
+        },
+        {
+          key: "Escape",
+          handler: () => setSelection(null),
+        },
+        {
+          key: "ArrowDown",
+          handler: () => {
+            if (taskIds.length === 0) return;
+            const next =
+              selectedIndex < taskIds.length - 1 ? selectedIndex + 1 : 0;
+            setSelection({ kind: "task", taskId: taskIds[next] });
+          },
+        },
+        {
+          key: "ArrowUp",
+          handler: () => {
+            if (taskIds.length === 0) return;
+            const prev =
+              selectedIndex > 0 ? selectedIndex - 1 : taskIds.length - 1;
+            setSelection({ kind: "task", taskId: taskIds[prev] });
+          },
+        },
+        {
+          key: "j",
+          handler: () => {
+            if (taskIds.length === 0) return;
+            const next =
+              selectedIndex < taskIds.length - 1 ? selectedIndex + 1 : 0;
+            setSelection({ kind: "task", taskId: taskIds[next] });
+          },
+        },
+        {
+          key: "k",
+          handler: () => {
+            if (taskIds.length === 0) return;
+            const prev =
+              selectedIndex > 0 ? selectedIndex - 1 : taskIds.length - 1;
+            setSelection({ kind: "task", taskId: taskIds[prev] });
+          },
+        },
+      ],
+      [taskIds, selectedIndex],
+    ),
+  );
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
 
@@ -129,6 +187,8 @@ export default function WorkspacePage() {
           />
         }
         detailSlot={renderDetailPanel()}
+        hasSelection={!!selection}
+        onBackToFeed={() => setSelection(null)}
       />
 
       <NewTaskModal

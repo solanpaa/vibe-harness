@@ -10,9 +10,12 @@ import {
   Workflow,
   ListTodo,
   Search,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/hooks/use-theme";
 
 function NavTab({
   href,
@@ -32,7 +35,7 @@ function NavTab({
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
         isActive
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -46,9 +49,10 @@ function NavTab({
 
 export function AppHeader() {
   const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
 
   return (
-    <header className="flex h-12 shrink-0 items-center border-b bg-card px-4 shadow-sm">
+    <header className="flex h-10 shrink-0 items-center border-b bg-card px-3 shadow-sm">
       <Link
         href="/"
         className="flex items-center gap-2 font-bold text-sm shrink-0"
@@ -96,8 +100,17 @@ export function AppHeader() {
             ⌘K
           </kbd>
         </button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Toggle theme"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          className="h-8 w-8"
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
         <Link href="/settings">
-          <Button variant="ghost" size="icon" aria-label="Settings">
+          <Button variant="ghost" size="icon" aria-label="Settings" className="h-8 w-8">
             <Settings className="h-4 w-4" />
           </Button>
         </Link>

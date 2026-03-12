@@ -369,7 +369,7 @@ export default function CredentialsPage() {
                 </CardHeader>
 
                 {isExpanded && (
-                  <CardContent>
+                  <CardContent className="px-3 pb-2.5 pt-0">
                     {setEntryList.length > 0 ? (
                       <div className="space-y-2">
                         {setEntryList.map((entry) => (
