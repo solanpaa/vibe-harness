@@ -1,5 +1,5 @@
 import { getDb, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { startTask } from "./task-manager";
 import { generateTitle } from "@/lib/services/title-generator";
@@ -7,15 +7,21 @@ import type { WorkflowStage } from "@/types/domain";
 
 /**
  * Build a combined prompt from the task description and stage instructions.
+ * When previousPlan is provided (fresh-session stages), it's injected as
+ * context so the agent has the plan from the previous stage without
+ * carrying over the full conversation history.
  */
-function buildStagePrompt(taskDescription: string, stage: WorkflowStage): string {
-  return [
-    `## Task`,
-    taskDescription,
-    ``,
-    `## Current Stage: ${stage.name}`,
-    stage.promptTemplate,
-  ].join("\n");
+function buildStagePrompt(
+  taskDescription: string,
+  stage: WorkflowStage,
+  previousPlan?: string | null
+): string {
+  const parts = [`## Task`, taskDescription, ``];
+  if (previousPlan) {
+    parts.push(`## Context from Previous Stage`, previousPlan, ``);
+  }
+  parts.push(`## Current Stage: ${stage.name}`, stage.promptTemplate);
+  return parts.join("\n");
 }
 
 /**
@@ -243,8 +249,41 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
 
   if (!agent) return null;
 
-  // Build combined prompt with task description + next stage instructions
-  const prompt = buildStagePrompt(run.taskDescription || firstTask.prompt, nextStage);
+  // For fresh-session stages, retrieve the plan from the most recent review
+  // so the agent gets context without the full conversation history.
+  const isFreshSession = nextStage.freshSession === true;
+  let previousPlan: string | null = null;
+
+  if (isFreshSession) {
+    const latestReview = db
+      .select()
+      .from(schema.reviews)
+      .where(eq(schema.reviews.workflowRunId, workflowRunId))
+      .orderBy(desc(schema.reviews.createdAt))
+      .limit(1)
+      .get();
+
+    // Find the task that produced this review for its lastAiMessage fallback
+    const reviewTask = latestReview
+      ? db
+          .select({ lastAiMessage: schema.tasks.lastAiMessage })
+          .from(schema.tasks)
+          .where(eq(schema.tasks.id, latestReview.taskId))
+          .get()
+      : null;
+
+    previousPlan =
+      latestReview?.planMarkdown ||
+      latestReview?.aiSummary ||
+      reviewTask?.lastAiMessage ||
+      null;
+  }
+
+  const prompt = buildStagePrompt(
+    run.taskDescription || firstTask.prompt,
+    nextStage,
+    previousPlan
+  );
 
   const now = new Date().toISOString();
   const taskId = uuid();
@@ -284,7 +323,7 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
     prompt,
     model: firstTask.model,
     useWorktree: firstTask.useWorktree === 1,
-    isContinuation: true,
+    isContinuation: !isFreshSession,
     originTaskId: firstTask.id,
   });
 
@@ -328,6 +367,7 @@ export function getDefaultWorkflowStages(): WorkflowStage[] {
         "Analyze the codebase and create a detailed implementation plan for the requested changes. Do not make any code changes yet.",
       autoAdvance: false,
       reviewRequired: true,
+      freshSession: false,
     },
     {
       name: "implement",
@@ -335,6 +375,7 @@ export function getDefaultWorkflowStages(): WorkflowStage[] {
         "Implement the changes according to the approved plan. Write clean, well-tested code.",
       autoAdvance: false,
       reviewRequired: true,
+      freshSession: false,
     },
     {
       name: "review",
@@ -342,6 +383,7 @@ export function getDefaultWorkflowStages(): WorkflowStage[] {
         "Review the implementation for bugs, edge cases, performance issues, and code quality. Suggest improvements.",
       autoAdvance: false,
       reviewRequired: true,
+      freshSession: false,
     },
   ];
 }

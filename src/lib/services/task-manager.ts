@@ -58,8 +58,13 @@ export function startTask(options: StartTaskOptions) {
     }
   }
 
-  // For continuations, reuse the origin sandbox name so Docker can --continue
-  const sandboxTaskId = options.originTaskId || options.taskId;
+  // For continuations, reuse the origin sandbox name so Docker can --continue.
+  // For fresh sessions (isContinuation=false with originTaskId), use a new
+  // sandbox name so the agent starts with a clean session.
+  const sandboxTaskId =
+    options.isContinuation && options.originTaskId
+      ? options.originTaskId
+      : options.taskId;
   const shortId = sandboxTaskId.slice(0, 8);
   const sandboxName = `vibe-${shortId}`;
 

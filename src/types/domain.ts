@@ -77,6 +77,7 @@ export const WorkflowStageSchema = z.object({
   promptTemplate: z.string(),
   autoAdvance: z.boolean().default(false),
   reviewRequired: z.boolean().default(true),
+  freshSession: z.boolean().default(false),
 });
 export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
 

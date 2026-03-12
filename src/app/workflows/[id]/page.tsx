@@ -240,6 +240,7 @@ export default function WorkflowDetailPage({
         promptTemplate: "",
         autoAdvance: false,
         reviewRequired: true,
+        freshSession: false,
       },
     ]);
   };
@@ -587,6 +588,21 @@ export default function WorkflowDetailPage({
                       />
                       Auto-advance
                     </label>
+                    <label
+                      className="flex items-center gap-2 text-sm"
+                      title="Start a new agent session instead of continuing. Clears agent context and injects only the plan from the previous stage's review."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={stage.freshSession ?? false}
+                        onChange={(e) =>
+                          updateStage(idx, {
+                            freshSession: e.target.checked,
+                          })
+                        }
+                      />
+                      Fresh session
+                    </label>
                   </div>
                 </div>
               ))}
@@ -619,6 +635,9 @@ export default function WorkflowDetailPage({
                       )}
                       {stage.autoAdvance && (
                         <Badge variant="secondary">Auto-advance</Badge>
+                      )}
+                      {stage.freshSession && (
+                        <Badge variant="secondary">Fresh session</Badge>
                       )}
                     </div>
                   </div>
