@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Terminal, Loader2, TerminalSquare } from "lucide-react";
+import { Terminal, Loader2, TerminalSquare, Zap, Send } from "lucide-react";
 import { toast } from "sonner";
 import type { TerminalEvent } from "./event-parser";
 import { mapJsonlEvent, parseLine } from "./event-parser";
@@ -37,7 +38,10 @@ export function TerminalOutput({
 
   const [streamedEvents, setStreamedEvents] = useState<TerminalEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const onStreamCloseRef = useRef(onStreamClose);
 
@@ -135,6 +139,46 @@ export function TerminalOutput({
         ? "Connecting to output stream..."
         : "No output recorded.";
 
+  async function handleSend() {
+    const message = input.trim();
+    if (!message || sending) return;
+    setSending(true);
+    setInput("");
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error ?? "Failed to send message");
+        setInput(message);
+      } else {
+        // Show the sent message as a user event in the terminal
+        setStreamedEvents((prev) => [
+          ...prev,
+          { kind: "user_message", content: message },
+        ]);
+      }
+    } catch {
+      toast.error("Failed to send message");
+      setInput(message);
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }
+
+  const isRunning = status === "running";
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header bar */}
@@ -175,6 +219,39 @@ export function TerminalOutput({
           )}
         </div>
       </div>
+
+      {/* Intervention input — guide the agent while it's running */}
+      {isRunning && (
+        <div className="border-t px-3 py-2 bg-background">
+          <div className="flex gap-2 items-end">
+            <Textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Guide the agent… (Enter to send, Shift+Enter for newline)"
+              className="min-h-[40px] max-h-[100px] resize-none text-sm flex-1"
+              disabled={sending}
+              rows={1}
+            />
+            <Button
+              size="sm"
+              onClick={handleSend}
+              disabled={sending || !input.trim()}
+              className="h-9 px-3 shrink-0"
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <Zap className="mr-1 h-3.5 w-3.5" />
+                  Send
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

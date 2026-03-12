@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { sendAcpPrompt, getAcpSession } from "@/lib/services/acp-client";
-import { sendInput } from "@/lib/services/sandbox";
 
 export async function POST(
   request: NextRequest,
@@ -37,44 +36,38 @@ export async function POST(
     );
   }
 
-  // Try ACP session first
+  // Send via ACP
   const acpSession = getAcpSession(id);
-  if (acpSession) {
-    const sent = await sendAcpPrompt(id, message, context);
-    if (!sent) {
-      return NextResponse.json(
-        { error: "Failed to send message to ACP session" },
-        { status: 500 }
-      );
-    }
-
-    // Persist the intervention message
-    const messageId = crypto.randomUUID();
-    db.insert(schema.taskMessages)
-      .values({
-        id: messageId,
-        taskId: id,
-        role: "user",
-        content: message,
-        isIntervention: 1,
-        metadata: context ? JSON.stringify({ context }) : null,
-        createdAt: new Date().toISOString(),
-      })
-      .run();
-
-    return NextResponse.json({ success: true, messageId });
-  }
-
-  // Fallback: try legacy stdin for non-ACP tasks
-  const sent = sendInput(id, message + "\n");
-  if (!sent) {
+  if (!acpSession) {
     return NextResponse.json(
-      { error: "Task not running or does not support intervention" },
+      { error: "No active session for this task" },
       { status: 400 }
     );
   }
 
-  return NextResponse.json({ success: true, fallback: true });
+  const result = await sendAcpPrompt(id, message);
+  if (!result.success) {
+    return NextResponse.json(
+      { error: "Failed to send message to agent" },
+      { status: 500 }
+    );
+  }
+
+  // Persist the intervention message
+  const messageId = crypto.randomUUID();
+  db.insert(schema.taskMessages)
+    .values({
+      id: messageId,
+      taskId: id,
+      role: "user",
+      content: message,
+      isIntervention: 1,
+      metadata: context ? JSON.stringify({ context }) : null,
+      createdAt: new Date().toISOString(),
+    })
+    .run();
+
+  return NextResponse.json({ success: true, messageId });
 }
 
 export async function GET(

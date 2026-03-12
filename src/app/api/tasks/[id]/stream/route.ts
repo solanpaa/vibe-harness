@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { getTaskSandbox, getTaskAcpSession } from "@/lib/services/task-manager";
+import { getTaskAcpSession } from "@/lib/services/task-manager";
+import type { AcpMessage } from "@/lib/services/acp-client";
 
 /**
  * Try to parse a raw output line as a JSONL event from Copilot CLI.
@@ -47,14 +48,8 @@ export async function GET(
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      // Try ACP session first, then legacy sandbox
-      const acpSession = getTaskAcpSession(id);
-      if (acpSession) {
-        return startAcpStream(controller, encoder, acpSession, request);
-      }
-
-      const sandbox = getTaskSandbox(id);
-      if (!sandbox) {
+      const session = getTaskAcpSession(id);
+      if (!session) {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Task not found or not running" })}\n\n`)
         );
@@ -62,8 +57,7 @@ export async function GET(
         return;
       }
 
-      // Legacy sandbox streaming (unchanged)
-      startLegacyStream(controller, encoder, sandbox, request);
+      startAcpStream(controller, encoder, session, request);
     },
   });
 
@@ -73,65 +67,6 @@ export async function GET(
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     },
-  });
-}
-
-function startLegacyStream(
-  controller: ReadableStreamDefaultController,
-  encoder: TextEncoder,
-  sandbox: ReturnType<typeof getTaskSandbox> & {},
-  request: NextRequest
-) {
-  // Send existing output
-  for (const line of sandbox.output) {
-    const msg = formatSseMessage(line);
-    if (msg) {
-      controller.enqueue(encoder.encode(msg));
-    }
-  }
-
-  // Stream new output
-  const onOutput = (data: string) => {
-    try {
-      const msg = formatSseMessage(data);
-      if (msg) {
-        controller.enqueue(encoder.encode(msg));
-      }
-    } catch {
-      // Stream closed
-    }
-  };
-
-  const onClose = (code: number) => {
-    try {
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "close", code })}\n\n`)
-      );
-      controller.close();
-    } catch {
-      // Stream already closed
-    }
-  };
-
-  const onError = (err: Error) => {
-    try {
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`)
-      );
-      controller.close();
-    } catch {
-      // Stream already closed
-    }
-  };
-
-  sandbox.events.on("output", onOutput);
-  sandbox.events.on("close", onClose);
-  sandbox.events.on("error", onError);
-
-  request.signal.addEventListener("abort", () => {
-    sandbox.events.off("output", onOutput);
-    sandbox.events.off("close", onClose);
-    sandbox.events.off("error", onError);
   });
 }
 

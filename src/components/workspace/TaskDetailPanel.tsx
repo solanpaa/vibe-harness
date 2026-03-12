@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./terminal";
-import { AcpChatPanel } from "./AcpChatPanel";
 import { ComparisonBanner } from "./ComparisonBanner";
 import { TaskHeader } from "./TaskHeader";
 import { TaskPrompt } from "./TaskPrompt";
@@ -24,7 +23,6 @@ interface TaskDetail {
   workflowRunId: string | null;
   stageName: string | null;
   originTaskId: string | null;
-  executionMode: string;
   comparisonGroupId: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -147,24 +145,15 @@ export function TaskDetailPanel({
 
       <TaskPrompt prompt={task.prompt} />
 
-      {/* ── Output: ACP chat or legacy terminal ───────────────── */}
+      {/* ── Output with intervention input ─────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col">
-        {detail?.executionMode === "acp" ? (
-          <AcpChatPanel
-            taskId={task.id}
-            status={currentStatus}
-            sandboxId={detail?.sandboxId ?? null}
-            onStreamClose={handleStreamClose}
-          />
-        ) : (
-          <TerminalOutput
-            taskId={task.id}
-            status={currentStatus}
-            initialOutput={detail?.output ?? null}
-            sandboxId={detail?.sandboxId ?? null}
-            onStreamClose={handleStreamClose}
-          />
-        )}
+        <TerminalOutput
+          taskId={task.id}
+          status={currentStatus}
+          initialOutput={detail?.output ?? null}
+          sandboxId={detail?.sandboxId ?? null}
+          onStreamClose={handleStreamClose}
+        />
       </div>
     </div>
   );
