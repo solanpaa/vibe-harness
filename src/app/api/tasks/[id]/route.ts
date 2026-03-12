@@ -100,6 +100,7 @@ export async function PATCH(
           useWorktree: task.useWorktree === 1,
           originTaskId: task.originTaskId,
           isContinuation: !!task.originTaskId,
+          mcpServers: body.mcpServers,
         });
       } catch (e) {
         console.error(`[Task ${id}] Failed to start:`, e);

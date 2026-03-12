@@ -65,6 +65,7 @@ export interface AcpLaunchOptions {
   sandboxName?: string;
   isContinuation?: boolean;
   loadSessionId?: string | null; // Resume existing ACP session (for workflow stage continuation)
+  mcpServers?: acp.McpServer[];  // MCP servers to pass to the agent session
 }
 
 // ---- Global session store (survives Next.js hot reloads) ------------------
@@ -375,6 +376,11 @@ async function initializeSession(
   });
 
   const absCwd = path.resolve(options.projectDir);
+  const mcpServers = options.mcpServers ?? [];
+
+  if (mcpServers.length > 0) {
+    console.log(`[ACP] Passing ${mcpServers.length} MCP server(s) to session`);
+  }
 
   if (options.loadSessionId) {
     // Resume existing session — agent replays conversation history
@@ -383,7 +389,7 @@ async function initializeSession(
       const loadResult = await session.connection.loadSession({
         sessionId: options.loadSessionId,
         cwd: absCwd,
-        mcpServers: [],
+        mcpServers,
       });
       // loadSession uses the same sessionId we passed
       session.sessionId = options.loadSessionId;
@@ -393,7 +399,7 @@ async function initializeSession(
       // Fall back to new session if load fails
       const sessionResult = await session.connection.newSession({
         cwd: absCwd,
-        mcpServers: [],
+        mcpServers,
       });
       session.sessionId = sessionResult.sessionId;
       console.log(`[ACP] Fallback session created: ${session.sessionId}`);
@@ -406,7 +412,7 @@ async function initializeSession(
         setTimeout(() => reject(new Error("session/new timed out after 30s")), 30_000)
       );
       const sessionResult = await Promise.race([
-        session.connection.newSession({ cwd: absCwd, mcpServers: [] }),
+        session.connection.newSession({ cwd: absCwd, mcpServers }),
         timeoutPromise,
       ]);
       session.sessionId = sessionResult.sessionId;

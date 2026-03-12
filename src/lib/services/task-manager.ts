@@ -1,6 +1,6 @@
 import { getDb, schema } from "@/lib/db";
 import { launchAcpSession, getAcpSession, closeAcpSession, sendAcpPrompt, isAcpSession } from "./acp-client";
-import type { AcpMessage } from "./acp-client";
+import type { AcpMessage, AcpLaunchOptions } from "./acp-client";
 import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree, rebaseWorktree, commitWorktreeChanges } from "./worktree";
 import { createReviewForTask } from "./review-service";
 import { advanceWorkflow, getStageConfig } from "../services/workflow-engine";
@@ -25,6 +25,7 @@ export interface StartTaskOptions {
   isContinuation?: boolean;
   originTaskId?: string | null;
   loadSessionId?: string | null; // Resume ACP session from previous stage
+  mcpServers?: AcpLaunchOptions["mcpServers"]; // MCP servers for the agent session
 }
 
 /** Start a task by launching its sandbox, optionally in a git worktree */
@@ -90,6 +91,7 @@ export function startTask(options: StartTaskOptions) {
     isContinuation: options.isContinuation,
     sandboxName,
     loadSessionId: options.loadSessionId,
+    mcpServers: options.mcpServers,
   });
 
   db.update(schema.tasks)
