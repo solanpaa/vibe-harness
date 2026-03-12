@@ -9,6 +9,7 @@ import {
   Settings,
   Workflow,
   ListTodo,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -82,7 +83,19 @@ export function AppHeader() {
           pathname={pathname}
         />
       </nav>
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-1">
+        <button
+          onClick={() =>
+            document.dispatchEvent(new Event("open-command-palette"))
+          }
+          className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+        >
+          <Search className="h-3 w-3" />
+          <span className="hidden sm:inline">Search</span>
+          <kbd className="pointer-events-none rounded border bg-muted px-1 text-[10px] font-mono">
+            ⌘K
+          </kbd>
+        </button>
         <Link href="/settings">
           <Button variant="ghost" size="icon" aria-label="Settings">
             <Settings className="h-4 w-4" />
