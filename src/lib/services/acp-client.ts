@@ -173,6 +173,12 @@ export function launchAcpSession(
     execArgs.push("-e", `GITHUB_TOKEN=${env.GITHUB_TOKEN}`);
   }
 
+  // Pass task ID and host URL for the MCP bridge baked into the Docker image.
+  // The bridge reads VIBE_TASK_ID to scope proposal tool calls to this task,
+  // and VIBE_HARNESS_URL to reach the host API via curl.
+  execArgs.push("-e", `VIBE_TASK_ID=${taskId}`);
+  execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
+
   execArgs.push(sandboxName);
 
   // Build the copilot command with ACP flags

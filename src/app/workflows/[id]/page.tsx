@@ -11,7 +11,9 @@ import {
   CheckCircle,
   CircleDot,
   Clock,
+  GitFork,
   Loader2,
+  Merge,
   Pencil,
   Play,
   Plus,
@@ -72,6 +74,18 @@ const runStatusConfig: Record<
     className:
       "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     label: "Awaiting Review",
+  },
+  awaiting_split_review: {
+    icon: <GitFork className="h-3 w-3" />,
+    className:
+      "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
+    label: "Review Proposals",
+  },
+  finalizing: {
+    icon: <Merge className="h-3 w-3 animate-spin" />,
+    className:
+      "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300",
+    label: "Finalizing",
   },
   completed: {
     icon: <CheckCircle className="h-3 w-3" />,

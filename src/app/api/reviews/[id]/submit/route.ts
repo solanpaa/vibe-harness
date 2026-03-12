@@ -98,9 +98,11 @@ export async function POST(
       merged: mergeResult?.merged ?? false,
       mergeError: mergeResult?.error ?? null,
       workflowAdvanced: workflowAdvance
-        ? !workflowAdvance.completed
-          ? { nextStage: workflowAdvance.nextStage, taskId: workflowAdvance.taskId }
-          : { completed: true }
+        ? workflowAdvance.splitReview
+          ? { splitReview: true }
+          : !workflowAdvance.completed
+            ? { nextStage: workflowAdvance.nextStage, taskId: workflowAdvance.taskId }
+            : { completed: true }
         : null,
     });
   }

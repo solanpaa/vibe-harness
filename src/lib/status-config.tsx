@@ -5,6 +5,8 @@ import {
   XCircle,
   GitPullRequestArrow,
   Pause,
+  GitFork,
+  Merge,
 } from "lucide-react";
 
 // ─── Task status ─────────────────────────────────────────────────────────────
@@ -60,6 +62,24 @@ export const taskStatusConfig: Record<string, TaskStatusConfig> = {
   },
 };
 
+// ─── Workflow run status (superset of task status) ───────────────────────────
+
+export const workflowStatusConfig: Record<string, TaskStatusConfig> = {
+  ...taskStatusConfig,
+  awaiting_split_review: {
+    icon: <GitFork className="h-4 w-4" />,
+    colorClass:
+      "bg-indigo-100 text-indigo-800 dark:bg-indigo-800 dark:text-indigo-200",
+    label: "Review Proposals",
+  },
+  finalizing: {
+    icon: <Merge className="h-4 w-4 animate-spin" />,
+    colorClass:
+      "bg-cyan-100 text-cyan-800 dark:bg-cyan-800 dark:text-cyan-200",
+    label: "Finalizing",
+  },
+};
+
 // ─── Task feed icons (smaller, used in feed items) ───────────────────────────
 
 export const taskFeedIcon: Record<string, React.ReactNode> = {
@@ -69,6 +89,8 @@ export const taskFeedIcon: Record<string, React.ReactNode> = {
   awaiting_review: (
     <GitPullRequestArrow className="size-3.5 text-yellow-500" />
   ),
+  awaiting_split_review: <GitFork className="size-3.5 text-indigo-500" />,
+  finalizing: <Merge className="size-3.5 animate-spin text-cyan-500" />,
   completed: <CheckCircle className="size-3.5 text-muted-foreground/40" />,
   failed: <XCircle className="size-3.5 text-red-500" />,
   paused: <Pause className="size-3.5 text-orange-500" />,
@@ -85,6 +107,10 @@ export const taskBadgeClass: Record<string, string> = {
     "bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
   awaiting_review:
     "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+  awaiting_split_review:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-800 dark:text-indigo-200",
+  finalizing:
+    "bg-cyan-100 text-cyan-800 dark:bg-cyan-800 dark:text-cyan-200",
   completed:
     "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
   failed:

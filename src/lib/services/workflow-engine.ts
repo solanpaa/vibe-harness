@@ -191,6 +191,7 @@ export async function startWorkflowRun(input: {
  */
 export async function advanceWorkflow(workflowRunId: string): Promise<{
   completed: boolean;
+  splitReview?: boolean;
   nextStage?: string;
   taskId?: string;
 } | null> {
@@ -214,6 +215,17 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
 
   const stages: WorkflowStage[] = JSON.parse(template.stages);
   const currentIdx = stages.findIndex((s) => s.name === run.currentStage);
+  const currentStage = currentIdx >= 0 ? stages[currentIdx] : null;
+
+  // If the just-completed stage was a "split" type, transition to proposal review
+  // instead of advancing to the next sequential stage.
+  if (currentStage?.type === "split") {
+    db.update(schema.workflowRuns)
+      .set({ status: "awaiting_split_review" })
+      .where(eq(schema.workflowRuns.id, workflowRunId))
+      .run();
+    return { completed: false, splitReview: true };
+  }
 
   if (currentIdx === -1 || currentIdx >= stages.length - 1) {
     // All stages done — mark as finalizing (host-side merge will set "completed")
