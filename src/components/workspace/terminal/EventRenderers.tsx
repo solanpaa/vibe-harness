@@ -163,12 +163,23 @@ function RawLine({ text }: { text: string }) {
   );
 }
 
+function SessionInfoLine({ text }: { text: string }) {
+  return (
+    <div className="font-mono text-[11px] py-0.5 text-terminal-text-muted flex items-center gap-1.5">
+      <span className="opacity-50">⚙</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
 export function renderEvent(ev: TerminalEvent, index: number) {
   switch (ev.kind) {
     case "message":
       return <MessageBlock key={index} content={ev.content} />;
     case "user_message":
       return <UserMessageBlock key={index} content={ev.content} />;
+    case "session_info":
+      return <SessionInfoLine key={index} text={ev.text} />;
     case "reasoning":
       return <ReasoningBlock key={index} content={ev.content} />;
     case "tool_start":

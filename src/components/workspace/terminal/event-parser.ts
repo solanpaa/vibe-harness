@@ -3,6 +3,7 @@
 export type TerminalEvent =
   | { kind: "message"; content: string }
   | { kind: "user_message"; content: string }
+  | { kind: "session_info"; text: string }
   | { kind: "reasoning"; content: string }
   | { kind: "tool_start"; name: string; detail: string }
   | { kind: "result"; exitCode: number; premiumRequests?: number; durationMs?: number }
@@ -101,12 +102,16 @@ export function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | n
       if (!content) return null;
       return { kind: "user_message", content };
     }
+    case "session.tools_updated": {
+      const model = data.model as string | undefined;
+      if (model) return { kind: "session_info", text: `Model: ${model}` };
+      return null;
+    }
     case "tool.execution_complete":
     case "assistant.message_delta":
     case "assistant.reasoning_delta":
     case "assistant.turn_start":
     case "assistant.turn_end":
-    case "session.tools_updated":
     case "session.background_tasks_changed":
       return null;
     default:
