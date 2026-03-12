@@ -568,6 +568,7 @@ export default function WorkflowDetailPage({
                         onChange={(e) =>
                           updateStage(idx, {
                             reviewRequired: e.target.checked,
+                            ...(e.target.checked && { autoAdvance: false }),
                           })
                         }
                       />
@@ -580,6 +581,7 @@ export default function WorkflowDetailPage({
                         onChange={(e) =>
                           updateStage(idx, {
                             autoAdvance: e.target.checked,
+                            ...(e.target.checked && { reviewRequired: false }),
                           })
                         }
                       />

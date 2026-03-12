@@ -2,6 +2,7 @@ import { getDb, schema } from "@/lib/db";
 import { launchSandbox, stopSandbox, getSandbox, sendInput } from "./sandbox";
 import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree } from "./worktree";
 import { createReviewForTask } from "./review-service";
+import { advanceWorkflow, getStageConfig } from "../services/workflow-engine";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { execSync } from "child_process";
@@ -129,34 +130,73 @@ export function startTask(options: StartTaskOptions) {
     }
 
     if (code === 0) {
-      // Success: auto-create review and set awaiting_review
-      db.update(schema.tasks)
-        .set({
-          status: "awaiting_review",
-          output,
-          lastAiMessage,
-          usageStats,
-          completedAt: new Date().toISOString(),
-        })
-        .where(eq(schema.tasks.id, options.taskId))
-        .run();
+      // Check stage config for autoAdvance / reviewRequired
+      const stageConfig =
+        currentTask?.workflowRunId && currentTask?.stageName
+          ? getStageConfig(currentTask.workflowRunId, currentTask.stageName)
+          : null;
+      const shouldAutoAdvance = stageConfig?.autoAdvance === true;
 
-      // Update workflow run status to awaiting_review
-      if (currentTask?.workflowRunId) {
-        db.update(schema.workflowRuns)
-          .set({ status: "awaiting_review" })
-          .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
-          .run();
-      }
-
-      try {
-        await createReviewForTask(options.taskId);
-      } catch (e) {
-        console.error("Failed to auto-create review:", e);
+      if (shouldAutoAdvance) {
+        // Auto-advance: skip review, mark completed, advance workflow
         db.update(schema.tasks)
-          .set({ status: "completed" })
+          .set({
+            status: "completed",
+            output,
+            lastAiMessage,
+            usageStats,
+            completedAt: new Date().toISOString(),
+          })
           .where(eq(schema.tasks.id, options.taskId))
           .run();
+
+        if (currentTask?.workflowRunId) {
+          try {
+            const result = await advanceWorkflow(currentTask.workflowRunId);
+            // If workflow completed, trigger finalize
+            if (result?.completed) {
+              const originId = options.originTaskId || options.taskId;
+              try {
+                startFinalizeTask(originId, {
+                  workflowRunId: currentTask.workflowRunId,
+                });
+              } catch (e) {
+                console.error("Failed to start finalize after auto-advance:", e);
+              }
+            }
+          } catch (e) {
+            console.error("Failed to auto-advance workflow:", e);
+          }
+        }
+      } else {
+        // Review required (default): create review and wait for approval
+        db.update(schema.tasks)
+          .set({
+            status: "awaiting_review",
+            output,
+            lastAiMessage,
+            usageStats,
+            completedAt: new Date().toISOString(),
+          })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+
+        if (currentTask?.workflowRunId) {
+          db.update(schema.workflowRuns)
+            .set({ status: "awaiting_review" })
+            .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+            .run();
+        }
+
+        try {
+          await createReviewForTask(options.taskId);
+        } catch (e) {
+          console.error("Failed to auto-create review:", e);
+          db.update(schema.tasks)
+            .set({ status: "completed" })
+            .where(eq(schema.tasks.id, options.taskId))
+            .run();
+        }
       }
     } else {
       db.update(schema.tasks)

@@ -291,6 +291,34 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
   return { completed: false, nextStage: nextStage.name, taskId };
 }
 
+/**
+ * Look up the WorkflowStage config for a given workflow run and stage name.
+ * Returns null for standalone tasks (no workflow) or if the stage isn't found.
+ */
+export function getStageConfig(
+  workflowRunId: string,
+  stageName: string
+): WorkflowStage | null {
+  const db = getDb();
+
+  const run = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, workflowRunId))
+    .get();
+  if (!run) return null;
+
+  const template = db
+    .select()
+    .from(schema.workflowTemplates)
+    .where(eq(schema.workflowTemplates.id, run.workflowTemplateId))
+    .get();
+  if (!template) return null;
+
+  const stages: WorkflowStage[] = JSON.parse(template.stages);
+  return stages.find((s) => s.name === stageName) ?? null;
+}
+
 /** Get default workflow template (plan → implement → review → done) */
 export function getDefaultWorkflowStages(): WorkflowStage[] {
   return [
