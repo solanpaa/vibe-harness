@@ -28,8 +28,8 @@ function UserMessageBlock({ content }: { content: string }) {
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-[11px] font-semibold text-blue-400">Prompt</span>
       </div>
-      <div className="text-[13px] text-terminal-text-muted whitespace-pre-wrap break-words leading-relaxed">
-        {content}
+      <div className="text-[13px] text-terminal-text-muted break-words leading-relaxed prose prose-invert prose-sm max-w-none prose-headings:text-blue-300 prose-headings:text-[13px] prose-headings:font-semibold prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-code:text-terminal-text prose-code:bg-terminal-bg-elevated prose-code:rounded prose-code:px-1 prose-code:text-[12px] prose-pre:bg-terminal-bg-elevated prose-pre:rounded prose-pre:my-1">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
       </div>
     </div>
   );
