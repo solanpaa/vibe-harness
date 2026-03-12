@@ -39,9 +39,28 @@ async function main() {
 
   // Build the command
   let cmd, args;
+
+  // Get GitHub token for sandbox auth
+  if (!process.env.GITHUB_TOKEN) {
+    try {
+      const { execSync: es } = await import("node:child_process");
+      process.env.GITHUB_TOKEN = es("gh auth token", { encoding: "utf-8" }).trim();
+    } catch { /* ok */ }
+  }
+
   if (useDocker) {
     cmd = "docker";
-    args = ["sandbox", "run", "--name", "acp-testbench", "copilot", PROJECT_DIR, "--", "--yolo", "--acp", "--stdio"];
+    // Use create + exec -i pattern for clean ACP stdio
+    const sandboxName = "acp-testbench";
+    // Create sandbox first (synchronous)
+    log("SETUP", "Creating sandbox...");
+    try {
+      const { execSync: es } = await import("node:child_process");
+      es(`docker sandbox create --name ${sandboxName} copilot ${PROJECT_DIR}`, { stdio: "inherit" });
+    } catch {
+      log("SETUP", "Sandbox may already exist, continuing...");
+    }
+    args = ["sandbox", "exec", "-i", "-e", `GITHUB_TOKEN=${process.env.GITHUB_TOKEN || ""}`, sandboxName, "copilot", "--acp", "--stdio", "--yolo"];
   } else {
     cmd = process.env.COPILOT_CLI_PATH ?? "copilot";
     args = ["--acp", "--stdio"];
@@ -65,7 +84,7 @@ async function main() {
     proc.kill("SIGTERM");
   }, TIMEOUT_MS);
 
-  // Create ACP NDJSON stream
+  // With docker sandbox exec -i, stdout is clean NDJSON — connect SDK directly
   const output = Writable.toWeb(proc.stdin);
   const input = Readable.toWeb(proc.stdout);
   const stream = acp.ndJsonStream(output, input);

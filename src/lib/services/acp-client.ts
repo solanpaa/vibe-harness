@@ -8,7 +8,7 @@
 
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn, ChildProcess, execSync } from "child_process";
-import { Readable, Writable, Transform } from "stream";
+import { Readable, Writable } from "stream";
 import { EventEmitter } from "events";
 import path from "path";
 
@@ -106,34 +106,60 @@ export function launchAcpSession(
     }
   }
 
-  // Build docker sandbox command
-  const args: string[] = ["sandbox", "run"];
+  const sandboxName = options.sandboxName || `vibe-${taskId.slice(0, 8)}`;
 
-  if (options.isContinuation && options.sandboxName) {
-    args.push(options.sandboxName);
-  } else {
-    if (options.sandboxName) {
-      args.push("--name", options.sandboxName);
+  // Step 1: Create sandbox (synchronous, boots the VM)
+  // For continuations, the sandbox already exists — skip create.
+  if (!options.isContinuation) {
+    try {
+      const createArgs = ["sandbox", "create", "--name", sandboxName];
+      if (options.dockerImage) {
+        createArgs.push("-t", options.dockerImage);
+      }
+      createArgs.push(options.agentCommand, options.projectDir);
+      console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
+      const result = execSync(`docker ${createArgs.join(" ")}`, {
+        env,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 120_000,
+      });
+      console.log(`[ACP] Sandbox created: ${sandboxName}`);
+      output.push(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // If sandbox already exists, that's fine
+      if (!msg.includes("already exists")) {
+        console.error(`[ACP] Sandbox create failed: ${msg}`);
+        // Don't throw — try exec anyway in case sandbox exists
+      }
     }
-    if (options.dockerImage) {
-      args.push("-t", options.dockerImage);
-    }
-    args.push(options.agentCommand);
-    args.push(options.projectDir);
   }
 
-  const agentArgs: string[] = ["--yolo", "--acp", "--stdio"];
+  // Step 2: Exec copilot in ACP mode inside the sandbox
+  // Using -i (interactive) to keep stdin open for the NDJSON stream
+  const execArgs = ["sandbox", "exec", "-i"];
+
+  // Pass GitHub token for authentication
+  if (env.GITHUB_TOKEN) {
+    execArgs.push("-e", `GITHUB_TOKEN=${env.GITHUB_TOKEN}`);
+  }
+
+  execArgs.push(sandboxName);
+
+  // Build the copilot command with ACP flags
+  const copilotArgs = [options.agentCommand, "--acp", "--stdio", "--yolo"];
   if (options.model) {
-    agentArgs.push("--model", options.model);
+    copilotArgs.push("--model", options.model);
   }
   if (options.isContinuation) {
-    agentArgs.push("--continue");
+    copilotArgs.push("--continue");
   }
-  args.push("--", ...agentArgs);
+  execArgs.push(...copilotArgs);
 
-  const proc = spawn("docker", args, {
+  console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
+  const proc = spawn("docker", execArgs, {
     env,
-    cwd: options.projectDir,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
@@ -144,35 +170,10 @@ export function launchAcpSession(
     events.emit("update", { kind: "stderr", data: { text } });
   });
 
-  // Docker sandbox outputs boot messages (non-JSON) to stdout before the
-  // ACP agent starts. We must filter these out or they corrupt the NDJSON
-  // stream the SDK expects. Create a Transform that only forwards lines
-  // starting with '{' (valid JSON-RPC messages).
-  const jsonFilter = new Transform({
-    transform(chunk, encoding, callback) {
-      const text = chunk.toString();
-      const lines = text.split("\n");
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (trimmed.startsWith("{")) {
-          // Valid JSON-RPC line — forward to SDK
-          this.push(line + "\n");
-        } else {
-          // Boot message — capture for display but don't feed to SDK
-          output.push(trimmed);
-          events.emit("update", { kind: "boot", data: { text: trimmed } });
-        }
-      }
-      callback();
-    },
-  });
-
-  proc.stdout!.pipe(jsonFilter);
-
-  // Create ACP connection using official SDK — fed only clean JSON lines
+  // With docker sandbox exec -i, stdout is clean NDJSON — no boot
+  // messages or shell prompt markers to filter. Connect SDK directly.
   const sdkOutput = Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>;
-  const sdkInput = Readable.toWeb(jsonFilter) as ReadableStream<Uint8Array>;
+  const sdkInput = Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>;
   const stream = acp.ndJsonStream(sdkOutput, sdkInput);
 
   // ACP client callbacks — this is how the agent communicates back
@@ -279,45 +280,22 @@ export function launchAcpSession(
 }
 
 async function initializeSession(session: AcpSession, options: AcpLaunchOptions) {
-  // Wait for the docker sandbox to boot — it can take 20-40s.
-  // We detect readiness by waiting for the process to be alive and responsive.
-  const maxWaitMs = 60_000;
-  const startTime = Date.now();
-  const checkInterval = 2000;
-
-  // Wait until we see some stderr output (sandbox boot messages) or timeout
-  while (Date.now() - startTime < maxWaitMs) {
-    if (session.status === "closed" || session.status === "error") {
-      throw new Error("Process died during sandbox boot");
-    }
-    // Docker sandbox outputs boot messages to stderr
-    if (session.output.length > 0) {
-      // Give it one more second after first output
-      await new Promise((r) => setTimeout(r, 1000));
-      break;
-    }
-    await new Promise((r) => setTimeout(r, checkInterval));
-  }
+  // Sandbox is already created — exec connects directly to copilot ACP.
+  // Give copilot a moment to start inside the sandbox.
+  await new Promise((r) => setTimeout(r, 1000));
 
   if (session.status === "closed" || session.status === "error") {
     throw new Error("Session closed before initialization");
   }
 
-  console.log(`[ACP] Sandbox ready after ${Date.now() - startTime}ms, initializing...`);
+  console.log("[ACP] Sending initialize...");
 
-  try {
-    await session.connection.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {},
-    });
-  } catch (err) {
-    console.error("[ACP] Initialize failed, retrying in 3s...", err);
-    await new Promise((r) => setTimeout(r, 3000));
-    await session.connection.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {},
-    });
-  }
+  await session.connection.initialize({
+    protocolVersion: acp.PROTOCOL_VERSION,
+    clientCapabilities: {},
+  });
+
+  console.log("[ACP] Initialized, creating session...");
 
   const absCwd = path.resolve(options.projectDir);
   const sessionResult = await session.connection.newSession({
