@@ -52,6 +52,7 @@ export interface AcpSession {
   output: string[]; // raw lines for debugging
   autoCompleteTimer: ReturnType<typeof setTimeout> | null;
   userIntervened: boolean; // true if user sent a message after initial prompt
+  completingGracefully: boolean; // true when we intentionally close the session
 }
 
 export interface AcpLaunchOptions {
@@ -282,6 +283,7 @@ export function launchAcpSession(
     output,
     autoCompleteTimer: null,
     userIntervened: false,
+    completingGracefully: false,
   };
 
   proc.on("close", (code) => {
@@ -291,7 +293,10 @@ export function launchAcpSession(
     }
     session.status = "closed";
     events.emit("status", "closed");
-    events.emit("close", code ?? 0);
+    // If we intentionally closed the session (auto-complete or manual complete),
+    // treat it as success (code 0) regardless of the actual exit code.
+    const effectiveCode = session.completingGracefully ? 0 : (code ?? 0);
+    events.emit("close", effectiveCode);
     acpSessions.delete(taskId);
   });
 
@@ -474,6 +479,7 @@ export function completeAcpSession(taskId: string): boolean {
     clearTimeout(session.autoCompleteTimer);
     session.autoCompleteTimer = null;
   }
+  session.completingGracefully = true;
   return closeAcpSession(taskId);
 }
 
@@ -500,19 +506,20 @@ export function getAcpSession(taskId: string): AcpSession | undefined {
 }
 
 /**
- * Close an ACP session gracefully.
+ * Close an ACP session gracefully — marks as completing so close handler treats as success.
  */
 export function closeAcpSession(taskId: string): boolean {
   const session = acpSessions.get(taskId);
   if (!session) return false;
+  session.completingGracefully = true;
   try {
     session.process.stdin?.end();
     session.process.kill("SIGTERM");
   } catch {
     // already dead
   }
-  session.status = "closed";
-  acpSessions.delete(taskId);
+  // Don't delete from map or set status here — let proc.on("close") handle it
+  // so the close event fires properly to task-manager
   return true;
 }
 

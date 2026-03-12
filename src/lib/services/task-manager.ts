@@ -125,7 +125,11 @@ export function startTask(options: StartTaskOptions) {
 
   // Listen for completion
   session.events.on("close", async (code: number) => {
-    const output = session.output.join("\n");
+    // Build output from conversation messages (meaningful content for DB storage)
+    const conversationOutput = session.messages
+      .map((m) => `[${m.role}] ${m.content}`)
+      .join("\n\n");
+    const output = conversationOutput || session.output.join("\n");
     const lastMsg = session.messages.filter((m) => m.role === "assistant").pop();
     const lastAiMessage = lastMsg?.content || null;
 
