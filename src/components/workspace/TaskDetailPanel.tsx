@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./terminal";
 import { AcpChatPanel } from "./AcpChatPanel";
+import { ComparisonBanner } from "./ComparisonBanner";
 import { TaskHeader } from "./TaskHeader";
 import { TaskPrompt } from "./TaskPrompt";
 import { taskStatusConfig } from "@/lib/status-config";
@@ -24,6 +25,7 @@ interface TaskDetail {
   stageName: string | null;
   originTaskId: string | null;
   executionMode: string;
+  comparisonGroupId: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -133,6 +135,15 @@ export function TaskDetailPanel({
         onStop={handleStop}
         onDelete={handleDelete}
       />
+
+      {/* Comparison banner (shown when task is part of a comparison group) */}
+      {detail?.comparisonGroupId && (
+        <ComparisonBanner
+          comparisonGroupId={detail.comparisonGroupId}
+          currentTaskId={task.id}
+          onTaskChanged={onTaskChanged}
+        />
+      )}
 
       <TaskPrompt prompt={task.prompt} />
 
