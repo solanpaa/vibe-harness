@@ -39,7 +39,7 @@ function startAcpStream(
   request: NextRequest
 ) {
   // Replay buffered events — this restores the full UI state on reconnect
-  for (const event of session.eventLog) {
+  for (const event of session.eventLog ?? []) {
     try {
       if (event.kind === "message") {
         controller.enqueue(
