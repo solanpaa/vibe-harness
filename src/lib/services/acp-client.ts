@@ -183,6 +183,57 @@ export function launchAcpSession(
   if (options.isContinuation) {
     copilotArgs.push("--continue");
   }
+  // Pass MCP servers via --additional-mcp-config CLI flag (JSON string).
+  // The ACP mcpServers param in session/new is not yet honored by copilot CLI,
+  // so we inject them as CLI args instead.
+  if (options.mcpServers?.length) {
+    const mcpServers: Record<string, unknown> = {};
+    for (const server of options.mcpServers) {
+      if ("url" in server) {
+        mcpServers[server.name] = {
+          type: server.type,
+          url: server.url,
+          ...(("headers" in server && server.headers?.length)
+            ? { headers: Object.fromEntries(server.headers.map((h: { name: string; value: string }) => [h.name, h.value])) }
+            : {}),
+        };
+      } else if ("command" in server) {
+        mcpServers[server.name] = {
+          type: "stdio",
+          command: server.command,
+          args: server.args,
+          env: server.env ? Object.fromEntries(server.env.map((e: { name: string; value: string }) => [e.name, e.value])) : {},
+        };
+      }
+    }
+    copilotArgs.push("--additional-mcp-config", JSON.stringify({ mcpServers }));
+    console.log(`[ACP] Injecting ${options.mcpServers.length} MCP server(s) via --additional-mcp-config`);
+
+    // Allow sandbox network access to MCP server hosts.
+    // Docker sandbox uses a network proxy that blocks local connections by default.
+    for (const server of options.mcpServers) {
+      if ("url" in server) {
+        try {
+          const url = new URL(server.url);
+          const allowEnv = { ...env };
+          delete allowEnv.NODE_OPTIONS;
+          // Allow both the hostname and localhost (the proxy resolves
+          // host.docker.internal → localhost on the host side)
+          const hosts = new Set([url.hostname, "localhost", "127.0.0.1"]);
+          const allowArgs = Array.from(hosts).flatMap(h => ["--allow-host", h]);
+          execSync(`docker sandbox network proxy ${sandboxName} ${allowArgs.join(" ")}`, {
+            env: allowEnv,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+            timeout: 10_000,
+          });
+          console.log(`[ACP] Allowed sandbox network access to: ${Array.from(hosts).join(", ")}`);
+        } catch (err) {
+          console.warn(`[ACP] Failed to allow MCP host:`, err instanceof Error ? err.message : err);
+        }
+      }
+    }
+  }
   execArgs.push(...copilotArgs);
 
   console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
@@ -317,6 +368,18 @@ export function launchAcpSession(
     if (session.autoCompleteTimer) {
       clearTimeout(session.autoCompleteTimer);
       session.autoCompleteTimer = null;
+    }
+    // Flush any remaining message buffer that didn't get an agent_turn_end
+    if (currentMessageBuffer.trim()) {
+      const msg: AcpMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: currentMessageBuffer,
+        timestamp: new Date().toISOString(),
+      };
+      messages.push(msg);
+      events.emit("message", msg);
+      currentMessageBuffer = "";
     }
     session.status = "closed";
     events.emit("status", "closed");
