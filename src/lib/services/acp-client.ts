@@ -8,7 +8,7 @@
 
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn, ChildProcess, execSync } from "child_process";
-import { Readable, Writable } from "stream";
+import { Readable, Writable, Transform } from "stream";
 import { EventEmitter } from "events";
 import path from "path";
 
@@ -141,11 +141,38 @@ export function launchAcpSession(
   proc.stderr?.on("data", (data: Buffer) => {
     const text = data.toString();
     output.push(text);
+    events.emit("update", { kind: "stderr", data: { text } });
   });
 
-  // Create ACP connection using official SDK
+  // Docker sandbox outputs boot messages (non-JSON) to stdout before the
+  // ACP agent starts. We must filter these out or they corrupt the NDJSON
+  // stream the SDK expects. Create a Transform that only forwards lines
+  // starting with '{' (valid JSON-RPC messages).
+  const jsonFilter = new Transform({
+    transform(chunk, encoding, callback) {
+      const text = chunk.toString();
+      const lines = text.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith("{")) {
+          // Valid JSON-RPC line — forward to SDK
+          this.push(line + "\n");
+        } else {
+          // Boot message — capture for display but don't feed to SDK
+          output.push(trimmed);
+          events.emit("update", { kind: "boot", data: { text: trimmed } });
+        }
+      }
+      callback();
+    },
+  });
+
+  proc.stdout!.pipe(jsonFilter);
+
+  // Create ACP connection using official SDK — fed only clean JSON lines
   const sdkOutput = Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>;
-  const sdkInput = Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>;
+  const sdkInput = Readable.toWeb(jsonFilter) as ReadableStream<Uint8Array>;
   const stream = acp.ndJsonStream(sdkOutput, sdkInput);
 
   // ACP client callbacks — this is how the agent communicates back
@@ -252,13 +279,45 @@ export function launchAcpSession(
 }
 
 async function initializeSession(session: AcpSession, options: AcpLaunchOptions) {
-  // Wait briefly for the docker sandbox to boot
-  await new Promise((r) => setTimeout(r, 2000));
+  // Wait for the docker sandbox to boot — it can take 20-40s.
+  // We detect readiness by waiting for the process to be alive and responsive.
+  const maxWaitMs = 60_000;
+  const startTime = Date.now();
+  const checkInterval = 2000;
 
-  await session.connection.initialize({
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: {},
-  });
+  // Wait until we see some stderr output (sandbox boot messages) or timeout
+  while (Date.now() - startTime < maxWaitMs) {
+    if (session.status === "closed" || session.status === "error") {
+      throw new Error("Process died during sandbox boot");
+    }
+    // Docker sandbox outputs boot messages to stderr
+    if (session.output.length > 0) {
+      // Give it one more second after first output
+      await new Promise((r) => setTimeout(r, 1000));
+      break;
+    }
+    await new Promise((r) => setTimeout(r, checkInterval));
+  }
+
+  if (session.status === "closed" || session.status === "error") {
+    throw new Error("Session closed before initialization");
+  }
+
+  console.log(`[ACP] Sandbox ready after ${Date.now() - startTime}ms, initializing...`);
+
+  try {
+    await session.connection.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+  } catch (err) {
+    console.error("[ACP] Initialize failed, retrying in 3s...", err);
+    await new Promise((r) => setTimeout(r, 3000));
+    await session.connection.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+  }
 
   const absCwd = path.resolve(options.projectDir);
   const sessionResult = await session.connection.newSession({
