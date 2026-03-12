@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Terminal, Loader2, TerminalSquare, Zap, Send } from "lucide-react";
+import { Terminal, Loader2, TerminalSquare, Zap, Send, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import type { TerminalEvent } from "./event-parser";
 import { mapJsonlEvent, parseLine } from "./event-parser";
@@ -40,6 +40,8 @@ export function TerminalOutput({
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [autoCompleting, setAutoCompleting] = useState(false);
+  const [userIntervened, setUserIntervened] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -138,6 +140,10 @@ export function TerminalOutput({
             // Turn ended — reset accumulators
             msgAccumIdx.current = -1;
             reasonAccumIdx.current = -1;
+          } else if (data.kind === "auto_complete_pending") {
+            setAutoCompleting(true);
+          } else if (data.kind === "auto_complete_cancelled") {
+            setAutoCompleting(false);
           } else if (data.kind === "boot" && data.data?.text) {
             setStreamedEvents((prev) => [...prev, { kind: "raw" as const, text: data.data.text }]);
           }
@@ -203,6 +209,8 @@ export function TerminalOutput({
     if (!message || sending) return;
     setSending(true);
     setInput("");
+    setUserIntervened(true);
+    setAutoCompleting(false);
     try {
       const res = await fetch(`/api/tasks/${taskId}/message`, {
         method: "POST",
@@ -214,11 +222,12 @@ export function TerminalOutput({
         toast.error(err?.error ?? "Failed to send message");
         setInput(message);
       } else {
-        // Show the sent message as a user event in the terminal
         setStreamedEvents((prev) => [
           ...prev,
           { kind: "user_message", content: message },
         ]);
+        msgAccumIdx.current = -1;
+        reasonAccumIdx.current = -1;
       }
     } catch {
       toast.error("Failed to send message");
@@ -227,6 +236,34 @@ export function TerminalOutput({
       setSending(false);
       inputRef.current?.focus();
     }
+  }
+
+  async function handleComplete() {
+    try {
+      await fetch(`/api/tasks/${taskId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      toast.success("Stage completing...");
+    } catch {
+      toast.error("Failed to complete stage");
+    }
+  }
+
+  async function handleCancelAutoComplete() {
+    setAutoCompleting(false);
+    setUserIntervened(true);
+    try {
+      await fetch(`/api/tasks/${taskId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel_auto_complete" }),
+      });
+    } catch {
+      // Non-critical
+    }
+    inputRef.current?.focus();
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -281,7 +318,25 @@ export function TerminalOutput({
 
       {/* Intervention input — guide the agent while it's running */}
       {isRunning && (
-        <div className="border-t px-3 py-2 bg-background">
+        <div className="border-t px-3 py-2 bg-background space-y-2">
+          {/* Auto-complete banner */}
+          {autoCompleting && (
+            <div className="flex items-center justify-between rounded-md bg-amber-950/30 border border-amber-800/40 px-3 py-1.5">
+              <span className="text-[12px] text-amber-300 flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Auto-completing stage…
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px] px-2"
+                onClick={handleCancelAutoComplete}
+              >
+                Cancel &amp; Keep Editing
+              </Button>
+            </div>
+          )}
+
           <div className="flex gap-2 items-end">
             <Textarea
               ref={inputRef}
@@ -308,6 +363,18 @@ export function TerminalOutput({
                 </>
               )}
             </Button>
+            {/* Show Complete button when user has intervened */}
+            {userIntervened && !autoCompleting && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleComplete}
+                className="h-9 px-3 shrink-0"
+              >
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                Complete
+              </Button>
+            )}
           </div>
         </div>
       )}

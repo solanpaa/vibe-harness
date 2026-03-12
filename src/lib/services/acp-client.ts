@@ -39,10 +39,12 @@ export interface AcpSession {
   connection: acp.ClientSideConnection;
   sessionId: string | null;
   status: AcpSessionStatus;
-  events: EventEmitter; // emits: update, message, status, close, error
+  events: EventEmitter; // emits: update, message, status, close, error, auto_complete
   messages: AcpMessage[];
   workDir: string;
   output: string[]; // raw lines for debugging
+  autoCompleteTimer: ReturnType<typeof setTimeout> | null;
+  userIntervened: boolean; // true if user sent a message after initial prompt
 }
 
 export interface AcpLaunchOptions {
@@ -150,7 +152,7 @@ export function launchAcpSession(
   execArgs.push(sandboxName);
 
   // Build the copilot command with ACP flags
-  const copilotArgs = [options.agentCommand, "--acp", "--stdio", "--yolo"];
+  const copilotArgs = [options.agentCommand, "--acp", "--stdio", "--yolo", "--autopilot"];
   if (options.model) {
     copilotArgs.push("--model", options.model);
   }
@@ -270,9 +272,15 @@ export function launchAcpSession(
     messages,
     workDir: options.projectDir,
     output,
+    autoCompleteTimer: null,
+    userIntervened: false,
   };
 
   proc.on("close", (code) => {
+    if (session.autoCompleteTimer) {
+      clearTimeout(session.autoCompleteTimer);
+      session.autoCompleteTimer = null;
+    }
     session.status = "closed";
     events.emit("status", "closed");
     events.emit("close", code ?? 0);
@@ -341,6 +349,8 @@ async function initializeSession(session: AcpSession, options: AcpLaunchOptions)
 
 // ---- Public API -----------------------------------------------------------
 
+const AUTO_COMPLETE_DELAY_MS = 5_000;
+
 /**
  * Send a user message to a running ACP session.
  * This is the core intervention mechanism.
@@ -354,13 +364,26 @@ export async function sendAcpPrompt(
     return { success: false };
   }
 
+  // Cancel any pending auto-complete timer
+  if (session.autoCompleteTimer) {
+    clearTimeout(session.autoCompleteTimer);
+    session.autoCompleteTimer = null;
+    session.events.emit("update", { kind: "auto_complete_cancelled", data: {} });
+  }
+
+  // Track whether the user has intervened (any message after the first)
+  const isIntervention = session.messages.length > 0;
+  if (isIntervention) {
+    session.userIntervened = true;
+  }
+
   // Record user message
   const userMsg: AcpMessage = {
     id: crypto.randomUUID(),
     role: "user",
     content: message,
     timestamp: new Date().toISOString(),
-    metadata: { isIntervention: session.messages.length > 0 },
+    metadata: { isIntervention },
   };
   session.messages.push(userMsg);
   session.events.emit("message", userMsg);
@@ -376,11 +399,55 @@ export async function sendAcpPrompt(
 
     session.status = "ready";
     session.events.emit("status", "ready");
+
+    // Start auto-complete timer if user hasn't intervened
+    if (!session.userIntervened && result.stopReason === "end_turn") {
+      console.log(`[ACP] Turn complete. Auto-completing in ${AUTO_COMPLETE_DELAY_MS / 1000}s...`);
+      session.events.emit("update", {
+        kind: "auto_complete_pending",
+        data: { delayMs: AUTO_COMPLETE_DELAY_MS },
+      });
+      session.autoCompleteTimer = setTimeout(() => {
+        console.log(`[ACP] Auto-complete timer fired, closing session`);
+        session.autoCompleteTimer = null;
+        closeAcpSession(taskId);
+      }, AUTO_COMPLETE_DELAY_MS);
+    }
+
     return { success: true, stopReason: result.stopReason };
   } catch (err) {
     console.error("ACP prompt failed:", err);
     return { success: false };
   }
+}
+
+/**
+ * Cancel the auto-complete timer for a session (user wants to keep editing).
+ */
+export function cancelAutoComplete(taskId: string): boolean {
+  const session = acpSessions.get(taskId);
+  if (!session) return false;
+  if (session.autoCompleteTimer) {
+    clearTimeout(session.autoCompleteTimer);
+    session.autoCompleteTimer = null;
+    session.userIntervened = true;
+    session.events.emit("update", { kind: "auto_complete_cancelled", data: {} });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Manually complete a task — close the ACP session to trigger review.
+ */
+export function completeAcpSession(taskId: string): boolean {
+  const session = acpSessions.get(taskId);
+  if (!session) return false;
+  if (session.autoCompleteTimer) {
+    clearTimeout(session.autoCompleteTimer);
+    session.autoCompleteTimer = null;
+  }
+  return closeAcpSession(taskId);
 }
 
 /**
