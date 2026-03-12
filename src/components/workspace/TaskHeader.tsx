@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, Square, Trash2, Workflow } from "lucide-react";
+import { Play, Square, TerminalSquare, Trash2, Workflow } from "lucide-react";
+import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import type { TaskStatusConfig } from "@/lib/status-config";
 
@@ -8,8 +9,11 @@ interface TaskHeaderProps {
   task: EnrichedTask;
   currentStatus: string;
   statusConfig: TaskStatusConfig;
+  sandboxId: string | null;
+  shellCommand: string | null;
   onStart: () => void;
   onStop: () => void;
+  onResume: () => void;
   onDelete: () => void;
 }
 
@@ -17,10 +21,20 @@ export function TaskHeader({
   task,
   currentStatus,
   statusConfig,
+  sandboxId,
+  shellCommand,
   onStart,
   onStop,
+  onResume,
   onDelete,
 }: TaskHeaderProps) {
+  const showShell = sandboxId && currentStatus !== "pending";
+
+  function handleOpenShell() {
+    if (!shellCommand) return;
+    navigator.clipboard.writeText(shellCommand);
+    toast.success("Copied! Paste in your terminal to open a shell in the sandbox.");
+  }
   return (
     <div className="shrink-0 bg-card border-b shadow-sm">
       <div className="p-4 pb-3">
@@ -49,6 +63,12 @@ export function TaskHeader({
                 Stop
               </Button>
             )}
+            {currentStatus === "paused" && (
+              <Button size="sm" onClick={onResume}>
+                <Play className="mr-1 h-3 w-3" />
+                Resume
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -69,6 +89,12 @@ export function TaskHeader({
           <span className="mr-1">{statusConfig.icon}</span>
           {statusConfig.label}
         </Badge>
+        {showShell && (
+          <Button size="sm" variant="outline" className="h-5 px-2 text-xs" onClick={handleOpenShell}>
+            <TerminalSquare className="mr-1 h-3 w-3" />
+            Shell
+          </Button>
+        )}
         <Badge variant="outline">{task.agentName}</Badge>
         {task.model && (
           <Badge variant="secondary" className="text-xs">
@@ -92,6 +118,11 @@ export function TaskHeader({
                 </span>
               </>
             )}
+          </Badge>
+        )}
+        {sandboxId && (
+          <Badge variant="outline" className="font-mono text-[10px]">
+            {sandboxId}
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">

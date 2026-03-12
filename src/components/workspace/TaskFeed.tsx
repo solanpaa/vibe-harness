@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Search, GitCompare } from "lucide-react";
+import { Plus, Search, GitCompare, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -52,6 +52,7 @@ export interface TaskFeedProps {
   onSelectTask: (taskId: string) => void;
   onSelectReview: (reviewId: string, taskId: string) => void;
   onNewTask: () => void;
+  onDeleteRun?: (runId: string) => void;
   loading?: boolean;
 }
 
@@ -66,22 +67,6 @@ export function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-function dateLabel(iso: string): string {
-  const date = new Date(iso);
-  const now = new Date();
-
-  const strip = (d: Date) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-
-  const diff = strip(now) - strip(date);
-  const oneDay = 86_400_000;
-
-  if (diff < oneDay) return "Today";
-  if (diff < oneDay * 2) return "Yesterday";
-
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // A single rendered entry can be either a standalone task, a workflow group, or a comparison group.
@@ -100,38 +85,37 @@ type FeedEntry =
       latestCreatedAt: string;
     };
 
-interface DateGroup {
-  label: string;
+interface ProjectGroup {
+  projectId: string;
+  projectName: string;
   entries: FeedEntry[];
 }
 
-function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
-  // Sort all tasks newest-first
+function buildGroups(tasks: EnrichedTask[]): ProjectGroup[] {
   const sorted = [...tasks].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
 
-  // Group by date label, preserving order
-  const dateMap = new Map<string, EnrichedTask[]>();
+  // Group by project, preserving insertion order (most-recent-activity first)
+  const projectMap = new Map<string, EnrichedTask[]>();
   for (const task of sorted) {
-    const label = dateLabel(task.createdAt);
-    let group = dateMap.get(label);
+    let group = projectMap.get(task.projectId);
     if (!group) {
       group = [];
-      dateMap.set(label, group);
+      projectMap.set(task.projectId, group);
     }
     group.push(task);
   }
 
-  // Within each date group, build entries
-  const groups: DateGroup[] = [];
+  const groups: ProjectGroup[] = [];
 
-  for (const [label, dateTasks] of dateMap) {
+  for (const [projectId, projectTasks] of projectMap) {
+    const projectName = projectTasks[0].projectName;
     const workflowBuckets = new Map<string, EnrichedTask[]>();
     const comparisonBuckets = new Map<string, EnrichedTask[]>();
     const standalone: EnrichedTask[] = [];
 
-    for (const task of dateTasks) {
+    for (const task of projectTasks) {
       if (task.workflowRunId) {
         let bucket = workflowBuckets.get(task.workflowRunId);
         if (!bucket) {
@@ -151,7 +135,6 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
       }
     }
 
-    // Build entries with a sortable timestamp
     const entries: FeedEntry[] = [];
 
     for (const task of standalone) {
@@ -174,7 +157,6 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
       entries.push({ kind: "comparison", groupId, tasks: cmpTasks, latestCreatedAt });
     }
 
-    // Sort entries newest-first
     entries.sort((a, b) => {
       const aTime =
         a.kind === "task" ? a.task.createdAt : a.latestCreatedAt;
@@ -183,7 +165,7 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
 
-    groups.push({ label, entries });
+    groups.push({ projectId, projectName, entries });
   }
 
   return groups;
@@ -197,9 +179,20 @@ export function TaskFeed({
   onSelectTask,
   onSelectReview,
   onNewTask,
+  onDeleteRun,
   loading = false,
 }: TaskFeedProps) {
   const [search, setSearch] = useState("");
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+
+  const toggleProject = (projectId: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
 
   const filtered = useMemo(() => {
     if (!search.trim()) return tasks;
@@ -252,13 +245,31 @@ export function TaskFeed({
             </p>
           )}
 
-          {groups.map((group) => (
-            <div key={group.label} className="space-y-px">
-              <h3 className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {group.label}
-              </h3>
+          {groups.map((group) => {
+            const isExpanded = !collapsedProjects.has(group.projectId);
 
-              {group.entries.map((entry) => {
+            return (
+              <div key={group.projectId} className="space-y-px">
+                <button
+                  type="button"
+                  onClick={() => toggleProject(group.projectId)}
+                  className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left rounded-md transition-colors hover:bg-muted/60 cursor-pointer"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                  )}
+                  <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">
+                    {group.projectName}
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    {group.entries.length}
+                  </span>
+                </button>
+
+                {isExpanded && group.entries.map((entry) => {
                 if (entry.kind === "task") {
                   return (
                     <div key={entry.task.id}>
@@ -294,6 +305,7 @@ export function TaskFeed({
                 return (
                   <WorkflowGroup
                     key={entry.runId}
+                    runId={entry.runId}
                     workflowName={meta?.templateName ?? "Workflow"}
                     runTitle={meta?.runTitle}
                     runStatus={meta?.runStatus ?? "pending"}
@@ -303,6 +315,7 @@ export function TaskFeed({
                     selection={selection}
                     onSelectTask={onSelectTask}
                     onSelectReview={onSelectReview}
+                    onDeleteRun={onDeleteRun}
                   />
                 );
                 }
@@ -362,7 +375,7 @@ export function TaskFeed({
               return null;
               })}
             </div>
-          ))}
+          )})}
         </div>
       </ScrollArea>
     </div>
