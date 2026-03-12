@@ -1,38 +1,44 @@
-import { CopilotClient, approveAll } from "@github/copilot-sdk";
+import { execFile } from "node:child_process";
 
 /**
- * Generate a short (3–6 word) title from a task prompt using GitHub Copilot.
- * Returns null on any failure so callers can fall back to a truncated prompt.
+ * Generate a short (3–6 word) title from a task prompt using the Copilot CLI.
+ * Uses the CLI directly in non-interactive mode for reliability.
+ * Returns null on any failure so callers can fall back gracefully.
  */
-export async function generateTitle(
-  prompt: string,
-): Promise<string | null> {
-  let client: CopilotClient | undefined;
-  try {
-    client = new CopilotClient();
+export function generateTitle(prompt: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const systemPrompt =
+      "Generate a very short title (3-6 words, no quotes, no punctuation at the end) that summarizes this task:";
+    const fullPrompt = `${systemPrompt}\n\n${prompt.slice(0, 500)}`;
 
-    const session = await client.createSession({
-      model: "gpt-4.1",
-      onPermissionRequest: approveAll,
-    });
+    const child = execFile(
+      "copilot",
+      [
+        "-p",
+        fullPrompt,
+        "--model",
+        "gpt-4.1",
+        "--output-format",
+        "text",
+        "--yolo",
+      ],
+      { timeout: 30_000 },
+      (err, stdout) => {
+        if (err) {
+          console.warn("[title-generator] CLI failed:", err.message);
+          resolve(null);
+          return;
+        }
+        const title = stdout.trim();
+        if (title && title.length > 0 && title.length < 100) {
+          resolve(title);
+        } else {
+          console.warn("[title-generator] Empty or oversized title:", title);
+          resolve(null);
+        }
+      },
+    );
 
-    const response = await session.sendAndWait({
-      prompt: `Generate a very short title (3-6 words, no quotes, no punctuation at the end) that summarizes this task:\n\n${prompt.slice(0, 500)}`,
-    });
-
-    await session.disconnect();
-
-    const title = response?.data?.content?.trim();
-    if (title && title.length > 0 && title.length < 100) {
-      return title;
-    }
-    return null;
-  } catch {
-    // Copilot SDK not available or failed — gracefully return null
-    return null;
-  } finally {
-    if (client) {
-      await client.stop().catch(() => {});
-    }
-  }
+    child.stdin?.end();
+  });
 }
