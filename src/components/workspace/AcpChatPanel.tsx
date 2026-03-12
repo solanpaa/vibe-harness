@@ -200,30 +200,6 @@ export function AcpChatPanel({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b">
-        <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4" />
-          <span className="text-sm font-semibold">Agent Chat</span>
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-            ACP
-          </Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          {isStreaming && (
-            <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              Live
-            </Badge>
-          )}
-          {agentStatus === "busy" && (
-            <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-              Working...
-            </Badge>
-          )}
-        </div>
-      </div>
-
       {/* Scrollable chat area */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-4 min-h-full space-y-1 bg-terminal-bg">

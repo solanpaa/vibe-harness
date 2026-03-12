@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Terminal } from "lucide-react";
+import { toast } from "sonner";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { TaskFeed, type EnrichedTask } from "@/components/workspace/TaskFeed";
 import { TaskDetailPanel } from "@/components/workspace/TaskDetailPanel";
@@ -125,6 +126,30 @@ export default function WorkspacePage() {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }
 
+  async function handleDeleteRun(runId: string) {
+    try {
+      const res = await fetch(`/api/workflows/runs/${runId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Failed to delete workflow run");
+        return;
+      }
+      toast.success("Workflow run deleted");
+      setTasks((prev) => prev.filter((t) => t.workflowRunId !== runId));
+      if (selection) {
+        const selected = tasks.find(
+          (t) =>
+            t.workflowRunId === runId &&
+            ((selection.kind === "task" && t.id === selection.taskId) ||
+              (selection.kind === "review" && t.id === selection.taskId)),
+        );
+        if (selected) setSelection(null);
+      }
+    } catch {
+      toast.error("Failed to delete workflow run");
+    }
+  }
+
   function renderDetailPanel() {
     if (!selection) {
       return (
@@ -183,6 +208,7 @@ export default function WorkspacePage() {
             onSelectTask={handleSelectTask}
             onSelectReview={handleSelectReview}
             onNewTask={() => setCreateOpen(true)}
+            onDeleteRun={handleDeleteRun}
             loading={loading}
           />
         }

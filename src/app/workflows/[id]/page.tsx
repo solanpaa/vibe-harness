@@ -353,6 +353,23 @@ export default function WorkflowDetailPage({
 
   /* ---- delete template ---- */
 
+  const handleDeleteRun = async (runId: string) => {
+    if (!window.confirm("Delete this workflow run and all its tasks? This cannot be undone."))
+      return;
+    try {
+      const res = await fetch(`/api/workflows/runs/${runId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Failed to delete run");
+        return;
+      }
+      toast.success("Workflow run deleted");
+      setRuns((prev) => prev.filter((r) => r.id !== runId));
+    } catch {
+      toast.error("Failed to delete run");
+    }
+  };
+
   const handleDelete = async () => {
     if (!window.confirm("Delete this workflow template? This cannot be undone."))
       return;
@@ -677,9 +694,22 @@ export default function WorkflowDetailPage({
                         </span>
                       )}
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(run.createdAt).toLocaleString()}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(run.createdAt).toLocaleString()}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteRun(run.id);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 );
               })}

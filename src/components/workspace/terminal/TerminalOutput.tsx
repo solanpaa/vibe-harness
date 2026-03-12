@@ -298,32 +298,6 @@ export function TerminalOutput({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b">
-        <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4" />
-          <span className="text-sm font-semibold">Output</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {showShellButton && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCopyShellCommand}
-            >
-              <TerminalSquare className="mr-1 h-3 w-3" />
-              Open Shell
-            </Button>
-          )}
-          {isStreaming && (
-            <Badge className="bg-blue-100 text-blue-800">
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              Live
-            </Badge>
-          )}
-        </div>
-      </div>
-
       {/* Scrollable output */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         <div

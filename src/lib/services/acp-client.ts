@@ -57,6 +57,7 @@ export interface AcpSession {
 
 export interface AcpLaunchOptions {
   projectDir: string;
+  extraWorkspaces?: string[];
   agentCommand: string;
   credentialSetId?: string | null;
   dockerImage?: string | null;
@@ -129,6 +130,10 @@ export function launchAcpSession(
         createArgs.push("-t", options.dockerImage);
       }
       createArgs.push(options.agentCommand, options.projectDir);
+      // Mount extra workspaces (e.g. original project .git for worktrees)
+      if (options.extraWorkspaces) {
+        createArgs.push(...options.extraWorkspaces);
+      }
       console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
       const createEnv = { ...env };
       delete createEnv.NODE_OPTIONS;

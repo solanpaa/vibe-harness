@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
+import { Play, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./terminal";
 import { ComparisonBanner } from "./ComparisonBanner";
 import { TaskHeader } from "./TaskHeader";
-import { TaskPrompt } from "./TaskPrompt";
 import { taskStatusConfig } from "@/lib/status-config";
 
 // ─── Detailed task (includes output) ─────────────────────────────────────────
@@ -24,6 +26,7 @@ interface TaskDetail {
   stageName: string | null;
   originTaskId: string | null;
   comparisonGroupId: string | null;
+  shellCommand: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -100,7 +103,24 @@ export function TaskDetailPanel({
       const updated = await res.json();
       setDetail(updated);
       onTaskChanged?.();
-      toast.success("Task stopped");
+      toast.success("Task paused");
+    }
+  }
+
+  async function handleResume(message?: string) {
+    const res = await fetch(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resume", message }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setDetail(updated);
+      onTaskChanged?.();
+      toast.success("Task resumed");
+    } else {
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error ?? "Failed to resume task");
     }
   }
 
@@ -129,8 +149,11 @@ export function TaskDetailPanel({
         task={task}
         currentStatus={currentStatus}
         statusConfig={config}
+        sandboxId={detail?.sandboxId ?? null}
+        shellCommand={detail?.shellCommand ?? null}
         onStart={handleStart}
         onStop={handleStop}
+        onResume={() => handleResume()}
         onDelete={handleDelete}
       />
 
@@ -143,7 +166,10 @@ export function TaskDetailPanel({
         />
       )}
 
-      <TaskPrompt prompt={task.prompt} />
+      {/* Resume input bar when paused */}
+      {currentStatus === "paused" && (
+        <ResumeBar onResume={handleResume} />
+      )}
 
       {/* ── Output with intervention input ─────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col">
@@ -154,6 +180,50 @@ export function TaskDetailPanel({
           sandboxId={detail?.sandboxId ?? null}
           onStreamClose={handleStreamClose}
         />
+      </div>
+    </div>
+  );
+}
+
+/** Inline bar for resuming a paused task with optional instructions */
+function ResumeBar({ onResume }: { onResume: (message?: string) => void }) {
+  const [message, setMessage] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  return (
+    <div className="shrink-0 border-b bg-orange-50 dark:bg-orange-950/30 p-3">
+      <p className="mb-2 text-xs font-medium text-orange-700 dark:text-orange-400">
+        Task paused — provide instructions or resume
+      </p>
+      <div className="flex gap-2">
+        <Textarea
+          ref={inputRef}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onResume(message || undefined);
+            }
+          }}
+          placeholder="Optional instructions for the agent…"
+          className="min-h-[48px] max-h-[100px] resize-none text-sm"
+        />
+        <div className="flex flex-col gap-1">
+          <Button size="sm" onClick={() => onResume(message || undefined)} className="h-8">
+            <Send className="mr-1 h-3 w-3" />
+            Resume
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onResume()}
+            className="h-8 text-xs"
+          >
+            <Play className="mr-1 h-3 w-3" />
+            Continue
+          </Button>
+        </div>
       </div>
     </div>
   );

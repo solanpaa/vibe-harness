@@ -4,6 +4,7 @@ import {
   CheckCircle,
   XCircle,
   GitPullRequestArrow,
+  Pause,
 } from "lucide-react";
 
 // ─── Task status ─────────────────────────────────────────────────────────────
@@ -15,6 +16,12 @@ export interface TaskStatusConfig {
 }
 
 export const taskStatusConfig: Record<string, TaskStatusConfig> = {
+  provisioning: {
+    icon: <Loader2 className="h-4 w-4 animate-spin" />,
+    colorClass:
+      "bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
+    label: "Provisioning",
+  },
   pending: {
     icon: <Clock className="h-4 w-4" />,
     colorClass:
@@ -45,11 +52,18 @@ export const taskStatusConfig: Record<string, TaskStatusConfig> = {
       "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200",
     label: "Failed",
   },
+  paused: {
+    icon: <Pause className="h-4 w-4" />,
+    colorClass:
+      "bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+    label: "Paused",
+  },
 };
 
 // ─── Task feed icons (smaller, used in feed items) ───────────────────────────
 
 export const taskFeedIcon: Record<string, React.ReactNode> = {
+  provisioning: <Loader2 className="size-3.5 animate-spin text-purple-500" />,
   pending: <Clock className="size-3.5 text-muted-foreground/50" />,
   running: <Loader2 className="size-3.5 animate-spin text-blue-500" />,
   awaiting_review: (
@@ -57,11 +71,14 @@ export const taskFeedIcon: Record<string, React.ReactNode> = {
   ),
   completed: <CheckCircle className="size-3.5 text-muted-foreground/40" />,
   failed: <XCircle className="size-3.5 text-red-500" />,
+  paused: <Pause className="size-3.5 text-orange-500" />,
 };
 
 // ─── Task / workflow badge color classes ──────────────────────────────────────
 
 export const taskBadgeClass: Record<string, string> = {
+  provisioning:
+    "bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
   pending:
     "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
   running:
@@ -72,6 +89,8 @@ export const taskBadgeClass: Record<string, string> = {
     "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
   failed:
     "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200",
+  paused:
+    "bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
 };
 
 // ─── Review status ───────────────────────────────────────────────────────────

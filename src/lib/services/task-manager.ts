@@ -60,20 +60,29 @@ export function startTask(options: StartTaskOptions) {
     }
   }
 
-  // For continuations, reuse the origin sandbox name so Docker can --continue.
-  // For fresh sessions (isContinuation=false with originTaskId), use a new
-  // sandbox name so the agent starts with a clean session.
+  // Always reuse the origin sandbox when part of a workflow chain.
+  // Fresh sessions only reset the ACP agent session, not the Docker sandbox.
   const sandboxTaskId =
-    options.isContinuation && options.originTaskId
+    options.originTaskId
       ? options.originTaskId
       : options.taskId;
   const shortId = sandboxTaskId.slice(0, 8);
   const sandboxName = `vibe-${shortId}`;
 
+  // Mount the original project's .git dir so worktree git references resolve
+  const extraWorkspaces: string[] = [];
+  if (isWorktree) {
+    const gitDir = path.join(options.projectDir, ".git");
+    if (fs.existsSync(gitDir)) {
+      extraWorkspaces.push(`${gitDir}:ro`);
+    }
+  }
+
   // Launch ACP session — all tasks use ACP protocol for structured
   // communication and mid-execution intervention support
   const session = launchAcpSession(options.taskId, {
     projectDir: workDir,
+    extraWorkspaces,
     agentCommand: options.agentCommand,
     credentialSetId: options.credentialSetId,
     dockerImage: options.dockerImage,
@@ -152,6 +161,20 @@ export function startTask(options: StartTaskOptions) {
         .run();
     }
 
+    // Check if this was a manual pause — if so, just save output and stop
+    const freshTask = db
+      .select({ status: schema.tasks.status })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, options.taskId))
+      .get();
+    if (freshTask?.status === "paused") {
+      db.update(schema.tasks)
+        .set({ output, lastAiMessage })
+        .where(eq(schema.tasks.id, options.taskId))
+        .run();
+      return;
+    }
+
     if (code === 0) {
       const stageConfig =
         currentTask?.workflowRunId && currentTask?.stageName
@@ -222,20 +245,32 @@ export function startTask(options: StartTaskOptions) {
   return session;
 }
 
-/** Stop a running task */
+/** Stop a running task — pauses it for later resume */
 export function stopTask(taskId: string) {
   const db = getDb();
-  const stopped = closeAcpSession(taskId);
-  if (stopped) {
-    db.update(schema.tasks)
-      .set({
-        status: "failed",
-        completedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.tasks.id, taskId))
+
+  // Mark as paused BEFORE closing the session so the close handler
+  // knows this was a manual stop (not a crash)
+  db.update(schema.tasks)
+    .set({ status: "paused" })
+    .where(eq(schema.tasks.id, taskId))
+    .run();
+
+  // Also pause the workflow run
+  const task = db
+    .select({ workflowRunId: schema.tasks.workflowRunId })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .get();
+  if (task?.workflowRunId) {
+    db.update(schema.workflowRuns)
+      .set({ status: "paused" })
+      .where(eq(schema.workflowRuns.id, task.workflowRunId))
       .run();
   }
-  return stopped;
+
+  closeAcpSession(taskId);
+  return true;
 }
 
 /** Send input to a running task via ACP */

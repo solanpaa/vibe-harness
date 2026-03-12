@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Search, GitCompare, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
+import { Plus, Search, GitCompare, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -245,7 +245,7 @@ export function TaskFeed({
             </p>
           )}
 
-          {groups.map((group) => {
+          {groups.map((group, gi) => {
             const isExpanded = !collapsedProjects.has(group.projectId);
 
             return (
@@ -253,20 +253,17 @@ export function TaskFeed({
                 <button
                   type="button"
                   onClick={() => toggleProject(group.projectId)}
-                  className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left rounded-md transition-colors hover:bg-muted/60 cursor-pointer"
+                  className={`flex w-full items-center gap-1.5 px-2 pb-0.5 text-left cursor-pointer group ${gi > 0 ? "pt-3" : ""}`}
                 >
                   {isExpanded ? (
-                    <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                    <ChevronDown className="size-2.5 shrink-0 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                   ) : (
-                    <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                    <ChevronRight className="size-2.5 shrink-0 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                   )}
-                  <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">
+                  <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {group.projectName}
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                    {group.entries.length}
-                  </span>
+                  <div className="flex-1 border-t border-border/40" />
                 </button>
 
                 {isExpanded && group.entries.map((entry) => {

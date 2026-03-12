@@ -152,14 +152,34 @@ export async function startWorkflowRun(input: {
 
   const agentCommand = agent.commandTemplate || "copilot";
 
-  startTask({
-    taskId,
-    projectDir: project.localPath,
-    agentCommand,
-    credentialSetId: input.credentialSetId,
-    prompt,
-    model: input.model,
-    useWorktree: input.useWorktree,
+  // Set provisioning and launch in background — sandbox creation is slow
+  db.update(schema.tasks)
+    .set({ status: "provisioning" })
+    .where(eq(schema.tasks.id, taskId))
+    .run();
+
+  Promise.resolve().then(() => {
+    try {
+      startTask({
+        taskId,
+        projectDir: project.localPath,
+        agentCommand,
+        credentialSetId: input.credentialSetId,
+        prompt,
+        model: input.model,
+        useWorktree: input.useWorktree,
+      });
+    } catch (e) {
+      console.error(`[Workflow ${runId}] Failed to start first stage:`, e);
+      db.update(schema.tasks)
+        .set({ status: "failed", completedAt: new Date().toISOString() })
+        .where(eq(schema.tasks.id, taskId))
+        .run();
+      db.update(schema.workflowRuns)
+        .set({ status: "failed", completedAt: new Date().toISOString() })
+        .where(eq(schema.workflowRuns.id, runId))
+        .run();
+    }
   });
 
   return { runId, taskId, stageName: firstStage.name };
@@ -307,20 +327,37 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
 
   const agentCommand = agent.commandTemplate || "copilot";
 
-  startTask({
-    taskId,
-    projectDir: project.localPath,
-    agentCommand,
-    credentialSetId: firstTask.credentialSetId,
-    prompt,
-    model: firstTask.model,
-    useWorktree: firstTask.useWorktree === 1,
-    isContinuation: !isFreshSession,
-    originTaskId: firstTask.id,
-    // Pass the ACP session ID so the next stage can use session/load
-    // to resume the conversation with full history.
-    // For fresh sessions, don't load — context is injected in the prompt instead.
-    loadSessionId: isFreshSession ? null : (run.acpSessionId || null),
+  // Launch in background — fresh sessions need sandbox creation which is slow
+  db.update(schema.tasks)
+    .set({ status: "provisioning" })
+    .where(eq(schema.tasks.id, taskId))
+    .run();
+
+  Promise.resolve().then(() => {
+    try {
+      startTask({
+        taskId,
+        projectDir: project.localPath,
+        agentCommand,
+        credentialSetId: firstTask.credentialSetId,
+        prompt,
+        model: firstTask.model,
+        useWorktree: firstTask.useWorktree === 1,
+        isContinuation: !isFreshSession,
+        originTaskId: firstTask.id,
+        loadSessionId: isFreshSession ? null : (run.acpSessionId || null),
+      });
+    } catch (e) {
+      console.error(`[Workflow ${workflowRunId}] Failed to advance:`, e);
+      db.update(schema.tasks)
+        .set({ status: "failed", completedAt: new Date().toISOString() })
+        .where(eq(schema.tasks.id, taskId))
+        .run();
+      db.update(schema.workflowRuns)
+        .set({ status: "failed", completedAt: new Date().toISOString() })
+        .where(eq(schema.workflowRuns.id, workflowRunId))
+        .run();
+    }
   });
 
   return { completed: false, nextStage: nextStage.name, taskId };
@@ -359,24 +396,86 @@ export function getDefaultWorkflowStages(): WorkflowStage[] {
   return [
     {
       name: "plan",
-      promptTemplate:
-        "Analyze the codebase and create a detailed implementation plan for the requested changes. Do not make any code changes yet.",
+      promptTemplate: `Analyze the codebase and create a detailed implementation plan for the requested changes. Do not make any code changes.
+
+Planning process:
+- Explore the existing codebase to understand the architecture, patterns, and conventions already in use.
+- Identify all files and modules that need to be created or modified.
+- Consider edge cases, error handling, and potential impacts on existing functionality.
+
+Plan format:
+- Start with a brief summary of the approach.
+- Break the work into clear, ordered steps. Each step should describe what to change, where, and why.
+- Call out any risks, open questions, or decisions that need human input before implementation begins.
+- Keep the plan concise and actionable — the implementer should be able to follow it without further clarification.`,
       autoAdvance: false,
       reviewRequired: true,
       freshSession: false,
     },
     {
       name: "implement",
-      promptTemplate:
-        "Implement the changes according to the approved plan. Write clean, well-tested code.",
-      autoAdvance: false,
-      reviewRequired: true,
-      freshSession: false,
+      promptTemplate: `Implement all changes described in the plan from the previous stage.
+
+Principles:
+- KISS — prefer the simplest solution that works. Avoid unnecessary indirection or cleverness.
+- DRY — extract shared logic into well-named, reusable abstractions. When you see a repeated pattern, find the right abstraction for it.
+- YAGNI — only build what the plan asks for. No speculative features or premature generalization.
+- Separation of concerns — keep distinct responsibilities in separate modules/functions. Follow the project's existing architectural boundaries.
+
+Guidelines:
+- Follow the plan step by step. If something in the plan seems wrong or impossible, implement what you can and note the issue clearly.
+- Match the codebase's existing style, patterns, and conventions.
+- Write small, focused functions with clear names. Code should be self-documenting — add comments only when the "why" isn't obvious.
+- All functions should have a short 'docstring' describing their purpose and operation.
+- Handle error cases and edge cases appropriately.
+- If the project has existing tests, add or update tests for your changes.
+- After finishing, verify your changes compile/build successfully.
+- Do not commit at this stage.`,
+      autoAdvance: true,
+      reviewRequired: false,
+      freshSession: true,
     },
     {
       name: "review",
-      promptTemplate:
-        "Review the implementation for bugs, edge cases, performance issues, and code quality. Suggest improvements.",
+      promptTemplate: `Review the implementation from the previous stage against the original plan. Do not make any code changes.
+
+Process:
+- Use sub-agents to perform the review. Launch at least two review agents in parallel using different models (gpt-5.4 and claude-opus-4.5) for diverse perspectives.
+- Each sub-agent should review the full diff and report issues.
+- Synthesize the sub-agent findings into a single consolidated review. Deduplicate overlapping findings and resolve any contradictions.
+
+Review checklist (for sub-agents):
+- Verify all planned steps were implemented completely and correctly.
+- Check for bugs, logic errors, and unhandled edge cases.
+- Look for security issues — injection, leaks, unsafe defaults.
+- Evaluate adherence to KISS, DRY, YAGNI, and separation of concerns.
+- Confirm the code matches the project's existing style and conventions.
+- Check that all functions have clear names and docstrings.
+- Run the build/lint commands and report any failures.
+
+Output format:
+- Start with a short summary: is the implementation ready to ship, or does it need changes?
+- List any issues found, grouped by severity (critical / minor / nit).
+- For each issue, explain what's wrong and suggest a concrete fix.
+- If everything looks good, say so — don't invent problems.`,
+      autoAdvance: true,
+      reviewRequired: false,
+      freshSession: false,
+    },
+    {
+      name: "fix",
+      promptTemplate: `Address all issues identified in the review from the previous stage. Do not make changes beyond what the review requested.
+
+Process:
+- Work through the review findings by severity: critical first, then minor, then nits.
+- For each issue, apply the suggested fix or an equivalent solution that addresses the underlying concern.
+- If a review finding is incorrect or would make the code worse, skip it and explain why.
+- Use subagents generously to implement the changes.
+
+Guidelines:
+- Maintain the same KISS, DRY, YAGNI, and separation of concerns principles from the implementation stage.
+- Verify the build/lint commands pass after all fixes are applied.
+- Do not commit at this stage.`,
       autoAdvance: false,
       reviewRequired: true,
       freshSession: false,
