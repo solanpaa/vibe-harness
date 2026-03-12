@@ -74,7 +74,7 @@ export function startTask(options: StartTaskOptions) {
   if (isWorktree) {
     const gitDir = path.join(options.projectDir, ".git");
     if (fs.existsSync(gitDir)) {
-      extraWorkspaces.push(`${gitDir}:ro`);
+      extraWorkspaces.push(gitDir);
     }
   }
 
