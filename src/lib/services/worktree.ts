@@ -164,6 +164,77 @@ export function fastForwardMerge(
 }
 
 /**
+ * Rebase the worktree branch onto the target branch.
+ * Returns success or error (e.g. conflicts). Aborts rebase on failure.
+ */
+export function rebaseWorktree(
+  projectDir: string,
+  taskId: string,
+  targetBranch: string
+): { rebased: boolean; error?: string } {
+  const shortId = taskId.slice(0, 8);
+  const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
+
+  if (!fs.existsSync(worktreePath)) {
+    return { rebased: false, error: "Worktree not found" };
+  }
+
+  try {
+    execSync(`git rebase "${targetBranch}"`, {
+      cwd: worktreePath,
+      stdio: "pipe",
+    });
+    return { rebased: true };
+  } catch (e) {
+    // Abort the failed rebase so the branch is left clean
+    try {
+      execSync("git rebase --abort", { cwd: worktreePath, stdio: "pipe" });
+    } catch {
+      // May fail if rebase wasn't in progress
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    return { rebased: false, error: msg };
+  }
+}
+
+/**
+ * Stage and commit all changes in a worktree.
+ * Returns true if a commit was made, false if there was nothing to commit.
+ */
+export function commitWorktreeChanges(
+  projectDir: string,
+  taskId: string,
+  commitMessage: string
+): { committed: boolean; error?: string } {
+  const shortId = taskId.slice(0, 8);
+  const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
+
+  if (!fs.existsSync(worktreePath)) {
+    return { committed: false, error: "Worktree not found" };
+  }
+
+  try {
+    execSync("git add -A", { cwd: worktreePath, stdio: "pipe" });
+
+    try {
+      execSync("git diff --cached --quiet", { cwd: worktreePath, stdio: "pipe" });
+      // No staged changes
+      return { committed: false };
+    } catch {
+      // Has staged changes — commit them
+      execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+        cwd: worktreePath,
+        stdio: "pipe",
+      });
+      return { committed: true };
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { committed: false, error: msg };
+  }
+}
+
+/**
  * Get the diff between a worktree and the main branch.
  */
 export function getWorktreeDiff(

@@ -1,6 +1,6 @@
 import { getDb, schema } from "@/lib/db";
 import { launchSandbox, stopSandbox, getSandbox, sendInput } from "./sandbox";
-import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree } from "./worktree";
+import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree, rebaseWorktree, commitWorktreeChanges } from "./worktree";
 import { createReviewForTask } from "./review-service";
 import { advanceWorkflow, getStageConfig } from "../services/workflow-engine";
 import { eq } from "drizzle-orm";
@@ -117,7 +117,8 @@ export function startTask(options: StartTaskOptions) {
     const isFinalize = currentTask?.stageName === "finalize";
 
     if (isFinalize) {
-      // Finalize task — merge and cleanup, no review needed
+      // Legacy finalize tasks are no longer created, but handle gracefully
+      // if one is somehow still in flight.
       db.update(schema.tasks)
         .set({
           status: "completed",
@@ -128,9 +129,6 @@ export function startTask(options: StartTaskOptions) {
         })
         .where(eq(schema.tasks.id, options.taskId))
         .run();
-
-      const originId = options.originTaskId || options.taskId;
-      await completeFinalizeTask(originId, currentTask!, code !== 0);
       return;
     }
 
@@ -158,15 +156,15 @@ export function startTask(options: StartTaskOptions) {
         if (currentTask?.workflowRunId) {
           try {
             const result = await advanceWorkflow(currentTask.workflowRunId);
-            // If workflow completed, trigger finalize
+            // If workflow completed, finalize on the host (commit, rebase, merge)
             if (result?.completed) {
               const originId = options.originTaskId || options.taskId;
               try {
-                startFinalizeTask(originId, {
+                finalizeAndMerge(originId, {
                   workflowRunId: currentTask.workflowRunId,
                 });
               } catch (e) {
-                console.error("Failed to start finalize after auto-advance:", e);
+                console.error("Failed to finalize after auto-advance:", e);
               }
             }
           } catch (e) {
@@ -258,80 +256,14 @@ export function getTaskSandbox(taskId: string) {
 }
 
 /**
- * Complete a finalize task: fast-forward merge the task branch into the
- * main working tree, clean up the worktree, and mark the workflow done.
- * Falls back to mechanical --no-ff merge if ff fails.
+ * Finalize a task on the host: commit changes, rebase, merge, and clean up.
+ * Replaces the old agent-based finalize which failed inside Docker because
+ * the worktree's .git file references a host path not mounted in the container.
  */
-async function completeFinalizeTask(
-  originId: string,
-  task: { workflowRunId: string | null; projectId: string },
-  aiFailed: boolean
-) {
-  const db = getDb();
-  const project = db
-    .select()
-    .from(schema.projects)
-    .where(eq(schema.projects.id, task.projectId))
-    .get();
-
-  if (!project) {
-    console.error("Finalize: project not found for", task.projectId);
-    return;
-  }
-
-  let merged = false;
-
-  if (!aiFailed) {
-    // AI succeeded — try fast-forward (branch should be rebased)
-    const ffResult = fastForwardMerge(project.localPath, originId);
-    if (ffResult.merged) {
-      merged = true;
-    } else {
-      console.warn("FF merge failed, falling back to --no-ff:", ffResult.error);
-    }
-  }
-
-  if (!merged) {
-    // Fallback: mechanical commit + --no-ff merge
-    const fallback = commitAndMergeWorktree(
-      project.localPath,
-      originId,
-      "vibe-harness: finalize"
-    );
-    merged = fallback.merged;
-    if (!merged) {
-      console.error("Fallback merge also failed:", fallback.error);
-    }
-  }
-
-  if (merged) {
-    try {
-      removeWorktree(project.localPath, originId);
-    } catch {
-      // Non-critical
-    }
-  }
-
-  if (task.workflowRunId) {
-    db.update(schema.workflowRuns)
-      .set({
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.workflowRuns.id, task.workflowRunId))
-      .run();
-  }
-}
-
-/**
- * Launch a finalize task that prompts the AI to commit with a clean message
- * and rebase onto the target branch. The completion handler will then
- * fast-forward merge and clean up.
- */
-export function startFinalizeTask(
+export function finalizeAndMerge(
   originTaskId: string,
   opts?: { workflowRunId?: string | null }
-): { taskId: string } {
+): { merged: boolean; branch: string; error?: string } {
   const db = getDb();
 
   const originTask = db
@@ -339,21 +271,14 @@ export function startFinalizeTask(
     .from(schema.tasks)
     .where(eq(schema.tasks.id, originTaskId))
     .get();
-  if (!originTask) throw new Error("Origin task not found");
+  if (!originTask) return { merged: false, branch: "", error: "Origin task not found" };
 
   const project = db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, originTask.projectId))
     .get();
-  if (!project) throw new Error("Project not found");
-
-  const agent = db
-    .select()
-    .from(schema.agentDefinitions)
-    .where(eq(schema.agentDefinitions.id, originTask.agentDefinitionId))
-    .get();
-  if (!agent) throw new Error("Agent not found");
+  if (!project) return { merged: false, branch: "", error: "Project not found" };
 
   // Detect target branch from main working tree
   let targetBranch = "main";
@@ -368,49 +293,79 @@ export function startFinalizeTask(
     // default to "main"
   }
 
-  const prompt = [
-    "Commit all your changes with a clean, descriptive commit message that summarizes the work you have done.",
-    `Then rebase your branch onto \`${targetBranch}\` and resolve any conflicts if needed.`,
-    "Do not push or create a PR — just commit and rebase.",
-  ].join(" ");
+  // Build commit message from task metadata
+  const subject =
+    originTask.title ||
+    originTask.prompt.split("\n")[0].slice(0, 72) ||
+    `vibe-harness: finalize task ${originTaskId.slice(0, 8)}`;
+  const commitMessage = subject;
 
-  const taskId = uuid();
-  const now = new Date().toISOString();
-
-  db.insert(schema.tasks)
-    .values({
-      id: taskId,
-      projectId: originTask.projectId,
-      workflowRunId: opts?.workflowRunId || originTask.workflowRunId,
-      stageName: "finalize",
-      agentDefinitionId: originTask.agentDefinitionId,
-      credentialSetId: originTask.credentialSetId,
-      sandboxId: null,
-      originTaskId,
-      status: "pending",
-      prompt,
-      title: "Finalize: commit & rebase",
-      model: originTask.model,
-      useWorktree: originTask.useWorktree,
-      output: null,
-      createdAt: now,
-      completedAt: null,
-    })
-    .run();
-
-  const agentCommand = agent.commandTemplate || "copilot";
-
-  startTask({
-    taskId,
-    projectDir: project.localPath,
-    agentCommand,
-    credentialSetId: originTask.credentialSetId,
-    prompt,
-    model: originTask.model,
-    useWorktree: originTask.useWorktree === 1,
-    isContinuation: true,
+  // 1. Commit any uncommitted changes in the worktree
+  const commitResult = commitWorktreeChanges(
+    project.localPath,
     originTaskId,
-  });
+    commitMessage
+  );
+  if (commitResult.error) {
+    console.warn("Commit step had an error:", commitResult.error);
+  }
 
-  return { taskId };
+  // 2. Try to rebase onto target branch
+  const rebaseResult = rebaseWorktree(
+    project.localPath,
+    originTaskId,
+    targetBranch
+  );
+
+  let merged = false;
+  let mergeError: string | undefined;
+  const shortId = originTaskId.slice(0, 8);
+  const branch = `vibe-harness/task-${shortId}`;
+
+  if (rebaseResult.rebased) {
+    // 3a. Rebase succeeded — try fast-forward merge
+    const ffResult = fastForwardMerge(project.localPath, originTaskId);
+    if (ffResult.merged) {
+      merged = true;
+    } else {
+      console.warn("FF merge failed after rebase, falling back to --no-ff:", ffResult.error);
+    }
+  }
+
+  if (!merged) {
+    // 3b. Fallback: --no-ff merge
+    const fallback = commitAndMergeWorktree(
+      project.localPath,
+      originTaskId,
+      commitMessage
+    );
+    merged = fallback.merged;
+    if (!merged) {
+      mergeError = fallback.error;
+      console.error("Fallback merge also failed:", fallback.error);
+    }
+  }
+
+  // 4. Clean up worktree on success
+  if (merged) {
+    try {
+      removeWorktree(project.localPath, originTaskId);
+    } catch {
+      // Non-critical
+    }
+  }
+
+  // 5. Update workflow status if applicable
+  const workflowRunId = opts?.workflowRunId || originTask.workflowRunId;
+  if (workflowRunId) {
+    db.update(schema.workflowRuns)
+      .set({
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.workflowRuns.id, workflowRunId))
+      .run();
+  }
+
+  return { merged, branch, error: mergeError };
 }

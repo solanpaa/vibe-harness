@@ -204,7 +204,7 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
   const currentIdx = stages.findIndex((s) => s.name === run.currentStage);
 
   if (currentIdx === -1 || currentIdx >= stages.length - 1) {
-    // All stages done — mark as finalizing (finalize task will set "completed")
+    // All stages done — mark as finalizing (host-side merge will set "completed")
     db.update(schema.workflowRuns)
       .set({
         status: "finalizing",
