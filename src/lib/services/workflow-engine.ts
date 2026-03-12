@@ -11,7 +11,7 @@ import type { WorkflowStage } from "@/types/domain";
  * context so the agent has the plan from the previous stage without
  * carrying over the full conversation history.
  */
-function buildStagePrompt(
+export function buildStagePrompt(
   taskDescription: string,
   stage: WorkflowStage,
   previousPlan?: string | null

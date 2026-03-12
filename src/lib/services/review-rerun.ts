@@ -3,13 +3,15 @@ import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { bundleCommentsAsPrompt, getOriginTaskId } from "./review-service";
 import { startTask } from "./task-manager";
+import { buildStagePrompt, getStageConfig } from "./workflow-engine";
 
 /**
  * Handle "request changes" on a review:
- * 1. Bundle inline comments into a structured prompt
- * 2. Run copilot --continue in the SAME sandbox with the feedback as prompt
+ * 1. Build a stage-aware prompt that includes original task context + review feedback
+ * 2. Resume the existing ACP session in the SAME sandbox via loadSessionId
  * 3. Create a new task record linked to the same worktree via originTaskId
- * 4. Task manager auto-creates review when the task completes (awaiting_review)
+ * 4. Update workflow run status to "running"
+ * 5. Task manager auto-creates review when the task completes (awaiting_review)
  */
 export async function rerunWithComments(reviewId: string): Promise<{
   taskId: string;
@@ -45,17 +47,62 @@ export async function rerunWithComments(reviewId: string): Promise<{
     .get();
   if (!agent) return null;
 
-  // Bundle comments into a prompt
+  // Bundle review comments
   const commentPrompt = bundleCommentsAsPrompt(reviewId);
-  const combinedPrompt = [
-    "Please address these review comments on your previous changes:",
-    "",
-    commentPrompt,
-  ].join("\n");
+
+  // Build stage-aware prompt when this task is part of a workflow
+  let combinedPrompt: string;
+  if (originalTask.workflowRunId && originalTask.stageName) {
+    const run = db
+      .select()
+      .from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
+      .get();
+
+    const stageConfig = getStageConfig(originalTask.workflowRunId, originalTask.stageName);
+
+    if (run && stageConfig) {
+      const basePrompt = buildStagePrompt(
+        run.taskDescription || originalTask.prompt,
+        stageConfig,
+      );
+      combinedPrompt = [
+        basePrompt,
+        ``,
+        `## Review Feedback (Round ${review.round + 1})`,
+        commentPrompt,
+        ``,
+        `Important: Address the review feedback above while staying within the scope of the "${originalTask.stageName}" stage.`,
+      ].join("\n");
+    } else {
+      combinedPrompt = [
+        "Please address these review comments on your previous changes:",
+        "",
+        commentPrompt,
+      ].join("\n");
+    }
+  } else {
+    combinedPrompt = [
+      "Please address these review comments on your previous changes:",
+      "",
+      commentPrompt,
+    ].join("\n");
+  }
 
   // Track origin: if the original task already has an origin, use it;
   // otherwise, the original task IS the origin.
   const originId = getOriginTaskId(originalTask.id);
+
+  // Get ACP session ID for session continuation
+  let loadSessionId: string | null = null;
+  if (originalTask.workflowRunId) {
+    const run = db
+      .select({ acpSessionId: schema.workflowRuns.acpSessionId })
+      .from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
+      .get();
+    loadSessionId = run?.acpSessionId || null;
+  }
 
   // Create a new task record linked to the same chain
   const now = new Date().toISOString();
@@ -80,10 +127,18 @@ export async function rerunWithComments(reviewId: string): Promise<{
     })
     .run();
 
+  // Update workflow run status to "running"
+  if (originalTask.workflowRunId) {
+    db.update(schema.workflowRuns)
+      .set({ status: "running" })
+      .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
+      .run();
+  }
+
   const agentCommand = agent.commandTemplate || "claude";
 
   // Use startTask which properly registers sandbox, creates worktree, etc.
-  const sandbox = startTask({
+  startTask({
     taskId: newTaskId,
     projectDir: project.localPath,
     agentCommand,
@@ -94,9 +149,8 @@ export async function rerunWithComments(reviewId: string): Promise<{
     useWorktree: originalTask.useWorktree === 1,
     isContinuation: true,
     originTaskId: originId,
+    loadSessionId,
   });
-
-  // startTask auto-creates review on successful completion (awaiting_review)
 
   return {
     taskId: newTaskId,
