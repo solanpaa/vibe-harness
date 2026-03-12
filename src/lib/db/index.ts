@@ -32,12 +32,26 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
           name: "GitHub Copilot CLI",
           type: "copilot_cli",
           commandTemplate: "copilot",
-          dockerImage: null,
+          dockerImage: "vibe-harness/copilot:latest",
           description: "GitHub Copilot CLI in Docker sandbox. Requires GITHUB_TOKEN env var or host credentials.",
           createdAt: now,
         },
       ])
       .run();
+  } else {
+    // Backfill dockerImage for existing default agent if not set
+    const defaultAgent = database
+      .select()
+      .from(schema.agentDefinitions)
+      .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
+      .get();
+    if (defaultAgent && !defaultAgent.dockerImage) {
+      database
+        .update(schema.agentDefinitions)
+        .set({ dockerImage: "vibe-harness/copilot:latest" })
+        .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
+        .run();
+    }
   }
 }
 

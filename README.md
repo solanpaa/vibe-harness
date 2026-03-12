@@ -29,6 +29,29 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Custom Sandbox Image
+
+Vibe Harness uses a custom Docker sandbox template that extends the official Copilot CLI image with pre-installed development tools:
+
+- **Node.js 25** (with npm)
+- **pnpm** (via corepack)
+- **Python 3.14**
+- **uv / uvx** (Astral Python package manager)
+
+### Building the image
+
+```bash
+./docker/build.sh
+# or manually:
+docker build -t vibe-harness/copilot:latest -f docker/Dockerfile.copilot docker/
+```
+
+The default agent definition references `vibe-harness/copilot:latest`. Docker's `--pull-template missing` policy (the default) will find the locally-built image without trying to pull from a registry.
+
+### Rebuilding after changes
+
+Edit `docker/Dockerfile.copilot` and re-run the build script. Delete `vibe-harness.db` if you need to re-seed the default agent definition, or update the agent's `dockerImage` field via the API.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
