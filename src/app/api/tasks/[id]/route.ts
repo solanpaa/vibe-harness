@@ -227,6 +227,27 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const db = getDb();
+
+  // Delete associated reviews and their comments first (no cascade rule in schema)
+  const reviews = db
+    .select({ id: schema.reviews.id })
+    .from(schema.reviews)
+    .where(eq(schema.reviews.taskId, id))
+    .all();
+  for (const review of reviews) {
+    db.delete(schema.reviewComments)
+      .where(eq(schema.reviewComments.reviewId, review.id))
+      .run();
+  }
+  db.delete(schema.reviews).where(eq(schema.reviews.taskId, id)).run();
+
+  // Clear originTaskId references from child tasks (avoid orphan FK errors)
+  db.update(schema.tasks)
+    .set({ originTaskId: null })
+    .where(eq(schema.tasks.originTaskId, id))
+    .run();
+
+  // taskMessages cascade automatically via schema onDelete rule
   db.delete(schema.tasks).where(eq(schema.tasks.id, id)).run();
   return NextResponse.json({ ok: true });
 }
