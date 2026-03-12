@@ -27,9 +27,30 @@ export function TerminalOutput({
   sandboxId,
   onStreamClose,
 }: TerminalOutputProps) {
-  // Parse initialOutput outside of an effect to avoid setState-in-effect
+  // Parse initialOutput — handles both JSONL format and conversation format
   const initialEvents = useMemo(() => {
     if (!initialOutput) return [];
+
+    // Check if output is in conversation format ([user]/[assistant] blocks)
+    if (initialOutput.startsWith("[user]") || initialOutput.startsWith("[assistant]")) {
+      const events: TerminalEvent[] = [];
+      // Split on role markers
+      const blocks = initialOutput.split(/\n\n(?=\[(user|assistant)\])/);
+      for (const block of blocks) {
+        const trimmed = block.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith("[user] ")) {
+          events.push({ kind: "user_message", content: trimmed.slice(7) });
+        } else if (trimmed.startsWith("[assistant] ")) {
+          events.push({ kind: "message", content: trimmed.slice(12) });
+        } else {
+          events.push({ kind: "raw", text: trimmed });
+        }
+      }
+      return events;
+    }
+
+    // Fall back to JSONL parsing
     return initialOutput
       .split("\n")
       .map(parseLine)

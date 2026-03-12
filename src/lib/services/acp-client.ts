@@ -97,6 +97,7 @@ export function launchAcpSession(
   const events = new EventEmitter();
   const output: string[] = [];
   const messages: AcpMessage[] = [];
+  let currentMessageBuffer = "";
   const env = { ...process.env };
 
   // Get GitHub token
@@ -215,6 +216,8 @@ export function launchAcpSession(
         case "agent_message_chunk": {
           if (content?.type === "text") {
             const text = content.text as string;
+            // Accumulate text into current message buffer
+            currentMessageBuffer += text;
             events.emit("update", { kind: "assistant_message_delta", data: { text } });
           } else if (content?.type === "tool_use") {
             events.emit("update", {
@@ -233,7 +236,6 @@ export function launchAcpSession(
           break;
         }
         case "tool_call": {
-          // Tool execution started
           const name = (update.rawInput as Record<string, unknown>)?.description as string
             || (update as Record<string, unknown>).toolName as string || "tool";
           const detail = JSON.stringify((update.rawInput as Record<string, unknown>) || {}).slice(0, 150);
@@ -241,20 +243,30 @@ export function launchAcpSession(
           break;
         }
         case "tool_call_update": {
-          // Tool result came back
           events.emit("update", { kind: "tool_complete", data: update });
           break;
         }
         case "agent_turn_start": {
           session.status = "busy";
+          currentMessageBuffer = "";
           events.emit("status", "busy");
           break;
         }
         case "agent_turn_end": {
-          // Accumulate the full message from all deltas
+          // Flush accumulated message to session.messages
+          if (currentMessageBuffer.trim()) {
+            const msg: AcpMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: currentMessageBuffer,
+              timestamp: new Date().toISOString(),
+            };
+            messages.push(msg);
+            events.emit("message", msg);
+          }
+          currentMessageBuffer = "";
           session.status = "ready";
           events.emit("status", "ready");
-          // Signal that a complete turn is done
           events.emit("update", { kind: "turn_end", data: {} });
           break;
         }
