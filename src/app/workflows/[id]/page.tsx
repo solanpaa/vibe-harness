@@ -569,24 +569,11 @@ export default function WorkflowDetailPage({
                         onChange={(e) =>
                           updateStage(idx, {
                             reviewRequired: e.target.checked,
-                            ...(e.target.checked && { autoAdvance: false }),
+                            autoAdvance: !e.target.checked,
                           })
                         }
                       />
                       Review required
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={stage.autoAdvance}
-                        onChange={(e) =>
-                          updateStage(idx, {
-                            autoAdvance: e.target.checked,
-                            ...(e.target.checked && { reviewRequired: false }),
-                          })
-                        }
-                      />
-                      Auto-advance
                     </label>
                     <label
                       className="flex items-center gap-2 text-sm"
@@ -632,9 +619,6 @@ export default function WorkflowDetailPage({
                     <div className="flex gap-1.5">
                       {stage.reviewRequired && (
                         <Badge variant="outline">Review Required</Badge>
-                      )}
-                      {stage.autoAdvance && (
-                        <Badge variant="secondary">Auto-advance</Badge>
                       )}
                       {stage.freshSession && (
                         <Badge variant="secondary">Fresh session</Badge>
