@@ -1,43 +1,5 @@
 import { NextRequest } from "next/server";
 import { getTaskAcpSession } from "@/lib/services/task-manager";
-import type { AcpMessage } from "@/lib/services/acp-client";
-
-/**
- * Try to parse a raw output line as a JSONL event from Copilot CLI.
- * Returns the parsed object when the line is valid JSON with a `type` field,
- * or null for non-JSON lines (stderr, shell prompts, etc.).
- */
-function tryParseJsonlEvent(line: string): Record<string, unknown> | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string") {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Not JSON
-  }
-  return null;
-}
-
-function formatSseMessage(line: string): string {
-  const event = tryParseJsonlEvent(line);
-  if (event) {
-    return `data: ${JSON.stringify({ type: "jsonl_event", event })}\n\n`;
-  }
-  // Skip lines that look like broken/truncated JSONL — raw JSON is never useful to stream
-  const trimmed = line.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith('"type"')) {
-    return "";
-  }
-  // Skip Copilot CLI stderr progress indicators (✓tool, spinner chars, etc.)
-  if (/^[✓▶⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(trimmed)) {
-    return "";
-  }
-  if (!trimmed) return "";
-  return `data: ${JSON.stringify({ type: "output", data: line })}\n\n`;
-}
 
 export async function GET(
   request: NextRequest,
@@ -76,32 +38,38 @@ function startAcpStream(
   session: NonNullable<ReturnType<typeof getTaskAcpSession>>,
   request: NextRequest
 ) {
-  // Send existing messages as conversation history
-  for (const msg of session.messages) {
+  // Replay buffered events — this restores the full UI state on reconnect
+  for (const event of session.eventLog) {
     try {
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({
-          type: "acp_message",
-          role: msg.role,
-          content: msg.content,
-          isIntervention: msg.metadata?.isIntervention ?? false,
-          timestamp: msg.timestamp,
-        })}\n\n`)
-      );
+      if (event.kind === "message") {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({
+            type: "acp_message",
+            role: event.data.role,
+            content: event.data.content,
+            isIntervention: event.data.isIntervention ?? false,
+            timestamp: event.timestamp,
+          })}\n\n`)
+        );
+      } else if (event.kind === "status") {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({
+            type: "acp_status",
+            status: event.data.status,
+            executionMode: "acp",
+          })}\n\n`)
+        );
+      } else {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({
+            type: "acp_update",
+            kind: event.kind,
+            data: event.data,
+          })}\n\n`)
+        );
+      }
     } catch {
       // Stream closed
-    }
-  }
-
-  // Send existing JSONL output for backward-compatible event rendering
-  for (const line of session.output) {
-    const msg = formatSseMessage(line);
-    if (msg) {
-      try {
-        controller.enqueue(encoder.encode(msg));
-      } catch {
-        // Stream closed
-      }
     }
   }
 

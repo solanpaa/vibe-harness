@@ -33,6 +33,12 @@ export type AcpSessionStatus =
   | "closed"
   | "error";
 
+export interface AcpSessionEvent {
+  kind: string;
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface AcpSession {
   id: string; // taskId
   process: ChildProcess;
@@ -41,6 +47,7 @@ export interface AcpSession {
   status: AcpSessionStatus;
   events: EventEmitter; // emits: update, message, status, close, error, auto_complete
   messages: AcpMessage[];
+  eventLog: AcpSessionEvent[]; // buffered events for replay on reconnect
   workDir: string;
   output: string[]; // raw lines for debugging
   autoCompleteTimer: ReturnType<typeof setTimeout> | null;
@@ -270,6 +277,7 @@ export function launchAcpSession(
     status: "initializing",
     events,
     messages,
+    eventLog: [],
     workDir: options.projectDir,
     output,
     autoCompleteTimer: null,
@@ -294,6 +302,25 @@ export function launchAcpSession(
   });
 
   acpSessions.set(taskId, session);
+
+  // Buffer all events for replay on stream reconnect
+  events.on("update", (update: { kind: string; data: Record<string, unknown> }) => {
+    session.eventLog.push({ ...update, timestamp: new Date().toISOString() });
+  });
+  events.on("message", (msg: AcpMessage) => {
+    session.eventLog.push({
+      kind: "message",
+      data: { role: msg.role, content: msg.content, isIntervention: msg.metadata?.isIntervention ?? false },
+      timestamp: msg.timestamp,
+    });
+  });
+  events.on("status", (status: string) => {
+    session.eventLog.push({
+      kind: "status",
+      data: { status },
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // Initialize connection asynchronously
   initializeSession(session, options).catch((err) => {
