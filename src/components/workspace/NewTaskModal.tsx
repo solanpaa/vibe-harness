@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Workflow, ArrowRight, Loader2 } from "lucide-react";
+import { Play, Workflow, ArrowRight, Loader2, GitCompare, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -60,6 +60,12 @@ interface FormState {
   prompt: string;
 }
 
+interface CompareVariant {
+  agentDefinitionId: string;
+  model: string;
+  label: string;
+}
+
 // ── Props ────────────────────────────────────────────────────────────
 
 export interface NewTaskModalProps {
@@ -95,6 +101,11 @@ export function NewTaskModal({
   const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [variants, setVariants] = useState<CompareVariant[]>([
+    { agentDefinitionId: "", model: "", label: "" },
+    { agentDefinitionId: "", model: "", label: "" },
+  ]);
 
   // ── Data loading ─────────────────────────────────────────────────
 
@@ -140,8 +151,12 @@ export function NewTaskModal({
     (w) => w.id === form.workflowTemplateId
   );
   const isWorkflowMode = !!form.workflowTemplateId;
-  const canSubmit =
-    !!form.projectId && !!form.agentDefinitionId && !!form.prompt.trim();
+  const isCompareMode = compareMode && !isWorkflowMode;
+  const canSubmitBase =
+    !!form.projectId && !!form.prompt.trim();
+  const canSubmitSingle = canSubmitBase && !!form.agentDefinitionId;
+  const canSubmitCompare = canSubmitBase && variants.filter((v) => v.agentDefinitionId).length >= 2;
+  const canSubmit = isCompareMode ? canSubmitCompare : canSubmitSingle;
 
   // ── Form helpers ─────────────────────────────────────────────────
 
@@ -151,6 +166,11 @@ export function NewTaskModal({
       projectId: defaultProjectId ?? "",
       agentDefinitionId: agents[0]?.id ?? "",
     });
+    setCompareMode(false);
+    setVariants([
+      { agentDefinitionId: agents[0]?.id ?? "", model: "", label: "" },
+      { agentDefinitionId: agents[1]?.id ?? agents[0]?.id ?? "", model: "", label: "" },
+    ]);
   }
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -169,7 +189,38 @@ export function NewTaskModal({
 
     setLoading(true);
     try {
-      if (isWorkflowMode) {
+      if (isCompareMode) {
+        // Compare mode: POST to /api/comparisons
+        const validVariants = variants
+          .filter((v) => v.agentDefinitionId)
+          .map((v) => ({
+            agentDefinitionId: v.agentDefinitionId,
+            model: v.model.trim() || null,
+            label: v.label.trim() || undefined,
+          }));
+
+        const res = await fetch("/api/comparisons", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: form.projectId,
+            prompt: form.prompt,
+            credentialSetId: form.credentialSetId || null,
+            useWorktree: form.useWorktree,
+            variants: validVariants,
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          toast.error(body?.error ?? "Failed to start comparison");
+          return;
+        }
+        const result = await res.json();
+        toast.success(`Comparison started with ${result.tasks.length} variants`);
+        onOpenChange(false);
+        resetForm();
+        onTaskCreated?.(result.tasks[0]?.taskId);
+      } else if (isWorkflowMode) {
         const res = await fetch("/api/workflows", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -270,7 +321,29 @@ export function NewTaskModal({
             </Select>
           </div>
 
-          {/* Agent */}
+          {/* Compare Mode Toggle */}
+          {!isWorkflowMode && (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="newTaskCompareMode"
+                checked={compareMode}
+                onChange={(e) => setCompareMode(e.target.checked)}
+              />
+              <Label htmlFor="newTaskCompareMode" className="flex items-center gap-1">
+                <GitCompare className="h-3 w-3" />
+                Compare Agents
+              </Label>
+              {compareMode && (
+                <span className="text-[11px] text-muted-foreground">
+                  Run same task with multiple agents
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Agent (single mode) */}
+          {!isCompareMode && (
           <div className="space-y-2">
             <Label>Agent *</Label>
             <Select
@@ -296,8 +369,84 @@ export function NewTaskModal({
               </SelectContent>
             </Select>
           </div>
+          )}
 
-          {/* Model */}
+          {/* Compare Variants */}
+          {isCompareMode && (
+            <div className="space-y-3">
+              <Label>Agent Variants (min 2, max 5)</Label>
+              {variants.map((variant, idx) => (
+                <div key={idx} className="flex items-start gap-2 rounded-md border p-2">
+                  <span className="mt-2.5 text-[11px] font-semibold text-muted-foreground w-4 shrink-0">
+                    {idx + 1}
+                  </span>
+                  <div className="flex-1 space-y-2">
+                    <Select
+                      value={variant.agentDefinitionId || "none"}
+                      onValueChange={(v) => {
+                        const next = [...variants];
+                        next[idx] = { ...next[idx], agentDefinitionId: v === "none" ? "" : (v ?? "") };
+                        setVariants(next);
+                      }}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue placeholder="Select agent...">
+                          {agents.find((a) => a.id === variant.agentDefinitionId)?.name ?? "Select agent..."}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {agents.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={variant.model}
+                      onChange={(e) => {
+                        const next = [...variants];
+                        next[idx] = { ...next[idx], model: e.target.value };
+                        setVariants(next);
+                      }}
+                      placeholder="Model (e.g. claude-opus-4.6)"
+                      className="h-8"
+                    />
+                  </div>
+                  {variants.length > 2 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 mt-0.5"
+                      onClick={() => setVariants(variants.filter((_, i) => i !== idx))}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {variants.length < 5 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setVariants([
+                      ...variants,
+                      { agentDefinitionId: agents[0]?.id ?? "", model: "", label: "" },
+                    ])
+                  }
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  Add Variant
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Model (single mode only) */}
+          {!isCompareMode && (
           <div className="space-y-2">
             <Label>Model (optional)</Label>
             <Input
@@ -306,6 +455,7 @@ export function NewTaskModal({
               placeholder="claude-opus-4.6"
             />
           </div>
+          )}
 
           {/* Credential Set */}
           <div className="space-y-2">
@@ -419,6 +569,11 @@ export function NewTaskModal({
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Launching...
+              </>
+            ) : isCompareMode ? (
+              <>
+                <GitCompare className="mr-2 h-4 w-4" />
+                Compare {variants.filter((v) => v.agentDefinitionId).length} Variants
               </>
             ) : isWorkflowMode ? (
               <>

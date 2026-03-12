@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, GitCompare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,8 @@ export interface EnrichedTask {
   prompt: string;
   model: string | null;
   sandboxId: string | null;
+  executionMode?: string;
+  comparisonGroupId?: string | null;
   createdAt: string;
   completedAt: string | null;
   latestReview: { id: string; round: number; status: string } | null;
@@ -82,12 +84,18 @@ function dateLabel(iso: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-// A single rendered entry can be either a standalone task or a workflow group.
+// A single rendered entry can be either a standalone task, a workflow group, or a comparison group.
 type FeedEntry =
   | { kind: "task"; task: EnrichedTask }
   | {
       kind: "workflow";
       runId: string;
+      tasks: EnrichedTask[];
+      latestCreatedAt: string;
+    }
+  | {
+      kind: "comparison";
+      groupId: string;
       tasks: EnrichedTask[];
       latestCreatedAt: string;
     };
@@ -120,6 +128,7 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
 
   for (const [label, dateTasks] of dateMap) {
     const workflowBuckets = new Map<string, EnrichedTask[]>();
+    const comparisonBuckets = new Map<string, EnrichedTask[]>();
     const standalone: EnrichedTask[] = [];
 
     for (const task of dateTasks) {
@@ -128,6 +137,13 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
         if (!bucket) {
           bucket = [];
           workflowBuckets.set(task.workflowRunId, bucket);
+        }
+        bucket.push(task);
+      } else if (task.comparisonGroupId) {
+        let bucket = comparisonBuckets.get(task.comparisonGroupId);
+        if (!bucket) {
+          bucket = [];
+          comparisonBuckets.set(task.comparisonGroupId, bucket);
         }
         bucket.push(task);
       } else {
@@ -148,6 +164,14 @@ function buildGroups(tasks: EnrichedTask[]): DateGroup[] {
         wfTasks[0].createdAt,
       );
       entries.push({ kind: "workflow", runId, tasks: wfTasks, latestCreatedAt });
+    }
+
+    for (const [groupId, cmpTasks] of comparisonBuckets) {
+      const latestCreatedAt = cmpTasks.reduce((max, t) =>
+        t.createdAt > max ? t.createdAt : max,
+        cmpTasks[0].createdAt,
+      );
+      entries.push({ kind: "comparison", groupId, tasks: cmpTasks, latestCreatedAt });
     }
 
     // Sort entries newest-first
@@ -264,6 +288,7 @@ export function TaskFeed({
                   );
                 }
 
+                if (entry.kind === "workflow") {
                 // Workflow group
                 const meta = entry.tasks.find((t) => t.workflow)?.workflow;
                 return (
@@ -280,6 +305,61 @@ export function TaskFeed({
                     onSelectReview={onSelectReview}
                   />
                 );
+                }
+
+                if (entry.kind === "comparison") {
+                const done = entry.tasks.filter(
+                  (t) => t.status === "completed" || t.status === "awaiting_review" || t.status === "failed"
+                ).length;
+
+                return (
+                  <div key={entry.groupId} className="space-y-px">
+                    <div className="flex items-center gap-1.5 px-2 py-1">
+                      <GitCompare className="size-3.5 text-purple-400" />
+                      <span className="text-[12px] font-medium text-purple-400">
+                        Compare
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {entry.tasks.length} variants · {done} done
+                      </span>
+                    </div>
+                    <div className="ml-3 border-l border-purple-800/40 pl-1 space-y-px">
+                      {entry.tasks.map((task) => (
+                        <div key={task.id}>
+                          <TaskFeedItem
+                            task={{
+                              ...task,
+                              title: task.title ?? `${task.agentName}${task.model ? ` (${task.model})` : ""}`,
+                            }}
+                            isSelected={isTaskSelected(task.id)}
+                            isNested
+                            onClick={() => onSelectTask(task.id)}
+                          />
+                          {task.latestReview && (
+                            <div className="ml-3 border-l border-border/60 pl-1">
+                              <ReviewFeedItem
+                                reviewId={task.latestReview.id}
+                                round={task.latestReview.round}
+                                status={task.latestReview.status}
+                                isSelected={isReviewSelected(task.latestReview.id)}
+                                isNested
+                                onClick={() =>
+                                  onSelectReview(
+                                    task.latestReview!.id,
+                                    task.id,
+                                  )
+                                }
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+
+              return null;
               })}
             </div>
           ))}

@@ -65,6 +65,7 @@ export async function PATCH(
         taskId: id,
         projectDir: project.localPath,
         agentCommand,
+        agentType: agent.type,
         credentialSetId: task.credentialSetId,
         dockerImage: agent.dockerImage,
         prompt: task.prompt,

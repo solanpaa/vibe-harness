@@ -1,5 +1,6 @@
 import { getDb, schema } from "@/lib/db";
 import { launchSandbox, stopSandbox, getSandbox, sendInput } from "./sandbox";
+import { launchAcpSession, getAcpSession, closeAcpSession, sendAcpPrompt, cancelAcpOperation, isAcpSession } from "./acp-client";
 import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree, rebaseWorktree, commitWorktreeChanges } from "./worktree";
 import { createReviewForTask } from "./review-service";
 import { advanceWorkflow, getStageConfig } from "../services/workflow-engine";
@@ -15,6 +16,7 @@ export interface StartTaskOptions {
   taskId: string;
   projectDir: string;
   agentCommand: string;
+  agentType?: string; // copilot_cli | copilot_cli_acp
   credentialSetId?: string | null;
   dockerImage?: string | null;
   prompt: string;
@@ -67,6 +69,13 @@ export function startTask(options: StartTaskOptions) {
       : options.taskId;
   const shortId = sandboxTaskId.slice(0, 8);
   const sandboxName = `vibe-${shortId}`;
+
+  // Branch based on agent type: ACP mode vs legacy JSONL mode
+  const isAcpMode = options.agentType === "copilot_cli_acp";
+
+  if (isAcpMode) {
+    return startTaskAcp(options, workDir, sandboxName);
+  }
 
   const sandbox = launchSandbox(options.taskId, {
     projectDir: workDir,
@@ -229,10 +238,188 @@ export function startTask(options: StartTaskOptions) {
   return sandbox;
 }
 
+/** Start a task using ACP protocol for structured communication */
+function startTaskAcp(
+  options: StartTaskOptions,
+  workDir: string,
+  sandboxName: string
+) {
+  const db = getDb();
+
+  const session = launchAcpSession(options.taskId, {
+    projectDir: workDir,
+    agentCommand: options.agentCommand,
+    credentialSetId: options.credentialSetId,
+    dockerImage: options.dockerImage,
+    model: options.model,
+    isContinuation: options.isContinuation,
+    sandboxName,
+  });
+
+  // Update task status
+  db.update(schema.tasks)
+    .set({
+      status: "running",
+      sandboxId: sandboxName,
+      executionMode: "acp",
+    })
+    .where(eq(schema.tasks.id, options.taskId))
+    .run();
+
+  // When ACP session is ready, send the initial prompt
+  session.events.on("ready", async () => {
+    if (options.prompt) {
+      await sendAcpPrompt(options.taskId, options.prompt);
+
+      // Store the initial prompt as a task message
+      db.insert(schema.taskMessages)
+        .values({
+          id: crypto.randomUUID(),
+          taskId: options.taskId,
+          role: "user",
+          content: options.prompt,
+          isIntervention: 0,
+          createdAt: new Date().toISOString(),
+        })
+        .run();
+    }
+  });
+
+  // Store assistant messages
+  session.events.on("message", (msg: { role: string; content: string; metadata?: { isIntervention?: boolean } }) => {
+    if (msg.role === "assistant" && msg.content) {
+      db.insert(schema.taskMessages)
+        .values({
+          id: crypto.randomUUID(),
+          taskId: options.taskId,
+          role: "assistant",
+          content: msg.content,
+          isIntervention: 0,
+          createdAt: new Date().toISOString(),
+        })
+        .run();
+    }
+  });
+
+  // Listen for completion (same as legacy path)
+  session.events.on("close", async (code: number) => {
+    const output = session.output.join("\n");
+    const lastMsg = session.messages
+      .filter((m) => m.role === "assistant")
+      .pop();
+    const lastAiMessage = lastMsg?.content || null;
+
+    const currentTask = db
+      .select({
+        workflowRunId: schema.tasks.workflowRunId,
+        stageName: schema.tasks.stageName,
+        projectId: schema.tasks.projectId,
+      })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, options.taskId))
+      .get();
+
+    if (code === 0) {
+      const stageConfig =
+        currentTask?.workflowRunId && currentTask?.stageName
+          ? getStageConfig(currentTask.workflowRunId, currentTask.stageName)
+          : null;
+      const shouldAutoAdvance = stageConfig?.autoAdvance === true;
+
+      if (shouldAutoAdvance) {
+        db.update(schema.tasks)
+          .set({
+            status: "completed",
+            output,
+            lastAiMessage,
+            completedAt: new Date().toISOString(),
+          })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+
+        if (currentTask?.workflowRunId) {
+          try {
+            const result = await advanceWorkflow(currentTask.workflowRunId);
+            if (result?.completed) {
+              const originId = options.originTaskId || options.taskId;
+              try {
+                finalizeAndMerge(originId, {
+                  workflowRunId: currentTask.workflowRunId,
+                });
+              } catch (e) {
+                console.error("Failed to finalize after auto-advance:", e);
+              }
+            }
+          } catch (e) {
+            console.error("Failed to auto-advance workflow:", e);
+          }
+        }
+      } else {
+        db.update(schema.tasks)
+          .set({
+            status: "awaiting_review",
+            output,
+            lastAiMessage,
+            completedAt: new Date().toISOString(),
+          })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+
+        if (currentTask?.workflowRunId) {
+          db.update(schema.workflowRuns)
+            .set({ status: "awaiting_review" })
+            .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+            .run();
+        }
+
+        try {
+          await createReviewForTask(options.taskId);
+        } catch (e) {
+          console.error("Failed to auto-create review:", e);
+          db.update(schema.tasks)
+            .set({ status: "completed" })
+            .where(eq(schema.tasks.id, options.taskId))
+            .run();
+        }
+      }
+    } else {
+      db.update(schema.tasks)
+        .set({
+          status: "failed",
+          output,
+          lastAiMessage,
+          completedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.tasks.id, options.taskId))
+        .run();
+
+      if (currentTask?.workflowRunId) {
+        db.update(schema.workflowRuns)
+          .set({
+            status: "failed",
+            completedAt: new Date().toISOString(),
+          })
+          .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+          .run();
+      }
+    }
+  });
+
+  return session;
+}
+
 /** Stop a running task */
 export function stopTask(taskId: string) {
   const db = getDb();
-  const stopped = stopSandbox(taskId);
+
+  // Try ACP session first, then legacy sandbox
+  let stopped = false;
+  if (isAcpSession(taskId)) {
+    stopped = closeAcpSession(taskId);
+  } else {
+    stopped = stopSandbox(taskId);
+  }
+
   if (stopped) {
     db.update(schema.tasks)
       .set({
@@ -247,12 +434,22 @@ export function stopTask(taskId: string) {
 
 /** Send input to a running task */
 export function sendTaskInput(taskId: string, input: string) {
+  // For ACP sessions, use the structured prompt
+  if (isAcpSession(taskId)) {
+    sendAcpPrompt(taskId, input);
+    return true;
+  }
   return sendInput(taskId, input);
 }
 
-/** Get sandbox for streaming */
+/** Get sandbox for streaming (legacy mode) */
 export function getTaskSandbox(taskId: string) {
   return getSandbox(taskId);
+}
+
+/** Get ACP session for streaming (ACP mode) */
+export function getTaskAcpSession(taskId: string) {
+  return getAcpSession(taskId);
 }
 
 /**

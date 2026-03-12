@@ -33,7 +33,16 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
           type: "copilot_cli",
           commandTemplate: "copilot",
           dockerImage: "vibe-harness/copilot:latest",
-          description: "GitHub Copilot CLI in Docker sandbox. Requires GITHUB_TOKEN env var or host credentials.",
+          description: "GitHub Copilot CLI in Docker sandbox (legacy JSONL mode). Requires GITHUB_TOKEN env var or host credentials.",
+          createdAt: now,
+        },
+        {
+          id: "00000000-0000-0000-0000-000000000002",
+          name: "GitHub Copilot CLI (ACP)",
+          type: "copilot_cli_acp",
+          commandTemplate: "copilot",
+          dockerImage: "vibe-harness/copilot:latest",
+          description: "GitHub Copilot CLI via Agent Client Protocol. Supports mid-session intervention and structured communication.",
           createdAt: now,
         },
       ])
@@ -50,6 +59,27 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
         .update(schema.agentDefinitions)
         .set({ dockerImage: "vibe-harness/copilot:latest" })
         .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
+        .run();
+    }
+
+    // Seed ACP agent if missing
+    const acpAgent = database
+      .select()
+      .from(schema.agentDefinitions)
+      .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000002"))
+      .get();
+    if (!acpAgent) {
+      database
+        .insert(schema.agentDefinitions)
+        .values({
+          id: "00000000-0000-0000-0000-000000000002",
+          name: "GitHub Copilot CLI (ACP)",
+          type: "copilot_cli_acp",
+          commandTemplate: "copilot",
+          dockerImage: "vibe-harness/copilot:latest",
+          description: "GitHub Copilot CLI via Agent Client Protocol. Supports mid-session intervention and structured communication.",
+          createdAt: new Date().toISOString(),
+        })
         .run();
     }
   }

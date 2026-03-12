@@ -107,6 +107,10 @@ export const tasks = sqliteTable("tasks", {
   output: text("output"),
   lastAiMessage: text("last_ai_message"),
   usageStats: text("usage_stats"), // JSON string
+  executionMode: text("execution_mode").notNull().default("legacy"), // legacy | acp
+  comparisonGroupId: text("comparison_group_id").references(
+    () => comparisonGroups.id
+  ),
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
 });
@@ -126,6 +130,34 @@ export const reviews = sqliteTable("reviews", {
   // Agent's plan.md content captured from the sandbox
   planMarkdown: text("plan_markdown"),
   createdAt: text("created_at").notNull(),
+});
+
+// ── Task Messages (ACP conversation history) ──────────────────────
+
+export const taskMessages = sqliteTable("task_messages", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id")
+    .notNull()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  role: text("role").notNull(), // user | assistant | system
+  content: text("content").notNull(),
+  isIntervention: integer("is_intervention").notNull().default(0), // 1 = mid-execution injection
+  metadata: text("metadata"), // JSON: tool calls, reasoning, etc.
+  createdAt: text("created_at").notNull(),
+});
+
+// ── Comparison Groups ─────────────────────────────────────────────
+
+export const comparisonGroups = sqliteTable("comparison_groups", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id),
+  prompt: text("prompt").notNull(),
+  title: text("title"),
+  status: text("status").notNull().default("running"), // running | completed | cancelled
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
 });
 
 // ── Review Comments ────────────────────────────────────────────────
