@@ -77,6 +77,10 @@ export const workflowRuns = sqliteTable("workflow_runs", {
   currentStage: text("current_stage"),
   // ACP session ID from first stage — used by subsequent stages via session/load
   acpSessionId: text("acp_session_id"),
+  // Parallel group this run belongs to (set for child runs spawned by split)
+  parallelGroupId: text("parallel_group_id"),
+  // Which proposal spawned this run (set for child runs)
+  sourceProposalId: text("source_proposal_id"),
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
 });
@@ -159,6 +163,45 @@ export const comparisonGroups = sqliteTable("comparison_groups", {
   status: text("status").notNull().default("running"), // running | completed | cancelled
   createdAt: text("created_at").notNull(),
   completedAt: text("completed_at"),
+});
+
+// ── Parallel Groups ────────────────────────────────────────────────
+
+export const parallelGroups = sqliteTable("parallel_groups", {
+  id: text("id").primaryKey(),
+  sourceWorkflowRunId: text("source_workflow_run_id")
+    .notNull()
+    .references(() => workflowRuns.id),
+  name: text("name"),
+  description: text("description"),
+  status: text("status").notNull().default("pending"), // pending | running | completed | failed
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
+});
+
+// ── Task Proposals ─────────────────────────────────────────────────
+
+export const taskProposals = sqliteTable("task_proposals", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id")
+    .notNull()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  parallelGroupId: text("parallel_group_id").references(
+    () => parallelGroups.id,
+    { onDelete: "set null" }
+  ),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  affectedFiles: text("affected_files"), // JSON array of file paths
+  dependsOn: text("depends_on"), // JSON array of proposal IDs
+  status: text("status").notNull().default("proposed"), // proposed | approved | launched | discarded
+  launchedWorkflowRunId: text("launched_workflow_run_id").references(
+    () => workflowRuns.id,
+    { onDelete: "set null" }
+  ),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
 // ── Review Comments ────────────────────────────────────────────────

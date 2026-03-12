@@ -86,6 +86,17 @@ const TOOLS = [
     }
   },
   {
+    name: "get_project_tree",
+    description: "Browse the project file structure. Returns a list of tracked files, respecting .gitignore. Use this to understand the codebase layout before splitting work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Subdirectory to list (relative to project root). Omit for full tree." },
+        maxDepth: { type: "integer", description: "Maximum directory depth to include. Omit for unlimited." }
+      }
+    }
+  },
+  {
     name: "echo_tool",
     description: "Echo a message back (test tool for verifying MCP connectivity).",
     inputSchema: {
@@ -113,7 +124,8 @@ function handleToolCall(name, args) {
     case "propose_task":
     case "get_plan":
     case "list_proposals":
-    case "delete_proposal": {
+    case "delete_proposal":
+    case "get_project_tree": {
       const result = callApi("/api/mcp/tool", { tool: name, arguments: args, taskId: TASK_ID });
       if (result.error) {
         return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };

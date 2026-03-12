@@ -237,6 +237,7 @@ export default function WorkflowDetailPage({
       ...prev,
       {
         name: `stage-${prev.length + 1}`,
+        type: "sequential" as const,
         promptTemplate: "",
         autoAdvance: false,
         reviewRequired: true,

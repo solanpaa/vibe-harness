@@ -73,6 +73,7 @@ export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;
 
 export const WorkflowStageSchema = z.object({
   name: z.string().min(1),
+  type: z.enum(["sequential", "split"]).default("sequential"),
   agentDefinitionId: z.string().uuid().optional(),
   promptTemplate: z.string(),
   autoAdvance: z.boolean().default(false),
@@ -95,6 +96,7 @@ export type WorkflowTemplate = z.infer<typeof WorkflowTemplateSchema>;
 
 export const TaskStatus = z.enum([
   "pending",
+  "provisioning",
   "running",
   "paused",
   "awaiting_review",
@@ -134,6 +136,8 @@ export const WorkflowRunStatus = z.enum([
   "pending",
   "running",
   "awaiting_review",
+  "awaiting_split_review",
+  "finalizing",
   "completed",
   "failed",
 ]);
@@ -193,3 +197,50 @@ export const CreateReviewCommentSchema = z.object({
   body: z.string().min(1),
 });
 export type CreateReviewComment = z.infer<typeof CreateReviewCommentSchema>;
+
+// ── Task Proposals ─────────────────────────────────────────────────
+
+export const ProposalStatus = z.enum([
+  "proposed",
+  "approved",
+  "launched",
+  "discarded",
+]);
+export type ProposalStatus = z.infer<typeof ProposalStatus>;
+
+export const TaskProposalSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  parallelGroupId: z.string().uuid().optional().nullable(),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  affectedFiles: z.array(z.string()).optional().nullable(),
+  dependsOn: z.array(z.string()).optional().nullable(),
+  status: ProposalStatus,
+  launchedWorkflowRunId: z.string().uuid().optional().nullable(),
+  sortOrder: z.number().int().default(0),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type TaskProposal = z.infer<typeof TaskProposalSchema>;
+
+// ── Parallel Groups ────────────────────────────────────────────────
+
+export const ParallelGroupStatus = z.enum([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+]);
+export type ParallelGroupStatus = z.infer<typeof ParallelGroupStatus>;
+
+export const ParallelGroupSchema = z.object({
+  id: z.string().uuid(),
+  sourceWorkflowRunId: z.string().uuid(),
+  name: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  status: ParallelGroupStatus,
+  createdAt: z.string().datetime(),
+  completedAt: z.string().datetime().optional().nullable(),
+});
+export type ParallelGroup = z.infer<typeof ParallelGroupSchema>;

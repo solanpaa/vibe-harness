@@ -1,0 +1,161 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  createProposal,
+  listProposals,
+  deleteProposal,
+  getPlan,
+  getProjectTree,
+} from "@/lib/services/proposal-service";
+
+/**
+ * MCP tool execution endpoint.
+ * Called by the stdio MCP bridge inside Docker sandboxes via curl.
+ * Dispatches tool calls to the appropriate service functions.
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { tool, arguments: args, taskId } = body;
+
+    // taskId can come from body or X-Task-Id header
+    const resolvedTaskId =
+      taskId || request.headers.get("x-task-id") || "";
+
+    if (!resolvedTaskId) {
+      return NextResponse.json(
+        {
+          content: [
+            { type: "text", text: "Error: No taskId provided" },
+          ],
+          isError: true,
+        },
+        { status: 400 }
+      );
+    }
+
+    switch (tool) {
+      case "propose_task": {
+        const proposal = createProposal({
+          taskId: resolvedTaskId,
+          title: args.title,
+          description: args.description,
+          affectedFiles: args.affectedFiles,
+          dependsOn: args.dependsOn,
+        });
+        return NextResponse.json({
+          content: [
+            {
+              type: "text",
+              text: `Created proposal "${proposal.title}" (ID: ${proposal.id})`,
+            },
+          ],
+        });
+      }
+
+      case "get_plan": {
+        const plan = getPlan(resolvedTaskId);
+        if (!plan) {
+          return NextResponse.json({
+            content: [
+              {
+                type: "text",
+                text: "No plan found from previous stages. This task may not be part of a workflow, or the plan stage hasn't completed yet.",
+              },
+            ],
+          });
+        }
+        return NextResponse.json({
+          content: [{ type: "text", text: plan }],
+        });
+      }
+
+      case "list_proposals": {
+        const proposals = listProposals(resolvedTaskId);
+        if (proposals.length === 0) {
+          return NextResponse.json({
+            content: [
+              {
+                type: "text",
+                text: "No proposals created yet. Use propose_task to create sub-tasks.",
+              },
+            ],
+          });
+        }
+        const summary = proposals
+          .map(
+            (p, i) =>
+              `${i + 1}. [${p.status}] ${p.title} (ID: ${p.id})\n` +
+              `   ${p.description.slice(0, 120)}${p.description.length > 120 ? "..." : ""}\n` +
+              `   Files: ${p.affectedFiles.length > 0 ? p.affectedFiles.join(", ") : "not specified"}\n` +
+              `   Depends on: ${p.dependsOn.length > 0 ? p.dependsOn.join(", ") : "none"}`
+          )
+          .join("\n\n");
+        return NextResponse.json({
+          content: [
+            {
+              type: "text",
+              text: `${proposals.length} proposal(s):\n\n${summary}`,
+            },
+          ],
+        });
+      }
+
+      case "delete_proposal": {
+        const deleted = deleteProposal(args.proposalId);
+        return NextResponse.json({
+          content: [
+            {
+              type: "text",
+              text: deleted
+                ? `Deleted proposal ${args.proposalId}`
+                : `Proposal ${args.proposalId} not found`,
+            },
+          ],
+        });
+      }
+
+      case "get_project_tree": {
+        const tree = getProjectTree(resolvedTaskId, {
+          maxDepth: args?.maxDepth,
+          directory: args?.directory,
+        });
+        if (!tree) {
+          return NextResponse.json({
+            content: [
+              { type: "text", text: "Could not retrieve project tree." },
+            ],
+            isError: true,
+          });
+        }
+        return NextResponse.json({
+          content: [{ type: "text", text: tree }],
+        });
+      }
+
+      default:
+        return NextResponse.json(
+          {
+            content: [
+              { type: "text", text: `Unknown tool: ${tool}` },
+            ],
+            isError: true,
+          },
+          { status: 400 }
+        );
+    }
+  } catch (error) {
+    console.error("[MCP Tool] Error:", error);
+    return NextResponse.json(
+      {
+        content: [
+          {
+            type: "text",
+            text: `Internal error: ${(error as Error).message}`,
+          },
+        ],
+        isError: true,
+      },
+      { status: 500 }
+    );
+  }
+}

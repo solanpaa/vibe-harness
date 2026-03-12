@@ -396,6 +396,7 @@ export function getDefaultWorkflowStages(): WorkflowStage[] {
   return [
     {
       name: "plan",
+      type: "sequential" as const,
       promptTemplate: `Analyze the codebase and create a detailed implementation plan for the requested changes. Do not make any code changes.
 
 Planning process:
@@ -414,6 +415,7 @@ Plan format:
     },
     {
       name: "implement",
+      type: "sequential" as const,
       promptTemplate: `Implement all changes described in the plan from the previous stage.
 
 Principles:
@@ -437,6 +439,7 @@ Guidelines:
     },
     {
       name: "review",
+      type: "sequential" as const,
       promptTemplate: `Review the implementation from the previous stage against the original plan. Do not make any code changes.
 
 Process:
@@ -464,6 +467,7 @@ Output format:
     },
     {
       name: "fix",
+      type: "sequential" as const,
       promptTemplate: `Address all issues identified in the review from the previous stage. Do not make changes beyond what the review requested.
 
 Process:
@@ -476,6 +480,60 @@ Guidelines:
 - Maintain the same KISS, DRY, YAGNI, and separation of concerns principles from the implementation stage.
 - Verify the build/lint commands pass after all fixes are applied.
 - Do not commit at this stage.`,
+      autoAdvance: false,
+      reviewRequired: true,
+      freshSession: false,
+    },
+  ];
+}
+
+/** Get "Plan & Split" workflow stages for parallel work distribution. */
+export function getPlanAndSplitStages(): WorkflowStage[] {
+  return [
+    {
+      name: "plan",
+      type: "sequential" as const,
+      promptTemplate: `Analyze the codebase and create a detailed implementation plan for the requested changes. Do not make any code changes.
+
+Planning process:
+- Explore the existing codebase to understand the architecture, patterns, and conventions already in use.
+- Identify all files and modules that need to be created or modified.
+- Consider edge cases, error handling, and potential impacts on existing functionality.
+
+Plan format:
+- Start with a brief summary of the approach.
+- Break the work into clear, ordered steps. Each step should describe what to change, where, and why.
+- Group related steps that could be worked on independently.
+- Call out any dependencies between groups (e.g., "group B needs the types defined in group A").
+- Call out any risks, open questions, or decisions that need human input before implementation begins.
+- Keep the plan concise and actionable.`,
+      autoAdvance: false,
+      reviewRequired: true,
+      freshSession: false,
+    },
+    {
+      name: "split",
+      type: "split" as const,
+      promptTemplate: `You have access to MCP tools for splitting work into parallel sub-tasks. Your job is to decompose the approved plan into independent, parallelizable units of work.
+
+Process:
+1. First, call get_plan to retrieve the approved implementation plan.
+2. Call get_project_tree to understand the codebase layout.
+3. Analyze the plan and identify groups of work that can be done independently.
+4. For each group, call propose_task with:
+   - A clear, specific title
+   - A detailed description of exactly what to implement (the sub-task agent won't have the full plan)
+   - The list of files that will be modified
+   - Any dependencies on other proposals (by title)
+5. Call list_proposals to verify your proposals look correct.
+6. Delete and recreate any proposals that need adjustment.
+
+Guidelines:
+- Each proposal should be self-contained enough that an agent can implement it without context from other proposals.
+- Minimize file overlap between proposals — if two proposals touch the same file, consider merging them or clearly delineating which parts each handles.
+- Include necessary context in each proposal's description (e.g., "The Task type is defined in src/types/domain.ts with fields X, Y, Z").
+- Mark dependencies explicitly — if proposal B needs types/APIs created by proposal A, add A's title to B's dependsOn list.
+- Aim for 2-8 proposals. If the plan is small enough for one agent, create a single proposal.`,
       autoAdvance: false,
       reviewRequired: true,
       freshSession: false,

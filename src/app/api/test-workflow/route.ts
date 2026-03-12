@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
     const stages = [
       {
         name: "plan",
+        type: "sequential" as const,
         promptTemplate: "Analyze the codebase and create a brief implementation plan. Do not make any code changes.",
         reviewRequired: true,
         autoAdvance: false,
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
       },
       {
         name: "implement",
+        type: "sequential" as const,
         promptTemplate: "Implement the changes according to the plan from the previous stage.",
         reviewRequired: true,
         autoAdvance: false,
@@ -65,6 +67,7 @@ export async function POST(request: NextRequest) {
       },
       {
         name: "review",
+        type: "sequential" as const,
         promptTemplate: "Review the implementation for bugs and issues. Provide a brief summary.",
         reviewRequired: true,
         autoAdvance: false,
