@@ -100,7 +100,9 @@ export async function startWorkflowRun(input: {
           .where(eq(schema.workflowRuns.id, runId))
           .run();
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn("Workflow run title generation failed:", err);
+    });
   }
 
   // Get the project for the local path
@@ -147,16 +149,6 @@ export async function startWorkflowRun(input: {
       completedAt: null,
     })
     .run();
-
-  // Fire-and-forget title generation for the task
-  generateTitle(input.taskDescription).then((title) => {
-    if (title) {
-      db.update(schema.tasks)
-        .set({ title })
-        .where(eq(schema.tasks.id, taskId))
-        .run();
-    }
-  }).catch(() => {});
 
   const agentCommand = agent.commandTemplate || "copilot";
 
