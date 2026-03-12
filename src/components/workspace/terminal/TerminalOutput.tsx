@@ -44,6 +44,9 @@ export function TerminalOutput({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const onStreamCloseRef = useRef(onStreamClose);
+  // Track index of current accumulating message/reasoning block
+  const msgAccumIdx = useRef<number>(-1);
+  const reasonAccumIdx = useRef<number>(-1);
 
   const events = isStreaming || streamedEvents.length > 0
     ? streamedEvents
@@ -99,30 +102,42 @@ export function TerminalOutput({
           if (data.kind === "assistant_message_delta" && data.data?.text) {
             const text = data.data.text as string;
             setStreamedEvents((prev) => {
-              // Append to the last message or create a new one
-              const last = prev.length > 0 ? prev[prev.length - 1] : null;
-              if (last?.kind === "message") {
-                return [...prev.slice(0, -1), { kind: "message" as const, content: last.content + text }];
+              const idx = msgAccumIdx.current;
+              if (idx >= 0 && idx < prev.length && prev[idx].kind === "message") {
+                const updated = [...prev];
+                updated[idx] = { kind: "message", content: (prev[idx] as { content: string }).content + text };
+                return updated;
               }
+              // Start new message block
+              msgAccumIdx.current = prev.length;
               return [...prev, { kind: "message" as const, content: text }];
             });
           } else if (data.kind === "reasoning" && data.data?.text) {
             const text = data.data.text as string;
             setStreamedEvents((prev) => {
-              const last = prev.length > 0 ? prev[prev.length - 1] : null;
-              if (last?.kind === "reasoning") {
-                return [...prev.slice(0, -1), { kind: "reasoning" as const, content: last.content + text }];
+              const idx = reasonAccumIdx.current;
+              if (idx >= 0 && idx < prev.length && prev[idx].kind === "reasoning") {
+                const updated = [...prev];
+                updated[idx] = { kind: "reasoning", content: (prev[idx] as { content: string }).content + text };
+                return updated;
               }
+              reasonAccumIdx.current = prev.length;
               return [...prev, { kind: "reasoning" as const, content: text }];
             });
           } else if (data.kind === "tool_start") {
+            // Tool call breaks the current message accumulation
+            msgAccumIdx.current = -1;
+            reasonAccumIdx.current = -1;
             const name = data.data?.name || data.data?.detail?.split(" ")[0] || "tool";
             const detail = data.data?.detail || JSON.stringify(data.data?.input || "").slice(0, 100);
             setStreamedEvents((prev) => [...prev, { kind: "tool_start" as const, name: String(name), detail: String(detail) }]);
           } else if (data.kind === "tool_complete" || data.kind === "tool_call_update") {
-            // Tool results — skip for now (tool_start is enough visual feedback)
+            // Tool done — next text starts a new message
+            msgAccumIdx.current = -1;
           } else if (data.kind === "turn_end") {
-            // Turn ended — next text delta starts a new message block
+            // Turn ended — reset accumulators
+            msgAccumIdx.current = -1;
+            reasonAccumIdx.current = -1;
           } else if (data.kind === "boot" && data.data?.text) {
             setStreamedEvents((prev) => [...prev, { kind: "raw" as const, text: data.data.text }]);
           }
