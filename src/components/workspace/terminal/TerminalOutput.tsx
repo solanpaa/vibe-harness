@@ -87,6 +87,50 @@ export function TerminalOutput({
           if (mapped) {
             setStreamedEvents((prev) => [...prev, mapped]);
           }
+        } else if (data.type === "acp_message") {
+          // ACP conversation messages
+          if (data.role === "assistant" && data.content) {
+            setStreamedEvents((prev) => [...prev, { kind: "message", content: data.content }]);
+          } else if (data.role === "user" && data.content) {
+            setStreamedEvents((prev) => [...prev, { kind: "user_message", content: data.content }]);
+          }
+        } else if (data.type === "acp_update") {
+          // ACP protocol updates (tool calls, reasoning, text deltas)
+          if (data.kind === "assistant_message_delta" && data.data?.text) {
+            const text = data.data.text as string;
+            setStreamedEvents((prev) => {
+              // Append to the last message or create a new one
+              const last = prev.length > 0 ? prev[prev.length - 1] : null;
+              if (last?.kind === "message") {
+                return [...prev.slice(0, -1), { kind: "message" as const, content: last.content + text }];
+              }
+              return [...prev, { kind: "message" as const, content: text }];
+            });
+          } else if (data.kind === "reasoning" && data.data?.text) {
+            const text = data.data.text as string;
+            setStreamedEvents((prev) => {
+              const last = prev.length > 0 ? prev[prev.length - 1] : null;
+              if (last?.kind === "reasoning") {
+                return [...prev.slice(0, -1), { kind: "reasoning" as const, content: last.content + text }];
+              }
+              return [...prev, { kind: "reasoning" as const, content: text }];
+            });
+          } else if (data.kind === "tool_start") {
+            const name = data.data?.name || data.data?.detail?.split(" ")[0] || "tool";
+            const detail = data.data?.detail || JSON.stringify(data.data?.input || "").slice(0, 100);
+            setStreamedEvents((prev) => [...prev, { kind: "tool_start" as const, name: String(name), detail: String(detail) }]);
+          } else if (data.kind === "tool_complete" || data.kind === "tool_call_update") {
+            // Tool results — skip for now (tool_start is enough visual feedback)
+          } else if (data.kind === "turn_end") {
+            // Turn ended — next text delta starts a new message block
+          } else if (data.kind === "boot" && data.data?.text) {
+            setStreamedEvents((prev) => [...prev, { kind: "raw" as const, text: data.data.text }]);
+          }
+        } else if (data.type === "acp_status") {
+          // Status updates — show as session info
+          if (data.status === "ready" || data.status === "busy") {
+            setStreamedEvents((prev) => [...prev, { kind: "session_info", text: `Agent: ${data.status}` }]);
+          }
         } else if (data.type === "output") {
           setStreamedEvents((prev) => [...prev, { kind: "raw", text: data.data }]);
         } else if (data.type === "close") {

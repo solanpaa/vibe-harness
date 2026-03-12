@@ -198,50 +198,62 @@ export function launchAcpSession(
     async sessionUpdate(params) {
       const update = params.update as Record<string, unknown>;
       const updateType = (update.sessionUpdate as string) ?? "";
+      const content = update.content as Record<string, unknown> | undefined;
 
-      if (updateType === "agent_message_chunk") {
-        const content = update.content as Record<string, unknown>;
-        if (content?.type === "text") {
-          const text = content.text as string;
-          process.stdout.write(""); // ensure no buffering
-          const msg: AcpMessage = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: text,
-            timestamp: new Date().toISOString(),
-          };
-          messages.push(msg);
-          events.emit("message", msg);
-          events.emit("update", { kind: "assistant_message_delta", data: { text } });
-        } else if (content?.type === "tool_use") {
-          events.emit("update", {
-            kind: "tool_start",
-            data: { name: content.name, input: content.input },
-          });
-        } else if (content?.type === "tool_result") {
-          events.emit("update", {
-            kind: "tool_complete",
-            data: content,
-          });
+      switch (updateType) {
+        case "agent_message_chunk": {
+          if (content?.type === "text") {
+            const text = content.text as string;
+            events.emit("update", { kind: "assistant_message_delta", data: { text } });
+          } else if (content?.type === "tool_use") {
+            events.emit("update", {
+              kind: "tool_start",
+              data: { name: content.name, input: content.input },
+            });
+          } else if (content?.type === "tool_result") {
+            events.emit("update", { kind: "tool_complete", data: content });
+          }
+          break;
         }
-      } else if (updateType === "agent_thought_chunk") {
-        const content = update.content as Record<string, unknown>;
-        if (content?.type === "text") {
-          events.emit("update", {
-            kind: "reasoning",
-            data: { text: content.text },
-          });
+        case "agent_thought_chunk": {
+          if (content?.type === "text") {
+            events.emit("update", { kind: "reasoning", data: { text: content.text } });
+          }
+          break;
         }
-      } else if (updateType === "agent_turn_start") {
-        session.status = "busy";
-        events.emit("status", "busy");
-      } else if (updateType === "agent_turn_end") {
-        session.status = "ready";
-        events.emit("status", "ready");
-      } else if (updateType === "tool_result") {
-        events.emit("update", { kind: "tool_complete", data: update });
-      } else {
-        events.emit("update", { kind: updateType || "unknown", data: update });
+        case "tool_call": {
+          // Tool execution started
+          const name = (update.rawInput as Record<string, unknown>)?.description as string
+            || (update as Record<string, unknown>).toolName as string || "tool";
+          const detail = JSON.stringify((update.rawInput as Record<string, unknown>) || {}).slice(0, 150);
+          events.emit("update", { kind: "tool_start", data: { name, detail } });
+          break;
+        }
+        case "tool_call_update": {
+          // Tool result came back
+          events.emit("update", { kind: "tool_complete", data: update });
+          break;
+        }
+        case "agent_turn_start": {
+          session.status = "busy";
+          events.emit("status", "busy");
+          break;
+        }
+        case "agent_turn_end": {
+          // Accumulate the full message from all deltas
+          session.status = "ready";
+          events.emit("status", "ready");
+          // Signal that a complete turn is done
+          events.emit("update", { kind: "turn_end", data: {} });
+          break;
+        }
+        default: {
+          // Forward unknown events for debugging
+          if (updateType) {
+            events.emit("update", { kind: updateType, data: update });
+          }
+          break;
+        }
       }
     },
   };
@@ -304,15 +316,27 @@ async function initializeSession(session: AcpSession, options: AcpLaunchOptions)
   console.log("[ACP] Initialized, creating session...");
 
   const absCwd = path.resolve(options.projectDir);
-  const sessionResult = await session.connection.newSession({
-    cwd: absCwd,
-    mcpServers: [],
-  });
+  console.log(`[ACP] session/new cwd: ${absCwd}`);
+  try {
+    // Add timeout — session/new can hang if cwd doesn't exist in sandbox
+    const sessionPromise = session.connection.newSession({
+      cwd: absCwd,
+      mcpServers: [],
+    });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("session/new timed out after 30s")), 30_000)
+    );
+    const sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
 
-  session.sessionId = sessionResult.sessionId;
-  session.status = "ready";
-  session.events.emit("status", "ready");
-  session.events.emit("ready");
+    session.sessionId = sessionResult.sessionId;
+    console.log(`[ACP] Session created: ${session.sessionId}`);
+    session.status = "ready";
+    session.events.emit("status", "ready");
+    session.events.emit("ready");
+  } catch (err) {
+    console.error("[ACP] session/new failed:", err);
+    throw err;
+  }
 }
 
 // ---- Public API -----------------------------------------------------------
