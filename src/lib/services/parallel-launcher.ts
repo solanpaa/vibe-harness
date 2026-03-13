@@ -1,11 +1,15 @@
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
+import { execSync } from "child_process";
+import path from "path";
+import fs from "fs";
 import { listProposals } from "./proposal-service";
 import { startWorkflowRun, createWorkflowTemplate } from "./workflow-engine";
 import type { WorkflowStage } from "@/types/domain";
 
 const MAX_CONCURRENT = 10;
+const WORKTREE_DIR = ".vibe-harness-worktrees";
 
 /**
  * Get or create the "Implement & Review" template used for sub-task runs.
@@ -274,4 +278,198 @@ export function getParallelGroupStatus(groupId: string) {
     allDone: total > 0 && completed + failed === total,
     allSucceeded: total > 0 && completed === total,
   };
+}
+
+/**
+ * Consolidate all completed child run branches into a single consolidation branch.
+ * Merges branches sequentially; stops on first conflict.
+ */
+export function consolidateParallelGroup(groupId: string): {
+  success: boolean;
+  branch: string;
+  mergedCount: number;
+  error?: string;
+} {
+  const db = getDb();
+
+  const group = db
+    .select()
+    .from(schema.parallelGroups)
+    .where(eq(schema.parallelGroups.id, groupId))
+    .get();
+
+  if (!group) {
+    return { success: false, branch: "", mergedCount: 0, error: "Group not found" };
+  }
+
+  // Get the source workflow run to find the project
+  const sourceRun = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, group.sourceWorkflowRunId))
+    .get();
+
+  if (!sourceRun) {
+    return { success: false, branch: "", mergedCount: 0, error: "Source run not found" };
+  }
+
+  const project = db
+    .select()
+    .from(schema.projects)
+    .where(eq(schema.projects.id, sourceRun.projectId))
+    .get();
+
+  if (!project?.localPath) {
+    return { success: false, branch: "", mergedCount: 0, error: "Project not found" };
+  }
+
+  const projectDir = project.localPath;
+
+  // Get all completed child runs
+  const childRuns = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.parallelGroupId, groupId))
+    .all()
+    .filter((r) => r.status === "completed");
+
+  if (childRuns.length === 0) {
+    return { success: false, branch: "", mergedCount: 0, error: "No completed runs" };
+  }
+
+  // Create consolidation branch from current HEAD
+  const shortGroupId = groupId.slice(0, 8);
+  const consolidationBranch = `vibe-harness/consolidate-${shortGroupId}`;
+
+  try {
+    // Get current branch to return to on failure
+    const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: projectDir,
+      encoding: "utf-8",
+    }).trim();
+
+    // Create the consolidation branch from current HEAD
+    try {
+      execSync(`git checkout -b "${consolidationBranch}"`, {
+        cwd: projectDir,
+        stdio: "pipe",
+      });
+    } catch {
+      // Branch might already exist
+      execSync(`git checkout "${consolidationBranch}"`, {
+        cwd: projectDir,
+        stdio: "pipe",
+      });
+    }
+
+    // Merge each child run's branch sequentially
+    let mergedCount = 0;
+    for (const run of childRuns) {
+      // Find the first task (origin) of this child run to get its branch name
+      const firstTask = db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.workflowRunId, run.id))
+        .all()
+        .filter((t) => !t.originTaskId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+
+      if (!firstTask) continue;
+
+      const shortTaskId = firstTask.id.slice(0, 8);
+      const taskBranch = `vibe-harness/task-${shortTaskId}`;
+
+      try {
+        execSync(
+          `git merge "${taskBranch}" --no-ff -m "Merge sub-task ${shortTaskId}: ${run.title || "sub-task"}"`,
+          { cwd: projectDir, stdio: "pipe" }
+        );
+        mergedCount++;
+      } catch (e) {
+        // Merge conflict — abort and report
+        try {
+          execSync("git merge --abort", { cwd: projectDir, stdio: "pipe" });
+        } catch {
+          // ignore
+        }
+        // Return to original branch
+        execSync(`git checkout "${currentBranch}"`, {
+          cwd: projectDir,
+          stdio: "pipe",
+        });
+
+        db.update(schema.parallelGroups)
+          .set({ status: "failed" })
+          .where(eq(schema.parallelGroups.id, groupId))
+          .run();
+
+        return {
+          success: false,
+          branch: consolidationBranch,
+          mergedCount,
+          error: `Merge conflict on branch ${taskBranch}: ${(e as Error).message}`,
+        };
+      }
+    }
+
+    // Switch back to original branch and merge consolidation
+    execSync(`git checkout "${currentBranch}"`, {
+      cwd: projectDir,
+      stdio: "pipe",
+    });
+    execSync(
+      `git merge "${consolidationBranch}" --no-ff -m "Merge parallel group ${shortGroupId}"`,
+      { cwd: projectDir, stdio: "pipe" }
+    );
+
+    // Clean up child worktrees
+    for (const run of childRuns) {
+      const firstTask = db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.workflowRunId, run.id))
+        .all()
+        .filter((t) => !t.originTaskId)[0];
+
+      if (firstTask) {
+        const shortId = firstTask.id.slice(0, 8);
+        const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
+        if (fs.existsSync(worktreePath)) {
+          try {
+            execSync(`git worktree remove "${worktreePath}" --force`, {
+              cwd: projectDir,
+              stdio: "pipe",
+            });
+          } catch {
+            fs.rmSync(worktreePath, { recursive: true, force: true });
+          }
+        }
+      }
+    }
+
+    // Clean up consolidation branch
+    try {
+      execSync(`git branch -d "${consolidationBranch}"`, {
+        cwd: projectDir,
+        stdio: "pipe",
+      });
+    } catch {
+      // non-critical
+    }
+
+    // Mark group as completed
+    db.update(schema.parallelGroups)
+      .set({ status: "completed", completedAt: new Date().toISOString() })
+      .where(eq(schema.parallelGroups.id, groupId))
+      .run();
+
+    return { success: true, branch: consolidationBranch, mergedCount };
+  } catch (e) {
+    const msg = (e as Error).message;
+    db.update(schema.parallelGroups)
+      .set({ status: "failed" })
+      .where(eq(schema.parallelGroups.id, groupId))
+      .run();
+    return { success: false, branch: consolidationBranch, mergedCount: 0, error: msg };
+  }
 }

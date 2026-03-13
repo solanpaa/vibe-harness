@@ -2,14 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   CheckCircle,
   Clock,
   GitFork,
+  GitMerge,
   Loader2,
   XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,6 +75,7 @@ export function ParallelGroupBanner({
   onRunClick,
 }: ParallelGroupBannerProps) {
   const [group, setGroup] = useState<ParallelGroupDetail | null>(null);
+  const [consolidating, setConsolidating] = useState(false);
 
   const fetchGroup = useCallback(async () => {
     try {
@@ -89,6 +93,26 @@ export function ParallelGroupBanner({
     const interval = setInterval(fetchGroup, 5000);
     return () => clearInterval(interval);
   }, [fetchGroup]);
+
+  const handleConsolidate = async () => {
+    setConsolidating(true);
+    try {
+      const res = await fetch(`/api/parallel-groups/${groupId}/consolidate`, {
+        method: "POST",
+      });
+      const result = await res.json();
+      if (res.ok) {
+        toast.success(`Merged ${result.mergedCount} branches successfully`);
+        fetchGroup();
+      } else {
+        toast.error(result.error || "Consolidation failed");
+      }
+    } catch {
+      toast.error("Consolidation failed");
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   if (!group) return null;
 
@@ -162,6 +186,31 @@ export function ParallelGroupBanner({
         {summary.failed > 0 && (
           <p className="mt-2 text-xs text-red-600">
             {summary.failed} run(s) failed
+          </p>
+        )}
+
+        {/* Consolidate button — shown when all runs are done */}
+        {summary.completed > 0 &&
+          summary.completed + summary.failed === summary.total &&
+          group.status !== "completed" && (
+            <Button
+              className="mt-3 w-full"
+              onClick={handleConsolidate}
+              disabled={consolidating}
+            >
+              {consolidating ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <GitMerge className="mr-2 h-4 w-4" />
+              )}
+              Consolidate &amp; Merge ({summary.completed} branches)
+            </Button>
+          )}
+
+        {group.status === "completed" && (
+          <p className="mt-2 flex items-center gap-1 text-xs text-green-600">
+            <CheckCircle className="h-3.5 w-3.5" />
+            All branches merged successfully
           </p>
         )}
       </CardContent>
