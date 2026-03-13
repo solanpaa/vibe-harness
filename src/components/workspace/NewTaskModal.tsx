@@ -79,13 +79,15 @@ export interface NewTaskModalProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+const DIRECT_EXECUTE_ID = "00000000-0000-0000-0000-000000000012";
+
 const INITIAL_FORM: FormState = {
   projectId: "",
   agentDefinitionId: "",
   credentialSetId: "",
   model: "",
   useWorktree: true,
-  workflowTemplateId: "",
+  workflowTemplateId: DIRECT_EXECUTE_ID,
   prompt: "",
 };
 
@@ -152,10 +154,9 @@ export function NewTaskModal({
   const selectedWorkflow = workflows.find(
     (w) => w.id === form.workflowTemplateId
   );
-  const isWorkflowMode = !!form.workflowTemplateId;
-  const isCompareMode = compareMode && !isWorkflowMode;
+  const isCompareMode = compareMode;
   const canSubmitBase =
-    !!form.projectId && !!form.prompt.trim();
+    !!form.projectId && !!form.prompt.trim() && !!form.workflowTemplateId;
   const canSubmitSingle = canSubmitBase && !!form.agentDefinitionId;
   const canSubmitCompare = canSubmitBase && variants.filter((v) => v.agentDefinitionId).length >= 2;
   const canSubmit = isCompareMode ? canSubmitCompare : canSubmitSingle;
@@ -167,6 +168,7 @@ export function NewTaskModal({
       ...INITIAL_FORM,
       projectId: defaultProjectId ?? "",
       agentDefinitionId: agents[0]?.id ?? "",
+      workflowTemplateId: DIRECT_EXECUTE_ID,
     });
     setCompareMode(false);
     setVariants([
@@ -222,7 +224,8 @@ export function NewTaskModal({
         onOpenChange(false);
         resetForm();
         onTaskCreated?.(result.tasks[0]?.taskId);
-      } else if (isWorkflowMode) {
+      } else {
+        // All tasks go through workflow runs
         const res = await fetch("/api/workflows", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -247,44 +250,6 @@ export function NewTaskModal({
         onOpenChange(false);
         resetForm();
         onTaskCreated?.(result.taskId);
-      } else {
-        // One-off task: create then start
-        const createRes = await fetch("/api/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: form.projectId,
-            agentDefinitionId: form.agentDefinitionId,
-            credentialSetId: form.credentialSetId || null,
-            model: form.model.trim() || null,
-            useWorktree: form.useWorktree,
-            prompt: form.prompt,
-          }),
-        });
-        if (!createRes.ok) {
-          const body = await createRes.json().catch(() => null);
-          toast.error(body?.error ?? "Failed to create task");
-          return;
-        }
-        const task = await createRes.json();
-
-        const startRes = await fetch(`/api/tasks/${task.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "start" }),
-        });
-        if (!startRes.ok) {
-          const body = await startRes.json().catch(() => null);
-          toast.error(
-            `Task created but failed to start: ${body?.error ?? "unknown error"}`
-          );
-        } else {
-          toast.success("Task created and started");
-        }
-
-        onOpenChange(false);
-        resetForm();
-        onTaskCreated?.(task.id);
       }
     } finally {
       setLoading(false);
@@ -324,25 +289,23 @@ export function NewTaskModal({
           </div>
 
           {/* Compare Mode Toggle */}
-          {!isWorkflowMode && (
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="newTaskCompareMode"
-                checked={compareMode}
-                onChange={(e) => setCompareMode(e.target.checked)}
-              />
-              <Label htmlFor="newTaskCompareMode" className="flex items-center gap-1">
-                <GitCompare className="h-3 w-3" />
-                Compare Agents
-              </Label>
-              {compareMode && (
-                <span className="text-[11px] text-muted-foreground">
-                  Run same task with multiple agents
-                </span>
-              )}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="newTaskCompareMode"
+              checked={compareMode}
+              onChange={(e) => setCompareMode(e.target.checked)}
+            />
+            <Label htmlFor="newTaskCompareMode" className="flex items-center gap-1">
+              <GitCompare className="h-3 w-3" />
+              Compare Agents
+            </Label>
+            {compareMode && (
+              <span className="text-[11px] text-muted-foreground">
+                Run same task with multiple agents
+              </span>
+            )}
+          </div>
 
           {/* Agent (single mode) */}
           {!isCompareMode && (
@@ -487,20 +450,19 @@ export function NewTaskModal({
 
           {/* Workflow */}
           <div className="space-y-2">
-            <Label>Workflow (optional)</Label>
+            <Label>Workflow</Label>
             <Select
-              value={form.workflowTemplateId || "none"}
+              value={form.workflowTemplateId}
               onValueChange={(v) =>
-                update("workflowTemplateId", v === "none" ? "" : (v ?? ""))
+                update("workflowTemplateId", v ?? DIRECT_EXECUTE_ID)
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder="None — one-off task">
-                  {selectedWorkflow?.name ?? "None — one-off task"}
+                <SelectValue placeholder="Select workflow">
+                  {selectedWorkflow?.name ?? "Select workflow"}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">None — one-off task</SelectItem>
                 {workflows.map((w) => {
                   const hasSplit = w.stages.some((s) => s.type === "split");
                   return (
@@ -511,7 +473,7 @@ export function NewTaskModal({
                         ) : (
                           <Workflow className="h-3 w-3" />
                         )}
-                        {w.name} ({w.stages.length} stages)
+                        {w.name} ({w.stages.length} stage{w.stages.length !== 1 ? "s" : ""})
                       </div>
                     </SelectItem>
                   );
@@ -561,19 +523,13 @@ export function NewTaskModal({
             </Label>
           </div>
 
-          {/* Prompt / Task Description */}
+          {/* Task Description */}
           <div className="space-y-2">
-            <Label>
-              {isWorkflowMode ? "Task Description *" : "Prompt *"}
-            </Label>
+            <Label>Task Description *</Label>
             <Textarea
               value={form.prompt}
               onChange={(e) => update("prompt", e.target.value)}
-              placeholder={
-                isWorkflowMode
-                  ? "Describe the feature or task to implement..."
-                  : "Describe what you want the agent to do..."
-              }
+              placeholder="Describe the feature or task to implement..."
               className="min-h-[120px]"
               required
             />
@@ -595,15 +551,10 @@ export function NewTaskModal({
                 <GitCompare className="mr-2 h-4 w-4" />
                 Compare {variants.filter((v) => v.agentDefinitionId).length} Variants
               </>
-            ) : isWorkflowMode ? (
-              <>
-                <Workflow className="mr-2 h-4 w-4" />
-                Launch Workflow
-              </>
             ) : (
               <>
                 <Play className="mr-2 h-4 w-4" />
-                Launch Task
+                Launch
               </>
             )}
           </Button>

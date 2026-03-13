@@ -562,3 +562,24 @@ Guidelines:
     },
   ];
 }
+
+/** Get "Direct Execute" stages — single implement stage for one-off tasks. */
+export function getDirectExecuteStages(): WorkflowStage[] {
+  return [
+    {
+      name: "implement",
+      type: "sequential" as const,
+      promptTemplate: `Execute the requested task. Follow the project's existing style and conventions.
+
+Guidelines:
+- Implement exactly what is requested.
+- Match existing code patterns and naming conventions.
+- Handle error cases appropriately.
+- Verify the build passes after your changes.
+- Do not commit.`,
+      autoAdvance: false,
+      reviewRequired: true,
+      freshSession: false,
+    },
+  ];
+}

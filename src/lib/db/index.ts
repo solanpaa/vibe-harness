@@ -7,6 +7,7 @@ import * as schema from "./schema";
 import {
   getDefaultWorkflowStages,
   getPlanAndSplitStages,
+  getDirectExecuteStages,
 } from "@/lib/services/workflow-engine";
 
 const DB_PATH = process.env.DATABASE_URL || "./vibe-harness.db";
@@ -78,6 +79,13 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
       description:
         "Plan the work, then split it into independent sub-tasks that run in parallel. Great for large features.",
       stages: getPlanAndSplitStages(),
+    },
+    {
+      id: "00000000-0000-0000-0000-000000000012",
+      name: "Direct Execute",
+      description:
+        "Single-stage: the agent implements your prompt directly. Best for focused, well-defined tasks.",
+      stages: getDirectExecuteStages(),
     },
   ];
 

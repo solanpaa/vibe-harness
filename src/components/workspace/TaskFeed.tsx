@@ -72,7 +72,6 @@ export function relativeTime(iso: string): string {
 
 // A single rendered entry can be either a standalone task, a workflow group, or a comparison group.
 type FeedEntry =
-  | { kind: "task"; task: EnrichedTask }
   | {
       kind: "workflow";
       runId: string;
@@ -114,33 +113,27 @@ function buildGroups(tasks: EnrichedTask[]): ProjectGroup[] {
     const projectName = projectTasks[0].projectName;
     const workflowBuckets = new Map<string, EnrichedTask[]>();
     const comparisonBuckets = new Map<string, EnrichedTask[]>();
-    const standalone: EnrichedTask[] = [];
 
     for (const task of projectTasks) {
-      if (task.workflowRunId) {
-        let bucket = workflowBuckets.get(task.workflowRunId);
-        if (!bucket) {
-          bucket = [];
-          workflowBuckets.set(task.workflowRunId, bucket);
-        }
-        bucket.push(task);
-      } else if (task.comparisonGroupId) {
+      if (task.comparisonGroupId) {
         let bucket = comparisonBuckets.get(task.comparisonGroupId);
         if (!bucket) {
           bucket = [];
           comparisonBuckets.set(task.comparisonGroupId, bucket);
         }
         bucket.push(task);
-      } else {
-        standalone.push(task);
+      } else if (task.workflowRunId) {
+        let bucket = workflowBuckets.get(task.workflowRunId);
+        if (!bucket) {
+          bucket = [];
+          workflowBuckets.set(task.workflowRunId, bucket);
+        }
+        bucket.push(task);
       }
+      // Legacy standalone tasks without workflowRunId are silently dropped
     }
 
     const entries: FeedEntry[] = [];
-
-    for (const task of standalone) {
-      entries.push({ kind: "task", task });
-    }
 
     for (const [runId, wfTasks] of workflowBuckets) {
       const latestCreatedAt = wfTasks.reduce((max, t) =>
@@ -159,11 +152,7 @@ function buildGroups(tasks: EnrichedTask[]): ProjectGroup[] {
     }
 
     entries.sort((a, b) => {
-      const aTime =
-        a.kind === "task" ? a.task.createdAt : a.latestCreatedAt;
-      const bTime =
-        b.kind === "task" ? b.task.createdAt : b.latestCreatedAt;
-      return new Date(bTime).getTime() - new Date(aTime).getTime();
+      return new Date(b.latestCreatedAt).getTime() - new Date(a.latestCreatedAt).getTime();
     });
 
     groups.push({ projectId, projectName, entries });
@@ -269,36 +258,6 @@ export function TaskFeed({
                 </button>
 
                 {isExpanded && group.entries.map((entry) => {
-                if (entry.kind === "task") {
-                  return (
-                    <div key={entry.task.id}>
-                      <TaskFeedItem
-                        task={entry.task}
-                        isSelected={isTaskSelected(entry.task.id)}
-                        onClick={() => onSelectTask(entry.task.id)}
-                        onDelete={onDeleteTask}
-                      />
-                      {entry.task.latestReview && (
-                        <div className="ml-3 border-l border-border/60 pl-1">
-                          <ReviewFeedItem
-                            reviewId={entry.task.latestReview.id}
-                            round={entry.task.latestReview.round}
-                            status={entry.task.latestReview.status}
-                            isSelected={isReviewSelected(entry.task.latestReview.id)}
-                            isNested
-                            onClick={() =>
-                              onSelectReview(
-                                entry.task.latestReview!.id,
-                                entry.task.id,
-                              )
-                            }
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-
                 if (entry.kind === "workflow") {
                 // Workflow group
                 const meta = entry.tasks.find((t) => t.workflow)?.workflow;
