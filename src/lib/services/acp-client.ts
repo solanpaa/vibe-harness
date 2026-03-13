@@ -180,17 +180,18 @@ export function launchAcpSession(
   execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
 
   // Allow sandbox network access to the host for the MCP bridge.
-  // The baked-in bridge uses curl to call host.docker.internal:3000.
+  // The baked-in bridge uses curl to call host.docker.internal:3000,
+  // but the sandbox proxy sees the destination as localhost and blocks it.
   try {
     const proxyEnv = { ...env };
     delete proxyEnv.NODE_OPTIONS;
     execSync(
-      `docker sandbox network proxy ${sandboxName} --allow-host host.docker.internal`,
+      `docker sandbox network proxy ${sandboxName} --allow-host localhost`,
       { env: proxyEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
     );
   } catch (err) {
     // May fail if sandbox isn't fully ready yet — non-fatal
-    console.warn(`[ACP] Failed to allow host.docker.internal:`, err instanceof Error ? err.message : err);
+    console.warn(`[ACP] Failed to allow localhost:`, err instanceof Error ? err.message : err);
   }
 
   execArgs.push(sandboxName);
