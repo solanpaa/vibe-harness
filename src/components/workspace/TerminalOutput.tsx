@@ -7,6 +7,7 @@ import { Loader2, TerminalSquare, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { isTerminalTask, isActiveTask } from "@/lib/status-config";
 
 // ---- Local event types (client-side, no server imports) -------------------
 
@@ -417,7 +418,7 @@ export function TerminalOutput({
 
   const showShellButton =
     sandboxId &&
-    (status === "running" || status === "completed" || status === "failed");
+    (status === "running" || isTerminalTask(status));
 
   const handleCopyShellCommand = useCallback(() => {
     const cmd = `GITHUB_TOKEN=$(gh auth token) docker sandbox run ${sandboxId}`;
@@ -430,7 +431,7 @@ export function TerminalOutput({
   const emptyMessage =
     status === "pending"
       ? "Task not started yet. Click Start to begin."
-      : status === "running"
+      : isActiveTask(status)
         ? "Connecting to output stream..."
         : "No output recorded.";
 

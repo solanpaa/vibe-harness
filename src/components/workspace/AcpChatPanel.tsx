@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 import type { TerminalEvent } from "./terminal/event-parser";
 import { mapJsonlEvent } from "./terminal/event-parser";
 import { renderEvent } from "./terminal/EventRenderers";
+import { isActiveTask } from "@/lib/status-config";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -188,13 +189,13 @@ export function AcpChatPanel({
 
   // ── Render helpers ─────────────────────────────────────────────
 
-  const isRunning = status === "running";
+  const isRunning = isActiveTask(status);
   const showInput = isRunning;
 
   const emptyMessage =
     status === "pending"
       ? "Task not started yet. Click Start to begin."
-      : status === "running"
+      : isRunning
         ? "Connecting to ACP session..."
         : "Session ended.";
 

@@ -4,6 +4,7 @@ import { Play, Square, TerminalSquare, Trash2, Workflow } from "lucide-react";
 import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import type { TaskStatusConfig } from "@/lib/status-config";
+import { isActiveTask } from "@/lib/status-config";
 
 interface TaskHeaderProps {
   task: EnrichedTask;
@@ -74,8 +75,8 @@ export function TaskHeader({
               size="icon"
               className="h-8 w-8 text-muted-foreground hover:text-destructive"
               onClick={onDelete}
-              disabled={currentStatus === "running"}
-              title={currentStatus === "running" ? "Stop the task before deleting" : "Delete task"}
+              disabled={isActiveTask(currentStatus)}
+              title={isActiveTask(currentStatus) ? "Stop the task before deleting" : "Delete task"}
             >
               <Trash2 className="h-4 w-4" />
             </Button>

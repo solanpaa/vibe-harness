@@ -13,6 +13,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
+import { statusDotClass, isTerminalTask, isActiveTask } from "@/lib/status-config";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export function ComparisonBanner({
   if (!group) return null;
 
   const done = group.tasks.filter(
-    (t) => t.status === "completed" || t.status === "awaiting_review" || t.status === "failed"
+    (t) => isTerminalTask(t.status) || t.status === "awaiting_review"
   ).length;
   const total = group.tasks.length;
   const allDone = done === total;
@@ -121,14 +122,6 @@ export function ComparisonBanner({
     const secs = seconds % 60;
     return `${minutes}m ${secs}s`;
   }
-
-  const statusColors: Record<string, string> = {
-    running: "bg-blue-500",
-    completed: "bg-green-500",
-    awaiting_review: "bg-yellow-500",
-    failed: "bg-red-500",
-    pending: "bg-gray-500",
-  };
 
   return (
     <div className="border-b bg-muted/30">
@@ -198,10 +191,10 @@ export function ComparisonBanner({
                     <span className="flex items-center gap-1">
                       <span
                         className={`inline-block h-1.5 w-1.5 rounded-full ${
-                          statusColors[task.status] ?? "bg-gray-400"
+                          statusDotClass[task.status] ?? "bg-gray-400"
                         }`}
                       />
-                      {task.status === "running" && (
+                      {isActiveTask(task.status) && (
                         <Loader2 className="h-2.5 w-2.5 animate-spin" />
                       )}
                       <span>{task.status.replace(/_/g, " ")}</span>
@@ -238,7 +231,7 @@ export function ComparisonBanner({
                         <Clock className="h-3 w-3" />
                         {formatDuration(task.duration)}
                       </span>
-                    ) : task.status === "running" ? (
+                    ) : isActiveTask(task.status) ? (
                       "..."
                     ) : (
                       "—"

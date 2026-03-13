@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { statusDotClass, reviewStatusConfig } from "@/lib/status-config";
 
 export interface ReviewFeedItemProps {
   reviewId: string;
@@ -10,18 +11,6 @@ export interface ReviewFeedItemProps {
   isNested?: boolean;
   onClick: () => void;
 }
-
-const statusDot: Record<string, string> = {
-  pending_review: "bg-yellow-500",
-  approved: "bg-green-500",
-  changes_requested: "bg-orange-500",
-};
-
-const statusLabel: Record<string, string> = {
-  pending_review: "Pending",
-  approved: "Approved",
-  changes_requested: "Changes requested",
-};
 
 export function ReviewFeedItem({
   round,
@@ -45,9 +34,9 @@ export function ReviewFeedItem({
         Review{round > 1 ? ` · R${round}` : ""}
       </span>
       <span className="ml-auto flex items-center gap-1">
-        <span className={cn("size-1.5 rounded-full", statusDot[status] ?? "bg-gray-400")} />
+        <span className={cn("size-1.5 rounded-full", statusDotClass[status] ?? "bg-gray-400")} />
         <span className="text-[11px] text-muted-foreground">
-          {statusLabel[status] ?? status.replace(/_/g, " ")}
+          {reviewStatusConfig[status]?.label ?? status.replace(/_/g, " ")}
         </span>
       </span>
     </button>

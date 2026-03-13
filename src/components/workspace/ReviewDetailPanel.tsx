@@ -25,6 +25,7 @@ import {
   type GeneralComment,
 } from "./GeneralComments";
 import { Markdown } from "@/components/ui/markdown";
+import { isReviewPending } from "@/lib/status-config";
 import { reviewStatusConfig } from "@/lib/status-config";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -203,7 +204,7 @@ export function ReviewDetailPanel({
   );
 
   const totalComments = comments.length;
-  const isPending = activeReview?.status === "pending_review";
+  const isPending = isReviewPending(activeReview?.status ?? "");
   const hasDiff = diffFiles.length > 0;
   const hasPlan = !!activeReview?.planMarkdown;
 

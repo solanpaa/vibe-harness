@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Markdown } from "@/components/ui/markdown";
+import { reviewStatusConfig } from "@/lib/status-config";
 
 interface ReviewSummaryProps {
   summary: string;
@@ -11,12 +12,6 @@ interface ReviewSummaryProps {
 }
 
 export function ReviewSummary({ summary, round, status }: ReviewSummaryProps) {
-  const statusColors: Record<string, string> = {
-    pending_review: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-    changes_requested: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-    approved: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  };
-
   return (
     <Card>
       <CardHeader>
@@ -24,8 +19,8 @@ export function ReviewSummary({ summary, round, status }: ReviewSummaryProps) {
           <CardTitle className="text-lg">AI Summary</CardTitle>
           <div className="flex items-center gap-2">
             <Badge variant="outline">Round {round}</Badge>
-            <Badge className={statusColors[status] || ""}>
-              {status.replace("_", " ")}
+            <Badge className={reviewStatusConfig[status]?.colorClass || ""}>
+              {reviewStatusConfig[status]?.label ?? status.replace("_", " ")}
             </Badge>
           </div>
         </div>

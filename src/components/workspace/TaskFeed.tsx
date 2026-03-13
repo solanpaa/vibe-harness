@@ -10,6 +10,7 @@ import { TaskFeedItem } from "./TaskFeedItem";
 import { ReviewFeedItem } from "./ReviewFeedItem";
 import { WorkflowGroup } from "./WorkflowGroup";
 import type { Selection } from "@/lib/types";
+import { isTerminalTask } from "@/lib/status-config";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -31,7 +32,8 @@ export interface EnrichedTask {
   comparisonGroupId?: string | null;
   createdAt: string;
   completedAt: string | null;
-  latestReview: { id: string; round: number; status: string } | null;
+  latestReview: { id: string; round: number; status: string; createdAt?: string } | null;
+  reviews?: Array<{ id: string; round: number; status: string; createdAt: string }>;
   workflow: {
     runId: string;
     runTitle: string | null;
@@ -281,7 +283,7 @@ export function TaskFeed({
 
                 if (entry.kind === "comparison") {
                 const done = entry.tasks.filter(
-                  (t) => t.status === "completed" || t.status === "awaiting_review" || t.status === "failed"
+                  (t) => isTerminalTask(t.status) || t.status === "awaiting_review"
                 ).length;
 
                 return (

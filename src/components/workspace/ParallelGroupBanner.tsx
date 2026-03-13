@@ -5,14 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  CheckCircle,
-  Clock,
   GitFork,
   GitMerge,
   Loader2,
-  XCircle,
+  CheckCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { taskFeedIcon, taskBadgeClass, statusDotClass, isTerminalTask } from "@/lib/status-config";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -45,28 +44,6 @@ interface ParallelGroupBannerProps {
   groupId: string;
   onRunClick?: (runId: string) => void;
 }
-
-// ─── Status helpers ──────────────────────────────────────────────────────────
-
-const runStatusIcon: Record<string, React.ReactNode> = {
-  pending: <Clock className="h-3.5 w-3.5 text-muted-foreground" />,
-  running: <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />,
-  awaiting_review: (
-    <GitFork className="h-3.5 w-3.5 text-yellow-500" />
-  ),
-  completed: <CheckCircle className="h-3.5 w-3.5 text-green-500" />,
-  failed: <XCircle className="h-3.5 w-3.5 text-red-500" />,
-};
-
-const runStatusBadge: Record<string, string> = {
-  pending: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
-  running: "bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
-  awaiting_review:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
-  completed:
-    "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200",
-  failed: "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200",
-};
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -132,11 +109,11 @@ export function ParallelGroupBanner({
           {group.name || "Parallel Group"}
           <Badge
             className={
-              group.status === "completed"
-                ? "bg-green-100 text-green-800"
-                : group.status === "failed"
-                  ? "bg-red-100 text-red-800"
-                  : "bg-indigo-100 text-indigo-800"
+              isTerminalTask(group.status)
+                ? (group.status === "completed"
+                    ? "bg-green-100 text-green-800"
+                    : "bg-red-100 text-red-800")
+                : "bg-indigo-100 text-indigo-800"
             }
           >
             {group.status}
@@ -168,13 +145,13 @@ export function ParallelGroupBanner({
               onClick={() => onRunClick?.(run.id)}
               className="flex w-full items-center gap-2 rounded-md p-1.5 text-left text-sm hover:bg-muted/50 transition-colors"
             >
-              {runStatusIcon[run.status] ?? runStatusIcon.pending}
+              {taskFeedIcon[run.status] ?? taskFeedIcon.pending}
               <span className="flex-1 truncate">
                 {run.title || run.id.slice(0, 8)}
               </span>
               <Badge
                 variant="outline"
-                className={`text-xs ${runStatusBadge[run.status] ?? ""}`}
+                className={`text-xs ${taskBadgeClass[run.status] ?? ""}`}
               >
                 {run.status.replace(/_/g, " ")}
               </Badge>

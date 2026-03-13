@@ -28,6 +28,7 @@ import { FileTree } from "@/components/diff-viewer/FileTree";
 import { parseUnifiedDiff } from "@/lib/services/diff-service";
 import type { DiffFile } from "@/lib/services/diff-service";
 import { Markdown } from "@/components/ui/markdown";
+import { reviewStatusConfig, isReviewPending } from "@/lib/status-config";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -63,23 +64,6 @@ interface ReviewSectionProps {
   taskStatus: string;
   onReviewAction?: () => void;
 }
-
-// ─── Status styling ──────────────────────────────────────────────────────────
-
-const statusColors: Record<string, string> = {
-  pending_review:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  changes_requested:
-    "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-  approved:
-    "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-};
-
-const statusLabel: Record<string, string> = {
-  pending_review: "pending review",
-  changes_requested: "changes requested",
-  approved: "approved",
-};
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -317,7 +301,7 @@ export function ReviewSection({
   }
 
   const latestReview = reviews[reviews.length - 1];
-  const isPending = activeReview?.status === "pending_review";
+  const isPending = isReviewPending(activeReview?.status ?? "");
 
   // ── Collapsed bar ────────────────────────────────────────────────────────
 
@@ -334,8 +318,8 @@ export function ReviewSection({
           Round {latestReview.round}
         </span>
         <span className="text-muted-foreground">·</span>
-        <Badge className={statusColors[latestReview.status] ?? ""}>
-          {statusLabel[latestReview.status] ?? latestReview.status}
+        <Badge className={reviewStatusConfig[latestReview.status]?.colorClass ?? ""}>
+          {reviewStatusConfig[latestReview.status]?.label ?? latestReview.status}
         </Badge>
       </button>
     );
@@ -382,8 +366,8 @@ export function ReviewSection({
 
         <div className="ml-auto">
           {activeReview && (
-            <Badge className={statusColors[activeReview.status] ?? ""}>
-              {statusLabel[activeReview.status] ?? activeReview.status}
+            <Badge className={reviewStatusConfig[activeReview.status]?.colorClass ?? ""}>
+              {reviewStatusConfig[activeReview.status]?.label ?? activeReview.status}
             </Badge>
           )}
         </div>

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import type { TerminalEvent } from "./event-parser";
 import { mapJsonlEvent, parseLine } from "./event-parser";
 import { renderEvent } from "./EventRenderers";
+import { isTerminalTask, isActiveTask } from "@/lib/status-config";
 
 // ---- Main component -------------------------------------------------------
 
@@ -208,7 +209,7 @@ export function TerminalOutput({
 
   const showShellButton =
     sandboxId &&
-    (status === "running" || status === "completed" || status === "failed");
+    (status === "running" || isTerminalTask(status));
 
   const handleCopyShellCommand = useCallback(() => {
     const cmd = `GITHUB_TOKEN=$(gh auth token) docker sandbox run ${sandboxId}`;

@@ -1,46 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
-import { TaskFeed, type EnrichedTask } from "@/components/workspace/TaskFeed";
+import { TaskFeed } from "@/components/workspace/TaskFeed";
 import { TaskDetailPanel } from "@/components/workspace/TaskDetailPanel";
 import { ReviewDetailPanel } from "@/components/workspace/ReviewDetailPanel";
 import { NewTaskModal } from "@/components/workspace/NewTaskModal";
-import type { Selection } from "@/lib/types";
+import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 
 export default function WorkspacePage() {
-  const [tasks, setTasks] = useState<EnrichedTask[]>([]);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [loading, setLoading] = useState(true);
+  const tasks = useWorkspaceStore((s) => s.tasks);
+  const selection = useWorkspaceStore((s) => s.selection);
+  const setSelection = useWorkspaceStore((s) => s.setSelection);
+  const loading = useWorkspaceStore((s) => s.loading);
+  const poll = useWorkspaceStore((s) => s.poll);
+  const removeTask = useWorkspaceStore((s) => s.removeTask);
+  const removeWorkflowRun = useWorkspaceStore((s) => s.removeWorkflowRun);
+  const startPolling = useWorkspaceStore((s) => s.startPolling);
   const [createOpen, setCreateOpen] = useState(false);
 
-  const loadTasks = useCallback(async () => {
-    try {
-      const res = await fetch("/api/tasks?include=enriched");
-      if (res.ok) {
-        const data: EnrichedTask[] = await res.json();
-        setTasks(data);
-      }
-    } catch {
-      // silent — feed will show empty state
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Initial load
+  // Single polling loop for the whole workspace
   useEffect(() => {
-    loadTasks();
-  }, [loadTasks]);
-
-  // Poll every 3 seconds for status updates
-  useEffect(() => {
-    const interval = setInterval(loadTasks, 3000);
-    return () => clearInterval(interval);
-  }, [loadTasks]);
+    return startPolling();
+  }, [startPolling]);
 
   const selectedTaskId =
     selection?.kind === "task"
@@ -118,12 +103,11 @@ export default function WorkspacePage() {
 
   function handleTaskCreated(taskId: string) {
     setSelection({ kind: "task", taskId });
-    loadTasks();
+    poll();
   }
 
   function handleTaskDeleted(taskId: string) {
-    setSelection(null);
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    removeTask(taskId);
   }
 
   async function handleDeleteRun(runId: string) {
@@ -135,16 +119,7 @@ export default function WorkspacePage() {
         return;
       }
       toast.success("Workflow run deleted");
-      setTasks((prev) => prev.filter((t) => t.workflowRunId !== runId));
-      if (selection) {
-        const selected = tasks.find(
-          (t) =>
-            t.workflowRunId === runId &&
-            ((selection.kind === "task" && t.id === selection.taskId) ||
-              (selection.kind === "review" && t.id === selection.taskId)),
-        );
-        if (selected) setSelection(null);
-      }
+      removeWorkflowRun(runId);
     } catch {
       toast.error("Failed to delete workflow run");
     }
@@ -159,14 +134,7 @@ export default function WorkspacePage() {
         return;
       }
       toast.success("Task deleted");
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
-      if (
-        selection &&
-        ((selection.kind === "task" && selection.taskId === taskId) ||
-          (selection.kind === "review" && selection.taskId === taskId))
-      ) {
-        setSelection(null);
-      }
+      removeTask(taskId);
     } catch {
       toast.error("Failed to delete task");
     }
@@ -193,7 +161,7 @@ export default function WorkspacePage() {
           onNavigateToTask={(taskId) =>
             setSelection({ kind: "task", taskId })
           }
-          onReviewAction={loadTasks}
+          onReviewAction={poll}
         />
       );
     }
@@ -215,7 +183,7 @@ export default function WorkspacePage() {
         key={task.id}
         task={task}
         onTaskDeleted={handleTaskDeleted}
-        onTaskChanged={loadTasks}
+        onTaskChanged={poll}
       />
     );
   }

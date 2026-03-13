@@ -8,9 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import type { EnrichedTask } from "./TaskFeed";
 import { TerminalOutput } from "./terminal";
 import { ComparisonBanner } from "./ComparisonBanner";
+import { ParallelGroupBanner } from "./ParallelGroupBanner";
 import { TaskHeader } from "./TaskHeader";
 import { ProposalReviewPanel } from "./ProposalReviewPanel";
-import { taskStatusConfig } from "@/lib/status-config";
+import { taskStatusConfig, isTerminalTask, isActiveTask, shouldPollTask } from "@/lib/status-config";
+import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 
 // ─── Detailed task (includes output) ─────────────────────────────────────────
 
@@ -50,20 +52,27 @@ export function TaskDetailPanel({
 }: TaskDetailPanelProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [workflowRunStatus, setWorkflowRunStatus] = useState<string | null>(null);
+  const [parallelGroupId, setParallelGroupId] = useState<string | null>(null);
+
+  const poll = useWorkspaceStore((s) => s.poll);
 
   const fetchDetail = useCallback(() => {
     fetch(`/api/tasks/${task.id}`)
       .then((r) => r.json())
       .then((data: TaskDetail) => {
         setDetail(data);
-        // Fetch workflow run status to detect awaiting_split_review
         if (data.workflowRunId) {
           fetch(`/api/workflows/runs/${data.workflowRunId}`)
             .then((r) => r.json())
-            .then((run) => setWorkflowRunStatus(run.status ?? null))
+            .then((run) => {
+              setWorkflowRunStatus(run.status ?? null);
+              // For parent workflows with parallel groups, get the group ID
+              setParallelGroupId(run.activeParallelGroupId ?? null);
+            })
             .catch(() => {});
         } else {
           setWorkflowRunStatus(null);
+          setParallelGroupId(null);
         }
       })
       .catch(() => {});
@@ -75,15 +84,10 @@ export function TaskDetailPanel({
     fetchDetail();
   }, [task.id, fetchDetail]);
 
-  // Poll for status changes when not running (running uses SSE)
+  // Poll for status changes when task needs polling but isn't streaming (running uses SSE)
   useEffect(() => {
     if (!detail) return;
-    if (
-      detail.status === "completed" ||
-      detail.status === "failed" ||
-      detail.status === "running"
-    )
-      return;
+    if (isTerminalTask(detail.status) || detail.status === "running") return;
 
     const interval = setInterval(fetchDetail, 3000);
     return () => clearInterval(interval);
@@ -99,6 +103,7 @@ export function TaskDetailPanel({
       const updated = await res.json();
       setDetail(updated);
       onTaskChanged?.();
+      poll();
       toast.success("Task started");
     } else {
       const err = await res.json().catch(() => null);
@@ -151,6 +156,7 @@ export function TaskDetailPanel({
   function handleStreamClose() {
     fetchDetail();
     onTaskChanged?.();
+    poll();
   }
 
   const config = taskStatusConfig[detail?.status ?? task.status] ?? taskStatusConfig.pending;
@@ -188,6 +194,11 @@ export function TaskDetailPanel({
             onTaskChanged?.();
           }}
         />
+      )}
+
+      {/* Parallel group banner (shown when children are executing) */}
+      {workflowRunStatus === "running_parallel" && parallelGroupId && (
+        <ParallelGroupBanner groupId={parallelGroupId} />
       )}
 
       {/* Resume input bar when paused */}

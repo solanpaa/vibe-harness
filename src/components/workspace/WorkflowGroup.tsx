@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, Trash2, Workflow } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, Workflow, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,7 +14,7 @@ import { TaskFeedItem } from "./TaskFeedItem";
 import { ReviewFeedItem } from "./ReviewFeedItem";
 import type { EnrichedTask } from "./TaskFeed";
 import type { Selection } from "@/lib/types";
-import { taskBadgeClass } from "@/lib/status-config";
+import { taskBadgeClass, isTerminalTask, isActiveTask, isReviewPending } from "@/lib/status-config";
 
 export interface WorkflowGroupProps {
   workflowName: string;
@@ -46,39 +46,75 @@ export function WorkflowGroup({
   const [expanded, setExpanded] = useState(false);
 
   // Count unique completed stages (not total tasks, since reruns create extras)
-  const completedStages = new Set(
-    tasks
-      .filter((t) => t.status === "completed" && t.stageName)
-      .map((t) => t.stageName),
-  ).size;
+  const completedStages = runStatus === "completed"
+    ? stages.length
+    : new Set(
+        tasks
+          .filter((t) => t.status === "completed" && t.stageName)
+          .map((t) => t.stageName),
+      ).size;
 
-  // Sort tasks by their position in the stages array (latest stage first)
+  // Build a flat timeline: tasks and reviews as independent items, newest first.
+  // Reviews get their timestamp from the task they belong to, offset slightly
+  // so they appear right after their task.
+  type TimelineItem =
+    | { kind: "task"; task: EnrichedTask; time: number }
+    | { kind: "review"; reviewId: string; round: number; status: string; taskId: string; time: number }
+    | { kind: "finalize"; time: number };
+
+  const timeline: TimelineItem[] = [];
+  for (const task of tasks) {
+    timeline.push({ kind: "task", task, time: new Date(task.createdAt).getTime() });
+    // Add ALL reviews for this task as separate timeline items
+    const reviews = task.reviews ?? (task.latestReview ? [task.latestReview] : []);
+    for (const review of reviews) {
+      const reviewTime = review.createdAt
+        ? new Date(review.createdAt).getTime()
+        : new Date(task.completedAt ?? task.createdAt).getTime() + 1;
+      timeline.push({
+        kind: "review",
+        reviewId: review.id,
+        round: review.round,
+        status: review.status,
+        taskId: task.id,
+        time: reviewTime,
+      });
+    }
+  }
+
+  // Add a finalize marker when the workflow completed successfully
+  if (runStatus === "completed") {
+    const latestTime = Math.max(...timeline.map((i) => i.time), 0);
+    timeline.push({ kind: "finalize", time: latestTime + 1 });
+  }
+
+  timeline.sort((a, b) => b.time - a.time);
+
   const stageOrder = new Map(stages.map((s, i) => [s.name, i]));
-  const sortedTasks = [...tasks].sort((a, b) => {
-    const aIdx = stageOrder.get(a.stageName ?? "") ?? Infinity;
-    const bIdx = stageOrder.get(b.stageName ?? "") ?? Infinity;
-    return bIdx - aIdx;
-  });
+  const sortedTasks = [...tasks].sort((a, b) =>
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 
-  // Find the best task to select when clicking the workflow title:
-  // latest stage first, preferring running > awaiting_review > newest
-  const latestTask = [...tasks].sort((a, b) => {
-    const aIdx = stageOrder.get(a.stageName ?? "") ?? -1;
-    const bIdx = stageOrder.get(b.stageName ?? "") ?? -1;
-    if (aIdx !== bIdx) return bIdx - aIdx;
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  })[0];
+  // Find the best task to select when clicking the workflow title
+  const taskWithPendingReview = tasks.find(
+    (t) => isReviewPending(t.latestReview?.status ?? "")
+  );
+  const latestTask = sortedTasks[0];
   const bestTask =
-    tasks.find((t) => t.status === "running") ??
-    tasks.find((t) => t.status === "awaiting_review") ??
+    tasks.find((t) => isActiveTask(t.status)) ??
+    taskWithPendingReview ??
     latestTask;
 
-  // Active tasks: running or awaiting review (+ latest completed if none active)
-  const activeTasks = sortedTasks.filter(
-    (t) => t.status === "running" || t.status === "awaiting_review",
+  // Active items: running tasks or pending reviews
+  const activeTimeline = timeline.filter((item) =>
+    item.kind === "task"
+      ? (isActiveTask(item.task.status) || isReviewPending(item.task.latestReview?.status ?? ""))
+      : item.kind === "review"
+        ? isReviewPending(item.status)
+        : false
   );
   const visibleWhenCollapsed =
-    activeTasks.length > 0 ? activeTasks : sortedTasks.slice(0, 1);
+    activeTimeline.length > 0 ? activeTimeline : timeline.slice(0, 2);
 
   // Auto-expand when a child task/review is selected
   const hasSelectedChild = tasks.some(
@@ -97,8 +133,8 @@ export function WorkflowGroup({
   const isReviewSelected = (reviewId: string) =>
     selection?.kind === "review" && selection.reviewId === reviewId;
 
-  const displayTasks = expanded ? sortedTasks : visibleWhenCollapsed;
-  const isFullyCompleted = runStatus === "completed" || runStatus === "failed";
+  const displayItems = expanded ? timeline : visibleWhenCollapsed;
+  const isFullyCompleted = isTerminalTask(runStatus);
   const showStages = expanded || !isFullyCompleted;
 
   return (
@@ -122,8 +158,8 @@ export function WorkflowGroup({
               onClick={(e) => {
                 e.stopPropagation();
                 if (bestTask) {
-                  // If the task is awaiting review and has a review, jump to the review
-                  if (bestTask.status === "awaiting_review" && bestTask.latestReview) {
+                  // If there's a pending review, jump to it
+                  if (bestTask.latestReview && isReviewPending(bestTask.latestReview.status)) {
                     onSelectReview(bestTask.latestReview.id, bestTask.id);
                   } else {
                     onSelectTask(bestTask.id);
@@ -159,39 +195,46 @@ export function WorkflowGroup({
         </ContextMenuContent>
       </ContextMenu>
 
-      {/* Stage tasks */}
+      {/* Timeline: tasks and reviews as flat items */}
       {showStages && (
         <div className="ml-3 border-l border-border/60 pl-1 space-y-px">
-          {displayTasks.map((task) => (
-            <div key={task.id}>
-              {task.latestReview && (
-                <ReviewFeedItem
-                  reviewId={task.latestReview.id}
-                  round={task.latestReview.round}
-                  status={task.latestReview.status}
-                  isSelected={isReviewSelected(task.latestReview.id)}
-                  isNested
-                  onClick={() =>
-                    onSelectReview(task.latestReview!.id, task.id)
-                  }
-                />
-              )}
-              <TaskFeedItem
-                task={task}
-                isSelected={isTaskSelected(task.id)}
+          {displayItems.map((item) =>
+            item.kind === "finalize" ? (
+              <div
+                key="finalize"
+                className="flex items-center gap-2 rounded-md px-3 py-1 text-[13px] text-green-600 dark:text-green-400"
+              >
+                <GitMerge className="size-3.5" />
+                <span className="font-medium">Merged to main</span>
+              </div>
+            ) : item.kind === "review" ? (
+              <ReviewFeedItem
+                key={`review-${item.reviewId}`}
+                reviewId={item.reviewId}
+                round={item.round}
+                status={item.status}
+                isSelected={isReviewSelected(item.reviewId)}
                 isNested
-                onClick={() => onSelectTask(task.id)}
+                onClick={() => onSelectReview(item.reviewId, item.taskId)}
               />
-            </div>
-          ))}
+            ) : (
+              <TaskFeedItem
+                key={`task-${item.task.id}`}
+                task={item.task}
+                isSelected={isTaskSelected(item.task.id)}
+                isNested
+                onClick={() => onSelectTask(item.task.id)}
+              />
+            )
+          )}
           {/* Collapsed hint */}
-          {!expanded && sortedTasks.length > displayTasks.length && (
+          {!expanded && timeline.length > displayItems.length && (
             <button
               type="button"
               onClick={() => setExpanded(true)}
               className="w-full px-3 py-0.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground text-left cursor-pointer"
             >
-              +{sortedTasks.length - displayTasks.length} more stage{sortedTasks.length - displayTasks.length > 1 ? "s" : ""}…
+              +{timeline.length - displayItems.length} more…
             </button>
           )}
         </div>
