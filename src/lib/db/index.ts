@@ -6,7 +6,6 @@ import { eq } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   getDefaultWorkflowStages,
-  getPlanAndSplitStages,
   getDirectExecuteStages,
 } from "@/lib/services/workflow-engine";
 
@@ -74,13 +73,6 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
       stages: getDefaultWorkflowStages(),
     },
     {
-      id: "00000000-0000-0000-0000-000000000011",
-      name: "Plan & Split",
-      description:
-        "Plan the work, then split it into independent sub-tasks that run in parallel. Great for large features.",
-      stages: getPlanAndSplitStages(),
-    },
-    {
       id: "00000000-0000-0000-0000-000000000012",
       name: "Direct Execute",
       description:
@@ -88,6 +80,27 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
       stages: getDirectExecuteStages(),
     },
   ];
+
+  // Remove stale seeded templates that are no longer built-in
+  const staleIds = ["00000000-0000-0000-0000-000000000011"];
+  for (const staleId of staleIds) {
+    database
+      .delete(schema.workflowTemplates)
+      .where(eq(schema.workflowTemplates.id, staleId))
+      .run();
+  }
+  // Remove on-demand sub-task template — sub-tasks now use Direct Execute
+  const subTaskTemplate = database
+    .select()
+    .from(schema.workflowTemplates)
+    .all()
+    .find((t) => t.name === "Implement & Review (Sub-task)");
+  if (subTaskTemplate) {
+    database
+      .delete(schema.workflowTemplates)
+      .where(eq(schema.workflowTemplates.id, subTaskTemplate.id))
+      .run();
+  }
 
   for (const t of templates) {
     const existing = database

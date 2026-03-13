@@ -5,52 +5,10 @@ import { execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { listProposals } from "./proposal-service";
-import { startWorkflowRun, createWorkflowTemplate } from "./workflow-engine";
-import type { WorkflowStage } from "@/types/domain";
+import { startWorkflowRun } from "./workflow-engine";
 
 const MAX_CONCURRENT = 10;
 const WORKTREE_DIR = ".vibe-harness-worktrees";
-
-/**
- * Get or create the "Implement & Review" template used for sub-task runs.
- */
-function getOrCreateSubTaskTemplate(): string {
-  const db = getDb();
-  const existing = db
-    .select()
-    .from(schema.workflowTemplates)
-    .all()
-    .find((t) => t.name === "Implement & Review (Sub-task)");
-
-  if (existing) return existing.id;
-
-  const stages: WorkflowStage[] = [
-    {
-      name: "implement",
-      type: "sequential" as const,
-      promptTemplate: `Implement the changes described below. Follow the project's existing style and conventions.
-
-Guidelines:
-- Implement exactly what is described — no more, no less.
-- Match existing code patterns and naming conventions.
-- Handle error cases and edge cases appropriately.
-- Verify the build passes after your changes.
-- Do not commit.`,
-      autoAdvance: false,
-      reviewRequired: true,
-      freshSession: false,
-    },
-  ];
-
-  const template = createWorkflowTemplate({
-    name: "Implement & Review (Sub-task)",
-    description:
-      "Single-stage workflow for parallel sub-task execution. Each sub-task implements one piece of a larger plan.",
-    stages,
-  });
-
-  return template.id;
-}
 
 /**
  * Build the prompt for a sub-task from its proposal.
@@ -116,14 +74,11 @@ export async function launchProposals(input: {
   }
 
   // Get or create the sub-task template
+  const DIRECT_EXECUTE_ID = "00000000-0000-0000-0000-000000000012";
+  const FULL_WORKFLOW_ID = "00000000-0000-0000-0000-000000000010";
   let templateId = input.workflowTemplateId;
   if (!templateId) {
-    if (input.useFullWorkflow) {
-      // Use the standard plan→implement→review template
-      templateId = "00000000-0000-0000-0000-000000000010";
-    } else {
-      templateId = getOrCreateSubTaskTemplate();
-    }
+    templateId = input.useFullWorkflow ? FULL_WORKFLOW_ID : DIRECT_EXECUTE_ID;
   }
 
   // Create parallel group
