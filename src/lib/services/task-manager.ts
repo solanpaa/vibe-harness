@@ -2,8 +2,6 @@ import { getDb, schema } from "@/lib/db";
 import { launchAcpSession, getAcpSession, closeAcpSession, sendAcpPrompt, isAcpSession } from "./acp-client";
 import type { AcpMessage, AcpLaunchOptions } from "./acp-client";
 import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree, rebaseWorktree, commitWorktreeChanges } from "./worktree";
-import { createReviewForTask } from "./review-service";
-import { advanceWorkflow, getStageConfig } from "../services/workflow-engine";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { execSync } from "child_process";
@@ -11,6 +9,24 @@ import path from "path";
 import fs from "fs";
 
 const WORKTREE_DIR = ".vibe-harness-worktrees";
+
+/** Callback for task state transitions — injected to avoid circular imports. */
+type TransitionTaskFn = (taskId: string, event: { type: string; [key: string]: unknown }) => Promise<{ ok: boolean }>;
+
+/** Module-level reference set by setTransitionTask(). Uses var to avoid TDZ
+ *  issues when state-machine/index.ts calls setTransitionTask during its own
+ *  module evaluation (circular import resolution). */
+var _transitionTask: TransitionTaskFn | null = null;
+
+/** Called by state-machine/index.ts at import time to wire the dependency. */
+export function setTransitionTask(fn: TransitionTaskFn) {
+  _transitionTask = fn;
+}
+
+export function getTransitionTask(): TransitionTaskFn {
+  if (!_transitionTask) throw new Error("transitionTask not injected — call setTransitionTask() first");
+  return _transitionTask;
+}
 
 export interface StartTaskOptions {
   taskId: string;
@@ -94,13 +110,8 @@ export function startTask(options: StartTaskOptions) {
     mcpServers: options.mcpServers,
   });
 
-  db.update(schema.tasks)
-    .set({
-      status: "running",
-      sandboxId: sandboxName,
-    })
-    .where(eq(schema.tasks.id, options.taskId))
-    .run();
+  // Transition task: provisioning → running (sets sandboxId via action)
+  getTransitionTask()(options.taskId, { type: "START", sandboxId: sandboxName });
 
   // When ACP session is ready, send the initial prompt
   session.events.on("ready", async () => {
@@ -137,11 +148,16 @@ export function startTask(options: StartTaskOptions) {
 
   // Listen for completion
   session.events.on("close", async (code: number) => {
-    // Build output from conversation messages (meaningful content for DB storage)
+    // Build output: conversation messages + always include stderr/raw output for diagnostics
     const conversationOutput = session.messages
       .map((m) => `[${m.role}] ${m.content}`)
       .join("\n\n");
-    const output = conversationOutput || session.output.join("\n");
+    const stderrOutput = session.output.join("\n").trim();
+    const outputParts = [
+      conversationOutput,
+      stderrOutput ? `\n--- stderr / raw ---\n${stderrOutput}` : "",
+    ];
+    const output = outputParts.filter(Boolean).join("\n") || `(no output captured, exit code: ${code})`;
     const lastMsg = session.messages.filter((m) => m.role === "assistant").pop();
     const lastAiMessage = lastMsg?.content || null;
 
@@ -177,88 +193,22 @@ export function startTask(options: StartTaskOptions) {
       return;
     }
 
+    // Dispatch to state machine — all branching logic (split/autoAdvance/review,
+    // workflow advancement, review creation) is handled by the machines.
     if (code === 0) {
-      const stageConfig =
-        currentTask?.workflowRunId && currentTask?.stageName
-          ? getStageConfig(currentTask.workflowRunId, currentTask.stageName)
-          : null;
-
-      // Dynamic split stage: the "split" stageName is injected dynamically
-      // and won't exist in the workflow template. Detect it by name and
-      // transition to awaiting_split_review so the user sees proposals.
-      const isSplitStage =
-        currentTask?.stageName === "split" ||
-        stageConfig?.type === "split";
-
-      if (isSplitStage) {
-        db.update(schema.tasks)
-          .set({ status: "completed", output, lastAiMessage, completedAt: new Date().toISOString() })
-          .where(eq(schema.tasks.id, options.taskId))
-          .run();
-
-        if (currentTask?.workflowRunId) {
-          db.update(schema.workflowRuns)
-            .set({ status: "awaiting_split_review" })
-            .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
-            .run();
-        }
-      } else if (stageConfig?.autoAdvance === true) {
-        db.update(schema.tasks)
-          .set({ status: "completed", output, lastAiMessage, completedAt: new Date().toISOString() })
-          .where(eq(schema.tasks.id, options.taskId))
-          .run();
-
-        if (currentTask?.workflowRunId) {
-          try {
-            const result = await advanceWorkflow(currentTask.workflowRunId);
-            if (result?.completed) {
-              try {
-                finalizeAndMerge(options.originTaskId || options.taskId, {
-                  workflowRunId: currentTask.workflowRunId,
-                });
-              } catch (e) {
-                console.error("Failed to finalize after auto-advance:", e);
-              }
-            }
-          } catch (e) {
-            console.error("Failed to auto-advance workflow:", e);
-          }
-        }
-      } else {
-        db.update(schema.tasks)
-          .set({ status: "awaiting_review", output, lastAiMessage, completedAt: new Date().toISOString() })
-          .where(eq(schema.tasks.id, options.taskId))
-          .run();
-
-        if (currentTask?.workflowRunId) {
-          db.update(schema.workflowRuns)
-            .set({ status: "awaiting_review" })
-            .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
-            .run();
-        }
-
-        try {
-          await createReviewForTask(options.taskId);
-        } catch (e) {
-          console.error("Failed to auto-create review:", e);
-          db.update(schema.tasks)
-            .set({ status: "completed" })
-            .where(eq(schema.tasks.id, options.taskId))
-            .run();
-        }
-      }
+      await getTransitionTask()(options.taskId, {
+        type: "COMPLETE",
+        output,
+        lastAiMessage,
+        exitCode: code,
+      });
     } else {
-      db.update(schema.tasks)
-        .set({ status: "failed", output, lastAiMessage, completedAt: new Date().toISOString() })
-        .where(eq(schema.tasks.id, options.taskId))
-        .run();
-
-      if (currentTask?.workflowRunId) {
-        db.update(schema.workflowRuns)
-          .set({ status: "failed", completedAt: new Date().toISOString() })
-          .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
-          .run();
-      }
+      await getTransitionTask()(options.taskId, {
+        type: "FAIL",
+        output,
+        lastAiMessage,
+        exitCode: code,
+      });
     }
   });
 
@@ -266,28 +216,10 @@ export function startTask(options: StartTaskOptions) {
 }
 
 /** Stop a running task — pauses it for later resume */
-export function stopTask(taskId: string) {
-  const db = getDb();
-
+export async function stopTask(taskId: string) {
   // Mark as paused BEFORE closing the session so the close handler
   // knows this was a manual stop (not a crash)
-  db.update(schema.tasks)
-    .set({ status: "paused" })
-    .where(eq(schema.tasks.id, taskId))
-    .run();
-
-  // Also pause the workflow run
-  const task = db
-    .select({ workflowRunId: schema.tasks.workflowRunId })
-    .from(schema.tasks)
-    .where(eq(schema.tasks.id, taskId))
-    .get();
-  if (task?.workflowRunId) {
-    db.update(schema.workflowRuns)
-      .set({ status: "paused" })
-      .where(eq(schema.workflowRuns.id, task.workflowRunId))
-      .run();
-  }
+  await getTransitionTask()(taskId, { type: "PAUSE" });
 
   closeAcpSession(taskId);
   return true;
@@ -393,26 +325,26 @@ export function finalizeAndMerge(
     }
   }
 
-  // 4. Clean up worktree on success
+  // 4. Clean up worktree and branch on success
   if (merged) {
     try {
       removeWorktree(project.localPath, originTaskId);
     } catch {
       // Non-critical
     }
+    // Delete the task branch — no longer needed after merge
+    try {
+      execSync(`git branch -D "${branch}"`, {
+        cwd: project.localPath,
+        stdio: "pipe",
+      });
+    } catch {
+      // Branch may already be deleted or not exist
+    }
   }
 
-  // 5. Update workflow status if applicable
-  const workflowRunId = opts?.workflowRunId || originTask.workflowRunId;
-  if (workflowRunId) {
-    db.update(schema.workflowRuns)
-      .set({
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.workflowRuns.id, workflowRunId))
-      .run();
-  }
+  // Workflow run status is now handled by the state machine (FINALIZE event).
+  // No direct DB update needed here.
 
   return { merged, branch, error: mergeError };
 }

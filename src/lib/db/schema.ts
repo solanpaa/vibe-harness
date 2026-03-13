@@ -111,6 +111,7 @@ export const tasks = sqliteTable("tasks", {
   useWorktree: integer("use_worktree").notNull().default(1), // 1=true, 0=false
   output: text("output"),
   lastAiMessage: text("last_ai_message"),
+  exitCode: integer("exit_code"),
   usageStats: text("usage_stats"), // JSON string
   executionMode: text("execution_mode").notNull().default("legacy"), // legacy | acp
   comparisonGroupId: text("comparison_group_id").references(

@@ -457,9 +457,13 @@ export function launchAcpSession(
 
   // Initialize connection asynchronously
   initializeSession(session, { ...options, loadSessionId: options.loadSessionId }).catch((err) => {
+    const errMsg = err instanceof Error ? err.message : String(err);
     console.error("ACP init failed:", err);
+    output.push(`[ACP INIT ERROR] ${errMsg}`);
     session.status = "error";
     events.emit("error", err);
+    // Kill the orphaned docker process so it exits promptly
+    try { proc.kill("SIGTERM"); } catch { /* already dead */ }
   });
 
   return session;
@@ -469,20 +473,34 @@ async function initializeSession(
   session: AcpSession,
   options: AcpLaunchOptions & { loadSessionId?: string | null }
 ) {
+  const MAX_INIT_RETRIES = 3;
+  const INIT_DELAY_MS = 1500;
+
   // Sandbox is already created — exec connects directly to copilot ACP.
-  // Give copilot a moment to start inside the sandbox.
-  await new Promise((r) => setTimeout(r, 1000));
+  // Retry initialization in case copilot is slow to start (e.g. under load
+  // from concurrent sandbox operations).
+  for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt++) {
+    await new Promise((r) => setTimeout(r, INIT_DELAY_MS));
 
-  if (session.status === "closed" || session.status === "error") {
-    throw new Error("Session closed before initialization");
+    if (session.status === "closed" || session.status === "error") {
+      throw new Error("Session closed before initialization");
+    }
+
+    try {
+      console.log(`[ACP] Sending initialize... (attempt ${attempt}/${MAX_INIT_RETRIES})`);
+      await session.connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      break; // success
+    } catch (err) {
+      if (attempt === MAX_INIT_RETRIES) {
+        console.error(`[ACP] Initialize failed after ${MAX_INIT_RETRIES} attempts:`, err);
+        throw err;
+      }
+      console.warn(`[ACP] Initialize attempt ${attempt} failed, retrying...`, err instanceof Error ? err.message : err);
+    }
   }
-
-  console.log("[ACP] Sending initialize...");
-
-  await session.connection.initialize({
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: {},
-  });
 
   const absCwd = path.resolve(options.projectDir);
   const mcpServers = options.mcpServers ?? [];
