@@ -179,6 +179,20 @@ export function launchAcpSession(
   execArgs.push("-e", `VIBE_TASK_ID=${taskId}`);
   execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
 
+  // Allow sandbox network access to the host for the MCP bridge.
+  // The baked-in bridge uses curl to call host.docker.internal:3000.
+  try {
+    const proxyEnv = { ...env };
+    delete proxyEnv.NODE_OPTIONS;
+    execSync(
+      `docker sandbox network proxy ${sandboxName} --allow-host host.docker.internal`,
+      { env: proxyEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
+    );
+  } catch (err) {
+    // May fail if sandbox isn't fully ready yet — non-fatal
+    console.warn(`[ACP] Failed to allow host.docker.internal:`, err instanceof Error ? err.message : err);
+  }
+
   execArgs.push(sandboxName);
 
   // Build the copilot command with ACP flags

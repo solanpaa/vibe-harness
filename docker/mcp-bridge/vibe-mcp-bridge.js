@@ -34,9 +34,13 @@ function callApi(path, body) {
       `-d '${JSON.stringify(body).replace(/'/g, "'\\''")}'`,
       { encoding: "utf-8", timeout: 30000 }
     );
-    return JSON.parse(result);
+    try {
+      return JSON.parse(result);
+    } catch (parseErr) {
+      return { error: `API returned non-JSON: ${result.slice(0, 200)}` };
+    }
   } catch (e) {
-    return { error: e.message };
+    return { error: `curl failed: ${e.message.slice(0, 200)}` };
   }
 }
 
