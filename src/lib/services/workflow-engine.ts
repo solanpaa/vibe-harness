@@ -164,6 +164,7 @@ export async function startWorkflowRun(input: {
         taskId,
         projectDir: project.localPath,
         agentCommand,
+        dockerImage: agent.dockerImage,
         credentialSetId: input.credentialSetId,
         prompt,
         model: input.model,
@@ -351,6 +352,7 @@ export async function advanceWorkflow(workflowRunId: string): Promise<{
         taskId,
         projectDir: project.localPath,
         agentCommand,
+        dockerImage: agent.dockerImage,
         credentialSetId: firstTask.credentialSetId,
         prompt,
         model: firstTask.model,
@@ -526,10 +528,17 @@ Plan format:
     {
       name: "split",
       type: "split" as const,
-      promptTemplate: `You have access to MCP tools for splitting work into parallel sub-tasks. Your job is to decompose the approved plan into independent, parallelizable units of work.
+      promptTemplate: `IMPORTANT: Do NOT implement any code changes. Your ONLY job is to decompose the plan into sub-tasks using the MCP tools provided to you.
+
+You have MCP tools for splitting work into parallel sub-tasks:
+- propose_task: Create a sub-task proposal with title, description, affected files, and dependencies
+- get_plan: Retrieve the approved implementation plan from the previous stage
+- list_proposals: List all proposals you've created so far
+- delete_proposal: Remove a proposal by ID
+- get_project_tree: Browse the project file structure
 
 Process:
-1. First, call get_plan to retrieve the approved implementation plan.
+1. Call get_plan to retrieve the approved implementation plan.
 2. Call get_project_tree to understand the codebase layout.
 3. Analyze the plan and identify groups of work that can be done independently.
 4. For each group, call propose_task with:
@@ -541,6 +550,7 @@ Process:
 6. Delete and recreate any proposals that need adjustment.
 
 Guidelines:
+- Do NOT make any code changes yourself. Only create proposals.
 - Each proposal should be self-contained enough that an agent can implement it without context from other proposals.
 - Minimize file overlap between proposals — if two proposals touch the same file, consider merging them or clearly delineating which parts each handles.
 - Include necessary context in each proposal's description (e.g., "The Task type is defined in src/types/domain.ts with fields X, Y, Z").

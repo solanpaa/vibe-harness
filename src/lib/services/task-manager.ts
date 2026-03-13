@@ -182,9 +182,27 @@ export function startTask(options: StartTaskOptions) {
         currentTask?.workflowRunId && currentTask?.stageName
           ? getStageConfig(currentTask.workflowRunId, currentTask.stageName)
           : null;
-      const shouldAutoAdvance = stageConfig?.autoAdvance === true;
 
-      if (shouldAutoAdvance) {
+      // Dynamic split stage: the "split" stageName is injected dynamically
+      // and won't exist in the workflow template. Detect it by name and
+      // transition to awaiting_split_review so the user sees proposals.
+      const isSplitStage =
+        currentTask?.stageName === "split" ||
+        stageConfig?.type === "split";
+
+      if (isSplitStage) {
+        db.update(schema.tasks)
+          .set({ status: "completed", output, lastAiMessage, completedAt: new Date().toISOString() })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+
+        if (currentTask?.workflowRunId) {
+          db.update(schema.workflowRuns)
+            .set({ status: "awaiting_split_review" })
+            .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+            .run();
+        }
+      } else if (stageConfig?.autoAdvance === true) {
         db.update(schema.tasks)
           .set({ status: "completed", output, lastAiMessage, completedAt: new Date().toISOString() })
           .where(eq(schema.tasks.id, options.taskId))

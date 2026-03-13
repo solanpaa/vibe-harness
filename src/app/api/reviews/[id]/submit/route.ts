@@ -254,6 +254,7 @@ export async function POST(
           taskId: splitTaskId,
           projectDir: project.localPath,
           agentCommand: agent?.commandTemplate || "copilot",
+          dockerImage: agent?.dockerImage,
           credentialSetId: firstTask.credentialSetId,
           prompt,
           model: firstTask.model,
