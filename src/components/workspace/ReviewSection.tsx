@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
+  GitFork,
   MessageSquare,
   GitPullRequestArrow,
   History,

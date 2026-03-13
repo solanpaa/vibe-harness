@@ -9,6 +9,7 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronRight,
+  GitFork,
   GitPullRequestArrow,
   History,
   ArrowLeft,
@@ -258,7 +259,7 @@ export function ReviewDetailPanel({
     }
   }
 
-  async function handleSubmit(action: "approve" | "request_changes") {
+  async function handleSubmit(action: "approve" | "request_changes" | "split") {
     if (!activeReview) return;
     setSubmitting(true);
     try {
@@ -293,6 +294,11 @@ export function ReviewDetailPanel({
           } else if (result.workflowAdvanced?.completed) {
             toast.success("Workflow completed!");
           }
+        } else if (action === "split") {
+          toast.success(
+            "Plan approved — split agent launched to decompose into parallel sub-tasks",
+            { duration: 5000 }
+          );
         } else {
           toast.success("Changes requested — new agent run will be spawned");
         }
@@ -378,7 +384,7 @@ export function ReviewDetailPanel({
 
         {/* Action bar — sticky at top */}
         {isPending && (
-          <div className="flex items-center gap-3 px-4 pb-3">
+          <div className="flex items-center gap-3 px-4 pb-3 flex-wrap">
             <Button
               onClick={() => handleSubmit("approve")}
               className="bg-green-600 hover:bg-green-700 shadow-sm"
@@ -387,6 +393,16 @@ export function ReviewDetailPanel({
               <Check className="mr-2 h-4 w-4" />
               Approve
             </Button>
+            {activeReview?.workflowRunId && activeReview?.planMarkdown && (
+              <Button
+                onClick={() => handleSubmit("split")}
+                className="bg-indigo-600 hover:bg-indigo-700 shadow-sm"
+                disabled={submitting}
+              >
+                <GitFork className="mr-2 h-4 w-4" />
+                Split &amp; Parallelize
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => handleSubmit("request_changes")}
@@ -395,7 +411,7 @@ export function ReviewDetailPanel({
               <MessageSquare className="mr-2 h-4 w-4" />
               Request Changes ({totalComments})
             </Button>
-            {totalComments === 0 && (
+            {totalComments === 0 && !activeReview?.planMarkdown && (
               <span className="text-xs text-muted-foreground">
                 Add comments before requesting changes
               </span>
