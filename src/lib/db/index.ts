@@ -4,6 +4,10 @@ import Database from "better-sqlite3";
 import path from "path";
 import { eq } from "drizzle-orm";
 import * as schema from "./schema";
+import {
+  getDefaultWorkflowStages,
+  getPlanAndSplitStages,
+} from "@/lib/services/workflow-engine";
 
 const DB_PATH = process.env.DATABASE_URL || "./vibe-harness.db";
 
@@ -50,6 +54,51 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
         .update(schema.agentDefinitions)
         .set({ dockerImage: "vibe-harness/copilot:latest" })
         .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
+        .run();
+    }
+  }
+
+  // Seed default workflow templates
+  seedWorkflowTemplates(database);
+}
+
+/** Seed the built-in workflow templates if they don't exist yet. */
+function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
+  const templates = [
+    {
+      id: "00000000-0000-0000-0000-000000000010",
+      name: "Plan → Implement → Review",
+      description:
+        "Standard 4-stage workflow: plan the work, implement, AI review, then fix issues.",
+      stages: getDefaultWorkflowStages(),
+    },
+    {
+      id: "00000000-0000-0000-0000-000000000011",
+      name: "Plan & Split",
+      description:
+        "Plan the work, then split it into independent sub-tasks that run in parallel. Great for large features.",
+      stages: getPlanAndSplitStages(),
+    },
+  ];
+
+  for (const t of templates) {
+    const existing = database
+      .select()
+      .from(schema.workflowTemplates)
+      .where(eq(schema.workflowTemplates.id, t.id))
+      .get();
+    if (!existing) {
+      const now = new Date().toISOString();
+      database
+        .insert(schema.workflowTemplates)
+        .values({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          stages: JSON.stringify(t.stages),
+          createdAt: now,
+          updatedAt: now,
+        })
         .run();
     }
   }

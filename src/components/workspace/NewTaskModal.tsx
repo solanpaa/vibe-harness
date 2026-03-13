@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Workflow, ArrowRight, Loader2, GitCompare, Plus, X } from "lucide-react";
+import { Play, Workflow, ArrowRight, GitFork, Loader2, GitCompare, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -43,8 +43,10 @@ interface CredentialSet {
 interface WorkflowTemplate {
   id: string;
   name: string;
+  description?: string | null;
   stages: Array<{
     name: string;
+    type?: string;
     promptTemplate: string;
     reviewRequired: boolean;
   }>;
@@ -499,32 +501,50 @@ export function NewTaskModal({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">None — one-off task</SelectItem>
-                {workflows.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    <div className="flex items-center gap-2">
-                      <Workflow className="h-3 w-3" />
-                      {w.name} ({w.stages.length} stages)
-                    </div>
-                  </SelectItem>
-                ))}
+                {workflows.map((w) => {
+                  const hasSplit = w.stages.some((s) => s.type === "split");
+                  return (
+                    <SelectItem key={w.id} value={w.id}>
+                      <div className="flex items-center gap-2">
+                        {hasSplit ? (
+                          <GitFork className="h-3 w-3 text-indigo-500" />
+                        ) : (
+                          <Workflow className="h-3 w-3" />
+                        )}
+                        {w.name} ({w.stages.length} stages)
+                      </div>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             {selectedWorkflow && (
-              <div className="flex items-center gap-1 flex-wrap text-xs text-muted-foreground mt-1">
-                {selectedWorkflow.stages.map((stage, i) => (
-                  <span key={stage.name} className="flex items-center gap-1">
-                    <Badge
-                      variant="secondary"
-                      className="text-[10px] px-1.5 py-0"
-                    >
-                      {stage.name}
-                    </Badge>
-                    {i < selectedWorkflow.stages.length - 1 && (
-                      <ArrowRight className="h-3 w-3" />
-                    )}
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="flex items-center gap-1 flex-wrap text-xs text-muted-foreground mt-1">
+                  {selectedWorkflow.stages.map((stage, i) => {
+                    const isSplit = stage.type === "split";
+                    return (
+                      <span key={stage.name} className="flex items-center gap-1">
+                        <Badge
+                          variant="secondary"
+                          className={`text-[10px] px-1.5 py-0 ${isSplit ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300" : ""}`}
+                        >
+                          {isSplit && <GitFork className="mr-0.5 h-2.5 w-2.5" />}
+                          {stage.name}
+                        </Badge>
+                        {i < selectedWorkflow.stages.length - 1 && (
+                          <ArrowRight className="h-3 w-3" />
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+                {selectedWorkflow.description && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedWorkflow.description}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
