@@ -53,30 +53,28 @@ Guidelines:
 }
 
 /**
- * Build the prompt for a sub-task from its proposal + parent context.
+ * Build the prompt for a sub-task from its proposal.
+ * Focused only on the specific assignment — no full plan dump.
  */
 function buildSubTaskPrompt(
   proposal: { title: string; description: string; affectedFiles: string[] },
-  planContext: string | null,
-  parentTaskDescription: string | null
 ): string {
   const parts: string[] = [];
 
-  if (parentTaskDescription) {
-    parts.push(`## Overall Task\n${parentTaskDescription}`);
-  }
-
-  if (planContext) {
-    parts.push(`## Implementation Plan (from planning stage)\n${planContext}`);
-  }
-
-  parts.push(`## Your Assignment: ${proposal.title}\n${proposal.description}`);
+  parts.push(`## Your Assignment: ${proposal.title}\n\n${proposal.description}`);
 
   if (proposal.affectedFiles.length > 0) {
     parts.push(
       `## Files to Modify\n${proposal.affectedFiles.map((f) => `- ${f}`).join("\n")}`
     );
   }
+
+  parts.push(
+    `## Guidelines\n` +
+    `- Focus exclusively on the task described above.\n` +
+    `- Do not modify files outside the scope of this assignment unless strictly necessary.\n` +
+    `- Match the project's existing code style and conventions.`
+  );
 
   return parts.join("\n\n");
 }
@@ -89,6 +87,7 @@ export async function launchProposals(input: {
   taskId: string;
   proposalIds?: string[];
   workflowTemplateId?: string;
+  useFullWorkflow?: boolean;
 }): Promise<{
   parallelGroupId: string;
   workflowRunIds: string[];
@@ -116,33 +115,16 @@ export async function launchProposals(input: {
     throw new Error("No proposals to launch");
   }
 
-  // Get plan context from the workflow run's previous reviews
-  let planContext: string | null = null;
-  if (splitTask.workflowRunId) {
-    const reviews = db
-      .select()
-      .from(schema.reviews)
-      .where(eq(schema.reviews.workflowRunId, splitTask.workflowRunId))
-      .all();
-    // Use the first review's plan (from the plan stage)
-    planContext =
-      reviews.find((r) => r.planMarkdown)?.planMarkdown ||
-      reviews.find((r) => r.aiSummary)?.aiSummary ||
-      null;
-  }
-
-  // Get parent workflow run for context
-  const parentRun = splitTask.workflowRunId
-    ? db
-        .select()
-        .from(schema.workflowRuns)
-        .where(eq(schema.workflowRuns.id, splitTask.workflowRunId))
-        .get()
-    : null;
-
   // Get or create the sub-task template
-  const templateId =
-    input.workflowTemplateId || getOrCreateSubTaskTemplate();
+  let templateId = input.workflowTemplateId;
+  if (!templateId) {
+    if (input.useFullWorkflow) {
+      // Use the standard plan→implement→review template
+      templateId = "00000000-0000-0000-0000-000000000010";
+    } else {
+      templateId = getOrCreateSubTaskTemplate();
+    }
+  }
 
   // Create parallel group
   const now = new Date().toISOString();
@@ -151,7 +133,7 @@ export async function launchProposals(input: {
     .values({
       id: groupId,
       sourceWorkflowRunId: splitTask.workflowRunId || splitTask.id,
-      name: parentRun?.title || `Parallel: ${splitTask.prompt.slice(0, 50)}`,
+      name: `Parallel: ${splitTask.prompt.slice(0, 60)}`,
       description: `${proposals.length} sub-tasks from split stage`,
       status: "running",
       createdAt: now,
@@ -183,11 +165,7 @@ export async function launchProposals(input: {
   const overflow = readyToLaunch.slice(MAX_CONCURRENT);
 
   for (const proposal of toLaunch) {
-    const prompt = buildSubTaskPrompt(
-      proposal,
-      planContext,
-      parentRun?.taskDescription || null
-    );
+    const prompt = buildSubTaskPrompt(proposal);
 
     try {
       const result = await startWorkflowRun({
@@ -235,6 +213,18 @@ export async function launchProposals(input: {
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.taskProposals.id, p.id))
+      .run();
+  }
+
+  // Transition the parent workflow run to "completed" — the split is done,
+  // child runs are independent workflow runs tracked via the parallel group.
+  if (splitTask.workflowRunId) {
+    db.update(schema.workflowRuns)
+      .set({
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.workflowRuns.id, splitTask.workflowRunId))
       .run();
   }
 

@@ -11,7 +11,7 @@ import { launchProposals } from "@/lib/services/parallel-launcher";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, proposalIds, workflowTemplateId } = body;
+    const { taskId, proposalIds, workflowTemplateId, useFullWorkflow } = body;
 
     if (!taskId) {
       return NextResponse.json(
@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       taskId,
       proposalIds,
       workflowTemplateId,
+      useFullWorkflow,
     });
 
     return NextResponse.json(result, { status: 201 });

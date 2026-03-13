@@ -46,6 +46,7 @@ export function ProposalReviewPanel({
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState(false);
+  const [useFullWorkflow, setUseFullWorkflow] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Proposal>>({});
 
@@ -115,6 +116,7 @@ export function ProposalReviewPanel({
         body: JSON.stringify({
           taskId,
           proposalIds: activeProposals.map((p) => p.id),
+          useFullWorkflow,
         }),
       });
       if (res.ok) {
@@ -173,7 +175,17 @@ export function ProposalReviewPanel({
           </h2>
         </div>
         {!hasLaunched && activeProposals.length > 0 && (
-          <Button onClick={handleLaunchAll} disabled={launching}>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useFullWorkflow}
+                onChange={(e) => setUseFullWorkflow(e.target.checked)}
+                className="rounded"
+              />
+              Full workflow (plan→implement→review)
+            </label>
+            <Button onClick={handleLaunchAll} disabled={launching}>
             {launching ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -181,6 +193,7 @@ export function ProposalReviewPanel({
             )}
             Launch All ({activeProposals.length})
           </Button>
+          </div>
         )}
         {hasLaunched && (
           <Badge className="bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200">
