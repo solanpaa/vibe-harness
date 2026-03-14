@@ -583,14 +583,21 @@ export async function transitionWorkflowRun(
       cleanupSandboxes: async () => {
         const db = getDb();
         const { execSync } = await import("child_process");
+        const { removeWorktree } = await import("@/lib/services/worktree");
 
-        // Collect all unique sandbox IDs from this workflow's tasks
+        // Collect task info for this workflow's tasks
         const tasks = db
-          .select({ sandboxId: schema.tasks.sandboxId })
+          .select({
+            id: schema.tasks.id,
+            sandboxId: schema.tasks.sandboxId,
+            originTaskId: schema.tasks.originTaskId,
+            projectId: schema.tasks.projectId,
+          })
           .from(schema.tasks)
           .where(eq(schema.tasks.workflowRunId, workflowRunId))
           .all();
 
+        // Clean up sandboxes
         const sandboxIds = [...new Set(
           tasks.map((t) => t.sandboxId).filter(Boolean) as string[]
         )];
@@ -602,6 +609,44 @@ export async function transitionWorkflowRun(
             console.log(`[StateMachine] Cleaned up sandbox ${sandboxId}`);
           } catch {
             // Sandbox may already be stopped/removed
+          }
+        }
+
+        // Clean up worktrees and branches for all tasks in this workflow.
+        // Worktrees are keyed by origin task ID (shared across a chain).
+        const projectId = tasks[0]?.projectId;
+        const project = projectId
+          ? db.select({ localPath: schema.projects.localPath })
+              .from(schema.projects).where(eq(schema.projects.id, projectId)).get()
+          : null;
+
+        if (project?.localPath) {
+          // Collect unique task IDs that own worktrees (origin or self)
+          const worktreeTaskIds = [...new Set(
+            tasks.map((t) => t.originTaskId || t.id)
+          )];
+
+          for (const taskId of worktreeTaskIds) {
+            try {
+              removeWorktree(project.localPath, taskId);
+              console.log(`[StateMachine] Cleaned up worktree for task ${taskId.slice(0, 8)}`);
+            } catch (err) {
+              console.warn(`[StateMachine] Worktree cleanup failed for ${taskId.slice(0, 8)}:`, err);
+            }
+
+            // Delete the branch
+            const shortId = taskId.slice(0, 8);
+            const branch = `vibe-harness/task-${shortId}`;
+            try {
+              execSync(`git branch -D "${branch}"`, {
+                cwd: project.localPath,
+                stdio: "pipe",
+                timeout: 10000,
+              });
+              console.log(`[StateMachine] Deleted branch ${branch}`);
+            } catch {
+              // Branch may not exist or already deleted
+            }
           }
         }
       },
