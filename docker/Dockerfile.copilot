@@ -16,6 +16,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_25.x | bash - \
     && npm install -g pnpm \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# HashiCorp Terraform
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+       > /etc/apt/sources.list.d/hashicorp.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends terraform \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # --- User-level tools (run as agent) ---
 USER agent
 
@@ -35,7 +43,8 @@ RUN export PATH="$HOME/.local/bin:$PATH" \
     && pnpm --version \
     && python3.14 --version || $HOME/.local/bin/uv python install 3.14 \
     && uv --version \
-    && uvx --version
+    && uvx --version \
+    && terraform --version
 
 # Pre-configure MCP server for vibe-harness integration.
 # Uses a stdio bridge script that proxies tool calls back to the host via curl

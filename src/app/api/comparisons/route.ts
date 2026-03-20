@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq, and, desc } from "drizzle-orm";
+import { transitionTask } from "@/lib/state-machine";
 import { startTask } from "@/lib/services/task-manager";
 import { generateTitle } from "@/lib/services/title-generator";
 
@@ -143,8 +144,9 @@ export async function POST(request: NextRequest) {
       })
       .run();
 
-    // Start each task
+    // Start each task — transition to provisioning first
     try {
+      await transitionTask(taskId, { type: "PROVISION" });
       startTask({
         taskId,
         projectDir: project.localPath,
@@ -158,10 +160,7 @@ export async function POST(request: NextRequest) {
       });
     } catch (e) {
       console.error(`Failed to start comparison task ${taskId}:`, e);
-      db.update(schema.tasks)
-        .set({ status: "failed", completedAt: now })
-        .where(eq(schema.tasks.id, taskId))
-        .run();
+      await transitionTask(taskId, { type: "FAIL" }).catch(() => {});
     }
 
     createdTasks.push({

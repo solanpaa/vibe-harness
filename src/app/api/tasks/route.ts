@@ -68,28 +68,31 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(schema.tasks.createdAt))
       .all();
 
-    // Build a map of taskId → latest review (highest round)
-    const reviewMap = new Map<
-      string,
-      { id: string; round: number; status: string }
-    >();
+    // Build a map of taskId → all reviews (for timeline display)
+    type ReviewInfo = { id: string; round: number; status: string; createdAt: string };
+    const reviewsMap = new Map<string, ReviewInfo[]>();
     const allReviews = db
       .select({
         id: schema.reviews.id,
         taskId: schema.reviews.taskId,
         round: schema.reviews.round,
         status: schema.reviews.status,
+        createdAt: schema.reviews.createdAt,
       })
       .from(schema.reviews)
       .all();
     for (const r of allReviews) {
-      const existing = reviewMap.get(r.taskId);
-      if (!existing || r.round > existing.round) {
-        reviewMap.set(r.taskId, { id: r.id, round: r.round, status: r.status });
-      }
+      const list = reviewsMap.get(r.taskId) ?? [];
+      list.push({ id: r.id, round: r.round, status: r.status, createdAt: r.createdAt });
+      reviewsMap.set(r.taskId, list);
     }
 
-    const enriched = rows.map((row) => ({
+    const enriched = rows.map((row) => {
+      const reviews = reviewsMap.get(row.id) ?? [];
+      const latestReview = reviews.length > 0
+        ? reviews.reduce((best, r) => r.round > best.round ? r : best)
+        : null;
+      return {
       id: row.id,
       projectId: row.projectId,
       projectName: row.projectName,
@@ -107,7 +110,8 @@ export async function GET(request: NextRequest) {
       comparisonGroupId: row.comparisonGroupId,
       createdAt: row.createdAt,
       completedAt: row.completedAt,
-      latestReview: reviewMap.get(row.id) ?? null,
+      latestReview,
+      reviews,
       workflow: row.workflowRunId && row.wtName
         ? {
             runId: row.workflowRunId,
@@ -122,7 +126,8 @@ export async function GET(request: NextRequest) {
             }>,
           }
         : null,
-    }));
+      };
+    });
 
     return NextResponse.json(enriched);
   }

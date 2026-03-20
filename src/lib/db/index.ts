@@ -121,6 +121,16 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
           updatedAt: now,
         })
         .run();
+    } else {
+      // Update existing seeded templates with latest stage definitions
+      database
+        .update(schema.workflowTemplates)
+        .set({
+          stages: JSON.stringify(t.stages),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.workflowTemplates.id, t.id))
+        .run();
     }
   }
 }

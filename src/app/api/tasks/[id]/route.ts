@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { transitionTask, transitionWorkflowRun } from "@/lib/state-machine";
 import { startTask, stopTask } from "@/lib/services/task-manager";
 
 export async function GET(
@@ -47,7 +48,6 @@ export async function PATCH(
   const db = getDb();
   const body = await request.json();
 
-  // Handle start/stop actions
   if (body.action === "start") {
     const task = db
       .select()
@@ -76,14 +76,14 @@ export async function PATCH(
       return NextResponse.json({ error: "Agent not found" }, { status: 404 });
     }
 
-    const agentCommand =
-      agent.commandTemplate || "claude";
-
-    // Set provisioning status and return immediately — sandbox creation is async
-    db.update(schema.tasks)
-      .set({ status: "provisioning" })
-      .where(eq(schema.tasks.id, id))
-      .run();
+    // Transition to provisioning via state machine
+    const result = await transitionTask(id, { type: "PROVISION" });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: `Transition failed: ${result.error}` },
+        { status: 409 }
+      );
+    }
 
     // Fire-and-forget: startTask runs in the background
     Promise.resolve().then(() => {
@@ -91,7 +91,7 @@ export async function PATCH(
         startTask({
           taskId: id,
           projectDir: project.localPath,
-          agentCommand,
+          agentCommand: agent.commandTemplate || "claude",
           agentType: agent.type,
           credentialSetId: task.credentialSetId,
           dockerImage: agent.dockerImage,
@@ -104,10 +104,8 @@ export async function PATCH(
         });
       } catch (e) {
         console.error(`[Task ${id}] Failed to start:`, e);
-        db.update(schema.tasks)
-          .set({ status: "failed", completedAt: new Date().toISOString() })
-          .where(eq(schema.tasks.id, id))
-          .run();
+        transitionTask(id, { type: "FAIL" }).catch((e) =>
+          console.error(`[Task ${id}] Failed to transition to FAIL:`, e));
       }
     });
 
@@ -120,7 +118,21 @@ export async function PATCH(
   }
 
   if (body.action === "stop") {
-    stopTask(id);
+    const task = db
+      .select({ workflowRunId: schema.tasks.workflowRunId })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, id))
+      .get();
+
+    await stopTask(id);
+
+    // Propagate pause to workflow
+    if (task?.workflowRunId) {
+      try {
+        await transitionWorkflowRun(task.workflowRunId, { type: "PAUSE" });
+      } catch { /* workflow may already be in a non-pausable state */ }
+    }
+
     const updated = db
       .select()
       .from(schema.tasks)
@@ -138,8 +150,14 @@ export async function PATCH(
     if (!task) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
-    if (task.status !== "paused") {
-      return NextResponse.json({ error: "Task is not paused" }, { status: 400 });
+
+    // Transition task via state machine (validates paused → running)
+    const result = await transitionTask(id, { type: "RESUME" });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: `Transition failed: ${result.error}` },
+        { status: 409 }
+      );
     }
 
     const project = db
@@ -161,7 +179,7 @@ export async function PATCH(
     }
 
     try {
-      // Get the ACP session ID to resume the conversation
+      // Get ACP session ID to resume the conversation
       let loadSessionId: string | null = null;
       if (task.workflowRunId) {
         const run = db
@@ -172,7 +190,7 @@ export async function PATCH(
         loadSessionId = run?.acpSessionId || null;
       }
 
-      // Resume with --continue in the existing sandbox, loading the previous session
+      // Resume with --continue, loading the previous session
       startTask({
         taskId: id,
         projectDir: project.localPath,
@@ -188,12 +206,9 @@ export async function PATCH(
         loadSessionId,
       });
 
-      // Unpause the workflow run
+      // Resume the workflow run if applicable
       if (task.workflowRunId) {
-        db.update(schema.workflowRuns)
-          .set({ status: "running" })
-          .where(eq(schema.workflowRuns.id, task.workflowRunId))
-          .run();
+        await transitionWorkflowRun(task.workflowRunId, { type: "RESUME" });
       }
 
       const updated = db
@@ -208,11 +223,44 @@ export async function PATCH(
     }
   }
 
-  // Generic update
-  db.update(schema.tasks)
-    .set(body)
-    .where(eq(schema.tasks.id, id))
-    .run();
+  if (body.action === "cancel") {
+    const task = db
+      .select({ workflowRunId: schema.tasks.workflowRunId })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, id))
+      .get();
+
+    const result = await transitionTask(id, { type: "CANCEL" });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: `Transition failed: ${result.error}` },
+        { status: 409 }
+      );
+    }
+
+    // Propagate cancel to workflow
+    if (task?.workflowRunId) {
+      try {
+        await transitionWorkflowRun(task.workflowRunId, { type: "CANCEL" });
+      } catch { /* workflow may already be cancelled/completed */ }
+    }
+
+    const updated = db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, id))
+      .get();
+    return NextResponse.json(updated);
+  }
+
+  // Generic update — exclude state-machine-managed fields
+  const { action, status, completedAt, sandboxId, ...safeUpdates } = body;
+  if (Object.keys(safeUpdates).length > 0) {
+    db.update(schema.tasks)
+      .set(safeUpdates)
+      .where(eq(schema.tasks.id, id))
+      .run();
+  }
   const updated = db
     .select()
     .from(schema.tasks)

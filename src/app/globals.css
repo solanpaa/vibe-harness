@@ -128,3 +128,16 @@
     @apply font-sans;
   }
 }
+
+/* Inline code styling for prose blocks */
+.prose :where(code):not(:where(pre code)) {
+  background-color: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.prose :where(code)::before,
+.prose :where(code)::after {
+  content: none;
+}
