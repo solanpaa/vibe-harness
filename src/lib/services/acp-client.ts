@@ -175,9 +175,17 @@ export function launchAcpSession(
       output.push(`[ACP BOOTSTRAP ERROR] ${errMsg}`);
       session.status = "error";
       events.emit("error", err);
-      // Kill orphaned docker process if it was spawned before the failure
-      try { session.process?.kill("SIGTERM"); } catch { /* already dead */ }
-      events.emit("close", 1);
+
+      if (session.process) {
+        // Process was spawned — kill it and let proc.on("close") handle
+        // map cleanup and the close event (avoid double-emit).
+        try { session.process.kill("SIGTERM"); } catch { /* already dead */ }
+      } else {
+        // Process was never spawned — clean up the map ourselves and
+        // emit close so task-manager sees the failure.
+        acpSessions.delete(taskId);
+        events.emit("close", 1);
+      }
     });
 
   return session;
@@ -201,6 +209,12 @@ async function bootstrapAcpSession(
   const events = session.events;
   const cleanEnv = { ...env };
   delete cleanEnv.NODE_OPTIONS;
+
+  // Check if session was cancelled/closed while we were awaiting.
+  // Called after every async step to short-circuit early.
+  function isAborted(): boolean {
+    return session.status === "closed" || session.status === "error";
+  }
 
   // Step 1: Create sandbox (async, with retry)
   if (!options.isContinuation) {
@@ -250,6 +264,8 @@ async function bootstrapAcpSession(
     }
   }
 
+  if (isAborted()) return;
+
   // Step 2: Configure network proxy for host access
   try {
     await execFileAsync(
@@ -260,6 +276,8 @@ async function bootstrapAcpSession(
   } catch (err) {
     console.warn(`[ACP] Failed to allow localhost:`, err instanceof Error ? err.message : err);
   }
+
+  if (isAborted()) return;
 
   // Step 3: Build exec args
   const execArgs = ["sandbox", "exec", "-i"];
@@ -339,6 +357,8 @@ async function bootstrapAcpSession(
     }
   }
   execArgs.push(...copilotArgs);
+
+  if (isAborted()) return;
 
   // Step 4: Spawn the exec process
   console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
@@ -680,11 +700,16 @@ export function completeAcpSession(taskId: string): boolean {
 export function cancelAcpOperation(taskId: string): boolean {
   const session = acpSessions.get(taskId);
   if (!session) return false;
-  // Kill the process — ACP SDK doesn't have a cancel method yet
+  // Mark closed so bootstrapAcpSession aborts if still running
+  session.status = "closed";
   try {
     session.process?.kill("SIGTERM");
   } catch {
     // already dead
+  }
+  // If process was never spawned, clean up the map immediately
+  if (!session.process) {
+    acpSessions.delete(taskId);
   }
   return true;
 }
@@ -703,14 +728,21 @@ export function closeAcpSession(taskId: string): boolean {
   const session = acpSessions.get(taskId);
   if (!session) return false;
   session.completingGracefully = true;
+  // Mark closed so bootstrapAcpSession aborts if still running
+  session.status = "closed";
   try {
     session.process?.stdin?.end();
     session.process?.kill("SIGTERM");
   } catch {
     // already dead
   }
-  // Don't delete from map or set status here — let proc.on("close") handle it
-  // so the close event fires properly to task-manager
+  // If process was never spawned (still bootstrapping), clean up immediately.
+  // Otherwise let proc.on("close") handle map cleanup + close event.
+  if (!session.process) {
+    session.events.emit("status", "closed");
+    session.events.emit("close", 0);
+    acpSessions.delete(taskId);
+  }
   return true;
 }
 
