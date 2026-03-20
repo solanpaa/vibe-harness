@@ -4,6 +4,13 @@ import fs from "fs";
 
 const WORKTREE_DIR = ".vibe-harness-worktrees";
 
+/** Validate a git ref name to prevent command injection. */
+function assertSafeRef(ref: string): void {
+  if (!ref || /[`$;&|<>(){}\\\n\r\0]/.test(ref) || ref.includes("..")) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+
 /**
  * Create a git worktree for a task.
  * Returns the worktree path. If the project isn't a git repo,
@@ -12,7 +19,8 @@ const WORKTREE_DIR = ".vibe-harness-worktrees";
 export function createWorktree(
   projectDir: string,
   taskId: string,
-  branchName?: string
+  branchName?: string,
+  startPoint?: string
 ): { worktreePath: string; branch: string; isWorktree: boolean } {
   // Check if it's a git repo
   try {
@@ -42,19 +50,23 @@ export function createWorktree(
     }
   }
 
-  // Create the worktree with a new branch from HEAD
+  // Create the worktree with a new branch from the start point
+  const resolvedStart = startPoint || "HEAD";
+  if (startPoint) assertSafeRef(startPoint);
   try {
-    execSync(`git worktree add -b "${branch}" "${worktreePath}" HEAD`, {
+    const result = spawnSync("git", ["worktree", "add", "-b", branch, worktreePath, resolvedStart], {
       cwd: projectDir,
       stdio: "pipe",
     });
+    if (result.status !== 0) throw new Error(result.stderr?.toString() || "worktree add failed");
   } catch (e) {
     // Branch might already exist — try without -b
     try {
-      execSync(`git worktree add "${worktreePath}" "${branch}"`, {
+      const result = spawnSync("git", ["worktree", "add", worktreePath, branch], {
         cwd: projectDir,
         stdio: "pipe",
       });
+      if (result.status !== 0) throw new Error(result.stderr?.toString() || "worktree add failed");
     } catch {
       // Worktree might already exist
       if (fs.existsSync(worktreePath)) {
@@ -100,7 +112,8 @@ export function removeWorktree(projectDir: string, taskId: string): void {
 export function commitAndMergeWorktree(
   projectDir: string,
   taskId: string,
-  commitMessage: string
+  commitMessage: string,
+  targetBranch?: string
 ): { merged: boolean; branch: string; error?: string } {
   const shortId = taskId.slice(0, 8);
   const worktreePath = path.join(projectDir, WORKTREE_DIR, shortId);
@@ -128,7 +141,11 @@ export function commitAndMergeWorktree(
       });
     }
 
-    // Merge into whatever branch the main working tree is on
+    // Merge into the target branch (or whatever branch the main working tree is on)
+    if (targetBranch) {
+      assertSafeRef(targetBranch);
+      spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+    }
     const merge = spawnSync(
       "git", ["merge", branch, "--no-ff", "-m", `Merge approved task ${shortId}`],
       { cwd: projectDir, stdio: "pipe" }
@@ -150,12 +167,17 @@ export function commitAndMergeWorktree(
  */
 export function fastForwardMerge(
   projectDir: string,
-  taskId: string
+  taskId: string,
+  targetBranch?: string
 ): { merged: boolean; branch: string; error?: string } {
   const shortId = taskId.slice(0, 8);
   const branch = `vibe-harness/task-${shortId}`;
 
   try {
+    if (targetBranch) {
+      assertSafeRef(targetBranch);
+      spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+    }
     execSync(`git merge "${branch}" --ff-only`, {
       cwd: projectDir,
       stdio: "pipe",

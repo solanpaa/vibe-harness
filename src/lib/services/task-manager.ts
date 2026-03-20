@@ -42,6 +42,7 @@ export interface StartTaskOptions {
   originTaskId?: string | null;
   loadSessionId?: string | null; // Resume ACP session from previous stage
   mcpServers?: AcpLaunchOptions["mcpServers"]; // MCP servers for the agent session
+  branch?: string | null;
 }
 
 /** Start a task by launching its sandbox, optionally in a git worktree */
@@ -67,7 +68,7 @@ export function startTask(options: StartTaskOptions) {
     // Only create a new worktree if we didn't find an existing one to reuse
     if (!isWorktree) {
       try {
-        const wt = createWorktree(options.projectDir, options.taskId);
+        const wt = createWorktree(options.projectDir, options.taskId, undefined, options.branch || undefined);
         workDir = wt.worktreePath;
         branch = wt.branch;
         isWorktree = wt.isWorktree;
@@ -241,8 +242,8 @@ export function getTaskAcpSession(taskId: string) {
  */
 export function finalizeAndMerge(
   originTaskId: string,
-  opts?: { workflowRunId?: string | null }
-): { merged: boolean; branch: string; error?: string } {
+  opts?: { workflowRunId?: string | null; targetBranch?: string | null }
+): { merged: boolean; branch: string; error?: string; mergeStrategy?: "fast-forward" | "no-ff" | "failed" } {
   const db = getDb();
 
   const originTask = db
@@ -259,17 +260,19 @@ export function finalizeAndMerge(
     .get();
   if (!project) return { merged: false, branch: "", error: "Project not found" };
 
-  // Detect target branch from main working tree
-  let targetBranch = "main";
-  try {
-    targetBranch =
-      execSync("git branch --show-current", {
-        cwd: project.localPath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim() || "main";
-  } catch {
-    // default to "main"
+  // Use explicitly provided target, or task's stored targetBranch/branch, or detect from working tree
+  let targetBranch = opts?.targetBranch || originTask.targetBranch || originTask.branch || null;
+  if (!targetBranch) {
+    try {
+      targetBranch =
+        execSync("git branch --show-current", {
+          cwd: project.localPath,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim() || "main";
+    } catch {
+      targetBranch = "main";
+    }
   }
 
   // Build commit message from task metadata
@@ -301,11 +304,14 @@ export function finalizeAndMerge(
   const shortId = originTaskId.slice(0, 8);
   const branch = `vibe-harness/task-${shortId}`;
 
+  let mergeStrategy: "fast-forward" | "no-ff" | "failed" = "failed";
+
   if (rebaseResult.rebased) {
     // 3a. Rebase succeeded — try fast-forward merge
-    const ffResult = fastForwardMerge(project.localPath, originTaskId);
+    const ffResult = fastForwardMerge(project.localPath, originTaskId, targetBranch);
     if (ffResult.merged) {
       merged = true;
+      mergeStrategy = "fast-forward";
     } else {
       console.warn("FF merge failed after rebase, falling back to --no-ff:", ffResult.error);
     }
@@ -316,10 +322,13 @@ export function finalizeAndMerge(
     const fallback = commitAndMergeWorktree(
       project.localPath,
       originTaskId,
-      commitMessage
+      commitMessage,
+      targetBranch
     );
     merged = fallback.merged;
-    if (!merged) {
+    if (merged) {
+      mergeStrategy = "no-ff";
+    } else {
       mergeError = fallback.error;
       console.error("Fallback merge also failed:", fallback.error);
     }
@@ -346,5 +355,5 @@ export function finalizeAndMerge(
   // Workflow run status is now handled by the state machine (FINALIZE event).
   // No direct DB update needed here.
 
-  return { merged, branch, error: mergeError };
+  return { merged, branch, error: mergeError, mergeStrategy };
 }

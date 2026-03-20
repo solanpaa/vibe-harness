@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Workflow, ArrowRight, GitFork, Loader2, GitCompare, Plus, X } from "lucide-react";
+import { Play, Workflow, ArrowRight, GitFork, GitBranch, Loader2, GitCompare, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -60,6 +60,7 @@ interface FormState {
   useWorktree: boolean;
   workflowTemplateId: string;
   prompt: string;
+  branch: string;
 }
 
 interface CompareVariant {
@@ -89,6 +90,7 @@ const INITIAL_FORM: FormState = {
   useWorktree: true,
   workflowTemplateId: DIRECT_EXECUTE_ID,
   prompt: "",
+  branch: "",
 };
 
 // ── Component ────────────────────────────────────────────────────────
@@ -105,6 +107,7 @@ export function NewTaskModal({
   const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
+  const [branches, setBranches] = useState<{ branches: string[]; current: string }>({ branches: [], current: "" });
   const [compareMode, setCompareMode] = useState(false);
   const [variants, setVariants] = useState<CompareVariant[]>([
     { agentDefinitionId: "", model: "", label: "" },
@@ -149,6 +152,24 @@ export function NewTaskModal({
     }
   }, [defaultProjectId, projects]);
 
+  // Fetch branches when project changes
+  useEffect(() => {
+    if (!form.projectId) {
+      setBranches({ branches: [], current: "" });
+      setForm((f) => ({ ...f, branch: "" }));
+      return;
+    }
+    fetch(`/api/projects/${form.projectId}/branches`)
+      .then((r) => r.json())
+      .then((data) => {
+        setBranches(data);
+        setForm((f) => ({ ...f, branch: data.current || "" }));
+      })
+      .catch(() => {
+        setBranches({ branches: [], current: "" });
+      });
+  }, [form.projectId]);
+
   // ── Derived state ────────────────────────────────────────────────
 
   const selectedWorkflow = workflows.find(
@@ -169,6 +190,7 @@ export function NewTaskModal({
       projectId: defaultProjectId ?? "",
       agentDefinitionId: agents[0]?.id ?? "",
       workflowTemplateId: DIRECT_EXECUTE_ID,
+      branch: "",
     });
     setCompareMode(false);
     setVariants([
@@ -211,6 +233,7 @@ export function NewTaskModal({
             prompt: form.prompt,
             credentialSetId: form.credentialSetId || null,
             useWorktree: form.useWorktree,
+            branch: form.branch || null,
             variants: validVariants,
           }),
         });
@@ -238,6 +261,7 @@ export function NewTaskModal({
             credentialSetId: form.credentialSetId || null,
             model: form.model.trim() || null,
             useWorktree: form.useWorktree,
+            branch: form.branch || null,
           }),
         });
         if (!res.ok) {
@@ -522,6 +546,33 @@ export function NewTaskModal({
               Use Git Worktree (isolated copy of the repo)
             </Label>
           </div>
+
+          {/* Branch */}
+          {form.useWorktree && branches.branches.length > 0 && (
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1">
+                <GitBranch className="h-3 w-3" />
+                Base Branch
+              </Label>
+              <Select
+                value={form.branch}
+                onValueChange={(v) => update("branch", v ?? "")}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select branch...">
+                    {form.branch || branches.current || "Select branch..."}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.branches.map((b) => (
+                    <SelectItem key={b} value={b}>
+                      {b}{b === branches.current ? " (current)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Task Description */}
           <div className="space-y-2">

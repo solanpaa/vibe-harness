@@ -150,6 +150,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Agent definition not found" }, { status: 400 });
   }
 
+  const branch = body.branch || null;
   const now = new Date().toISOString();
   const task = {
     id: uuid(),
@@ -164,6 +165,8 @@ export async function POST(request: NextRequest) {
     prompt: body.prompt,
     model: body.model || null,
     useWorktree: body.useWorktree !== false ? 1 : 0,
+    branch: branch,
+    targetBranch: branch,
     output: null,
     createdAt: now,
     completedAt: null,

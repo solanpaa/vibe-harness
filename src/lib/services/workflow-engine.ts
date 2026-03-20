@@ -44,6 +44,7 @@ export async function startWorkflowRun(input: {
   credentialSetId?: string | null;
   model?: string | null;
   useWorktree?: boolean;
+  branch?: string | null;
 }) {
   const db = getDb();
 
@@ -133,6 +134,8 @@ export async function startWorkflowRun(input: {
       prompt,
       model: input.model || null,
       useWorktree: input.useWorktree !== false ? 1 : 0,
+      branch: input.branch || null,
+      targetBranch: input.branch || null,
       output: null,
       createdAt: now,
       completedAt: null,
@@ -155,6 +158,7 @@ export async function startWorkflowRun(input: {
         prompt,
         model: input.model,
         useWorktree: input.useWorktree,
+        branch: input.branch,
       });
     } catch (e) {
       console.error(`[Workflow ${runId}] Failed to start first stage:`, e);

@@ -135,6 +135,7 @@ export async function launchProposals(input: {
         credentialSetId: splitTask.credentialSetId,
         model: splitTask.model,
         useWorktree: true,
+        branch: splitTask.branch,
       });
 
       workflowRunIds.push(result.runId);
@@ -241,6 +242,17 @@ export function consolidateParallelGroup(groupId: string): {
     return { success: false, branch: "", mergedCount: 0, error: "Source run not found" };
   }
 
+  // Find the stored target branch from the source run's first task
+  const sourceFirstTask = db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.workflowRunId, group.sourceWorkflowRunId))
+    .all()
+    .filter((t) => !t.originTaskId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+
+  const storedTargetBranch = sourceFirstTask?.targetBranch || sourceFirstTask?.branch || null;
+
   const project = db
     .select()
     .from(schema.projects)
@@ -278,6 +290,15 @@ export function consolidateParallelGroup(groupId: string): {
 
     // Create the consolidation branch from current HEAD
     try {
+      if (storedTargetBranch) {
+        if (/[`$;&|<>(){}\\\n\r\0]/.test(storedTargetBranch) || storedTargetBranch.includes("..")) {
+          throw new Error(`Invalid git ref: ${storedTargetBranch}`);
+        }
+        spawnSync("git", ["checkout", storedTargetBranch], {
+          cwd: projectDir,
+          stdio: "pipe",
+        });
+      }
       execSync(`git checkout -b "${consolidationBranch}"`, {
         cwd: projectDir,
         stdio: "pipe",

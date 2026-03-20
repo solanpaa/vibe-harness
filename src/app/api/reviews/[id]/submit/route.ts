@@ -14,6 +14,7 @@ export async function POST(
   const db = getDb();
   const body = await request.json();
   const action = body.action as "approve" | "request_changes" | "split";
+  const targetBranch = body.targetBranch as string | undefined;
 
   const review = db
     .select()
@@ -40,10 +41,16 @@ export async function POST(
         .where(eq(schema.tasks.id, originId))
         .get();
 
-      let mergeResult: { merged: boolean; branch: string; error?: string } | null = null;
+      let mergeResult: { merged: boolean; branch: string; error?: string; mergeStrategy?: string } | null = null;
       if (task) {
         try {
-          mergeResult = finalizeAndMerge(originId);
+          if (targetBranch) {
+            db.update(schema.tasks)
+              .set({ targetBranch })
+              .where(eq(schema.tasks.id, originId))
+              .run();
+          }
+          mergeResult = finalizeAndMerge(originId, { targetBranch });
         } catch (e) {
           console.error("Failed to finalize:", e);
         }
@@ -54,6 +61,7 @@ export async function POST(
         reviewId: id,
         merged: mergeResult?.merged ?? false,
         mergeError: mergeResult?.error ?? null,
+        mergeStrategy: mergeResult?.mergeStrategy ?? null,
         workflowAdvanced: null,
       });
     }
@@ -71,15 +79,22 @@ export async function POST(
       );
     }
 
-    let mergeResult: { merged: boolean; branch: string; error?: string } | null = null;
+    let mergeResult: { merged: boolean; branch: string; error?: string; mergeStrategy?: string } | null = null;
     let workflowAdvanced: Record<string, unknown> | null = null;
 
     if (result.to === "finalizing") {
       // Last stage — attempt merge
       const originId = getOriginTaskId(review.taskId);
       try {
+        if (targetBranch) {
+          db.update(schema.tasks)
+            .set({ targetBranch })
+            .where(eq(schema.tasks.id, originId))
+            .run();
+        }
         mergeResult = finalizeAndMerge(originId, {
           workflowRunId: review.workflowRunId,
+          targetBranch,
         });
 
         if (mergeResult.merged) {
@@ -105,7 +120,8 @@ export async function POST(
           mergeResult = commitAndMergeWorktree(
             project.localPath,
             originId,
-            `vibe-harness: ${shortPrompt}`
+            `vibe-harness: ${shortPrompt}`,
+            undefined
           );
           if (mergeResult.merged) {
             try { removeWorktree(project.localPath, originId); } catch { /* non-critical */ }
@@ -127,6 +143,7 @@ export async function POST(
       reviewId: id,
       merged: mergeResult?.merged ?? false,
       mergeError: mergeResult?.error ?? null,
+      mergeStrategy: mergeResult?.mergeStrategy ?? null,
       workflowAdvanced,
     });
   }

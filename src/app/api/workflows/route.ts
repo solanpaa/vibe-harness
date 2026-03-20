@@ -35,6 +35,7 @@ export async function POST(request: NextRequest) {
       credentialSetId: body.credentialSetId,
       model: body.model,
       useWorktree: body.useWorktree,
+      branch: body.branch,
     });
     return NextResponse.json(result, { status: 201 });
   }

@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
     prompt,
     credentialSetId,
     useWorktree = true,
+    branch,
     variants,
   } = body;
 
@@ -137,6 +138,8 @@ export async function POST(request: NextRequest) {
         prompt,
         model: model || null,
         useWorktree: useWorktree ? 1 : 0,
+        branch: branch || null,
+        targetBranch: branch || null,
         comparisonGroupId: groupId,
         executionMode: agent.type.includes("acp") ? "acp" : "legacy",
         status: "pending",
@@ -157,6 +160,7 @@ export async function POST(request: NextRequest) {
         prompt,
         model: model || null,
         useWorktree,
+        branch: branch || undefined,
       });
     } catch (e) {
       console.error(`Failed to start comparison task ${taskId}:`, e);

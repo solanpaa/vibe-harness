@@ -109,6 +109,8 @@ export const tasks = sqliteTable("tasks", {
   title: text("title"),
   model: text("model"),
   useWorktree: integer("use_worktree").notNull().default(1), // 1=true, 0=false
+  branch: text("branch"),              // base branch to start worktree from (null = HEAD)
+  targetBranch: text("target_branch"), // branch to merge into on completion (null = same as branch)
   output: text("output"),
   lastAiMessage: text("last_ai_message"),
   exitCode: integer("exit_code"),

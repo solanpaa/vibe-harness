@@ -29,6 +29,13 @@ import { parseUnifiedDiff } from "@/lib/services/diff-service";
 import type { DiffFile } from "@/lib/services/diff-service";
 import { Markdown } from "@/components/ui/markdown";
 import { reviewStatusConfig, isReviewPending } from "@/lib/status-config";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +86,8 @@ export function ReviewSection({
   const [selectedFile, setSelectedFile] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [branches, setBranches] = useState<{ branches: string[]; current: string }>({ branches: [], current: "" });
+  const [selectedTargetBranch, setSelectedTargetBranch] = useState<string>("");
 
   // ── Fetch all reviews in the task chain ──────────────────────────────────
 
@@ -168,6 +177,27 @@ export function ReviewSection({
     fetchReviews();
   }, [taskId, fetchReviews]);
 
+  // ── Fetch branches for target branch selector ───────────────────────────
+
+  useEffect(() => {
+    async function loadBranches() {
+      try {
+        const taskRes = await fetch(`/api/tasks/${taskId}`);
+        if (!taskRes.ok) return;
+        const task = await taskRes.json();
+
+        const branchRes = await fetch(`/api/projects/${task.projectId}/branches`);
+        if (!branchRes.ok) return;
+        const branchData = await branchRes.json();
+        setBranches(branchData);
+        setSelectedTargetBranch(task.targetBranch || task.branch || branchData.current || "");
+      } catch {
+        // ignore
+      }
+    }
+    loadBranches();
+  }, [taskId]);
+
   // Auto-expand when task is awaiting review
   useEffect(() => {
     if (taskStatus === "awaiting_review" && reviews.length > 0) {
@@ -243,7 +273,10 @@ export function ReviewSection({
       const res = await fetch(`/api/reviews/${activeReview.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({
+          action,
+          ...(action === "approve" && selectedTargetBranch ? { targetBranch: selectedTargetBranch } : {}),
+        }),
       });
       if (res.ok) {
         const result = await res.json();
@@ -256,7 +289,12 @@ export function ReviewSection({
 
         if (action === "approve") {
           if (result.merged) {
-            toast.success("Changes approved and merged!");
+            const strategyText = result.mergeStrategy === "fast-forward"
+              ? " (fast-forward)"
+              : result.mergeStrategy === "no-ff"
+                ? " (merge commit — rebase had conflicts)"
+                : "";
+            toast.success(`Changes approved and merged${strategyText}!`);
           } else if (result.mergeError) {
             toast.success(
               "Changes approved! Merge failed — merge the branch manually.",
@@ -400,7 +438,29 @@ export function ReviewSection({
           {/* Action buttons */}
           {isPending && (
             <>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                {branches.branches.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">Merge into:</span>
+                    <Select
+                      value={selectedTargetBranch}
+                      onValueChange={(v) => setSelectedTargetBranch(v ?? "")}
+                    >
+                      <SelectTrigger className="h-8 w-[160px] text-xs">
+                        <SelectValue placeholder="Select branch...">
+                          {selectedTargetBranch || "Select branch..."}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {branches.branches.map((b) => (
+                          <SelectItem key={b} value={b}>
+                            {b}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <Button
                   onClick={() => handleSubmit("approve")}
                   className="bg-green-600 hover:bg-green-700"
