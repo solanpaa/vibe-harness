@@ -7,10 +7,13 @@
 // ---------------------------------------------------------------------------
 
 import * as acp from "@agentclientprotocol/sdk";
-import { spawn, ChildProcess, execSync } from "child_process";
+import { spawn, execFile, ChildProcess, execSync } from "child_process";
+import { promisify } from "util";
 import { Readable, Writable } from "stream";
 import { EventEmitter } from "events";
 import path from "path";
+
+const execFileAsync = promisify(execFile);
 
 // ---- Types ----------------------------------------------------------------
 
@@ -41,8 +44,8 @@ export interface AcpSessionEvent {
 
 export interface AcpSession {
   id: string; // taskId
-  process: ChildProcess;
-  connection: acp.ClientSideConnection;
+  process: ChildProcess | null;
+  connection: acp.ClientSideConnection | null;
   sessionId: string | null;
   status: AcpSessionStatus;
   events: EventEmitter; // emits: update, message, status, close, error, auto_complete
@@ -99,7 +102,9 @@ export function launchAcpSession(
   const events = new EventEmitter();
   const output: string[] = [];
   const messages: AcpMessage[] = [];
-  let currentMessageBuffer = "";
+  // Shared mutable ref so the sessionUpdate closure in bootstrapAcpSession
+  // and the proc.on("close") handler share the same buffer.
+  const msgBuffer = { value: "" };
   const env = { ...process.env };
 
   // Get GitHub token
@@ -122,81 +127,150 @@ export function launchAcpSession(
 
   const sandboxName = options.sandboxName || `vibe-${taskId.slice(0, 8)}`;
 
-  // Step 1: Create sandbox (synchronous, boots the VM)
-  // For continuations, the sandbox already exists — skip create.
+  // Create session shell — process and connection are assigned once the
+  // async bootstrap chain (sandbox create → exec spawn) completes.
+  const session: AcpSession = {
+    id: taskId,
+    process: null,
+    connection: null,
+    sessionId: null,
+    status: "initializing",
+    events,
+    messages,
+    eventLog: [],
+    workDir: options.projectDir,
+    output,
+    autoCompleteTimer: null,
+    userIntervened: false,
+    completingGracefully: false,
+  };
+
+  acpSessions.set(taskId, session);
+
+  // Buffer all events for replay on stream reconnect
+  events.on("update", (update: { kind: string; data: Record<string, unknown> }) => {
+    session.eventLog.push({ ...update, timestamp: new Date().toISOString() });
+  });
+  events.on("message", (msg: AcpMessage) => {
+    session.eventLog.push({
+      kind: "message",
+      data: { role: msg.role, content: msg.content, isIntervention: msg.metadata?.isIntervention ?? false },
+      timestamp: msg.timestamp,
+    });
+  });
+  events.on("status", (status: string) => {
+    session.eventLog.push({
+      kind: "status",
+      data: { status },
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Async bootstrap: create sandbox → configure network → spawn exec → initialize ACP.
+  // Runs in the background; callers listen for events.
+  bootstrapAcpSession(session, options, env, sandboxName, messages, output, msgBuffer)
+    .catch((err) => {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[ACP] Bootstrap failed:", err);
+      output.push(`[ACP BOOTSTRAP ERROR] ${errMsg}`);
+      session.status = "error";
+      events.emit("error", err);
+      // Kill orphaned docker process if it was spawned before the failure
+      try { session.process?.kill("SIGTERM"); } catch { /* already dead */ }
+      events.emit("close", 1);
+    });
+
+  return session;
+}
+
+// ---- Async bootstrap (sandbox create → spawn → init) ----------------------
+
+const SANDBOX_CREATE_TIMEOUT_MS = 300_000; // 5 minutes — no longer blocks event loop
+const SANDBOX_CREATE_MAX_RETRIES = 2;
+const SANDBOX_CREATE_RETRY_DELAY_MS = 5_000;
+
+async function bootstrapAcpSession(
+  session: AcpSession,
+  options: AcpLaunchOptions,
+  env: NodeJS.ProcessEnv,
+  sandboxName: string,
+  messages: AcpMessage[],
+  output: string[],
+  msgBuffer: { value: string },
+) {
+  const events = session.events;
+  const cleanEnv = { ...env };
+  delete cleanEnv.NODE_OPTIONS;
+
+  // Step 1: Create sandbox (async, with retry)
   if (!options.isContinuation) {
-    try {
-      const createArgs = ["sandbox", "create", "--name", sandboxName];
-      if (options.dockerImage) {
-        createArgs.push("-t", options.dockerImage);
+    const createArgs = ["sandbox", "create", "--name", sandboxName];
+    if (options.dockerImage) {
+      createArgs.push("-t", options.dockerImage);
+    }
+    createArgs.push(options.agentCommand, options.projectDir);
+    if (options.extraWorkspaces) {
+      createArgs.push(...options.extraWorkspaces);
+    }
+
+    console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
+    events.emit("update", { kind: "sandbox_creating", data: { sandboxName } });
+
+    let created = false;
+    for (let attempt = 1; attempt <= SANDBOX_CREATE_MAX_RETRIES; attempt++) {
+      try {
+        const { stdout } = await execFileAsync("docker", createArgs, {
+          env: cleanEnv,
+          timeout: SANDBOX_CREATE_TIMEOUT_MS,
+        });
+        console.log(`[ACP] Sandbox created: ${sandboxName}`);
+        output.push(stdout);
+        created = true;
+        break;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("already exists")) {
+          console.log(`[ACP] Sandbox already exists: ${sandboxName}`);
+          created = true;
+          break;
+        }
+        if (attempt < SANDBOX_CREATE_MAX_RETRIES) {
+          console.warn(`[ACP] Sandbox create attempt ${attempt} failed, retrying in ${SANDBOX_CREATE_RETRY_DELAY_MS / 1000}s: ${msg}`);
+          await new Promise((r) => setTimeout(r, SANDBOX_CREATE_RETRY_DELAY_MS));
+        } else {
+          console.error(`[ACP] Sandbox create failed after ${SANDBOX_CREATE_MAX_RETRIES} attempts: ${msg}`);
+          events.emit("update", { kind: "sandbox_create_failed", data: { error: msg } });
+          // Don't throw — try exec anyway in case sandbox exists
+        }
       }
-      createArgs.push(options.agentCommand, options.projectDir);
-      // Mount extra workspaces (e.g. original project .git for worktrees)
-      if (options.extraWorkspaces) {
-        createArgs.push(...options.extraWorkspaces);
-      }
-      console.log(`[ACP] Creating sandbox: docker ${createArgs.join(" ")}`);
-      // Docker Desktop bakes host env vars into the sandbox at creation time.
-      // Prefix with env -u NODE_OPTIONS to ensure Next.js dev flags don't leak
-      // into the sandbox (copilot CLI rejects --no-warnings as unknown option).
-      const createEnv = { ...env };
-      delete createEnv.NODE_OPTIONS;
-      const result = execSync(`env -u NODE_OPTIONS docker ${createArgs.join(" ")}`, {
-        env: createEnv,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120_000,
-      });
-      console.log(`[ACP] Sandbox created: ${sandboxName}`);
-      output.push(result);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // If sandbox already exists, that's fine
-      if (!msg.includes("already exists")) {
-        console.error(`[ACP] Sandbox create failed: ${msg}`);
-        // Don't throw — try exec anyway in case sandbox exists
-      }
+    }
+
+    if (created) {
+      events.emit("update", { kind: "sandbox_created", data: { sandboxName } });
     }
   }
 
-  // Step 2: Exec copilot in ACP mode inside the sandbox
-  // Using -i (interactive) to keep stdin open for the NDJSON stream
-  const execArgs = ["sandbox", "exec", "-i"];
-
-  // Explicitly clear NODE_OPTIONS — Docker sandbox daemon forwards host env
-  // vars independently of the spawn env, so deleting from spawnEnv isn't enough.
-  // Next.js dev sets NODE_OPTIONS=--no-warnings which copilot CLI rejects.
-  execArgs.push("-e", "NODE_OPTIONS=");
-
-  // Pass GitHub token for authentication
-  if (env.GITHUB_TOKEN) {
-    execArgs.push("-e", `GITHUB_TOKEN=${env.GITHUB_TOKEN}`);
-  }
-
-  // Pass task ID and host URL for the MCP bridge baked into the Docker image.
-  // The bridge reads VIBE_TASK_ID to scope proposal tool calls to this task,
-  // and VIBE_HARNESS_URL to reach the host API via curl.
-  execArgs.push("-e", `VIBE_TASK_ID=${taskId}`);
-  execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
-
-  // Allow sandbox network access to the host for the MCP bridge.
-  // The baked-in bridge uses curl to call host.docker.internal:3000,
-  // but the sandbox proxy sees the destination as localhost and blocks it.
+  // Step 2: Configure network proxy for host access
   try {
-    const proxyEnv = { ...env };
-    delete proxyEnv.NODE_OPTIONS;
-    execSync(
-      `docker sandbox network proxy ${sandboxName} --allow-host localhost`,
-      { env: proxyEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
+    await execFileAsync(
+      "docker",
+      ["sandbox", "network", "proxy", sandboxName, "--allow-host", "localhost"],
+      { env: cleanEnv, timeout: 10_000 }
     );
   } catch (err) {
-    // May fail if sandbox isn't fully ready yet — non-fatal
     console.warn(`[ACP] Failed to allow localhost:`, err instanceof Error ? err.message : err);
   }
 
+  // Step 3: Build exec args
+  const execArgs = ["sandbox", "exec", "-i"];
+  execArgs.push("-e", "NODE_OPTIONS=");
+  if (env.GITHUB_TOKEN) {
+    execArgs.push("-e", `GITHUB_TOKEN=${env.GITHUB_TOKEN}`);
+  }
+  execArgs.push("-e", `VIBE_TASK_ID=${session.id}`);
+  execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
   execArgs.push(sandboxName);
 
-  // Build the copilot command with ACP flags
   const copilotArgs = [options.agentCommand, "--acp", "--stdio", "--yolo", "--autopilot"];
   if (options.model) {
     copilotArgs.push("--model", options.model);
@@ -204,9 +278,8 @@ export function launchAcpSession(
   if (options.isContinuation) {
     copilotArgs.push("--continue");
   }
-  // Pass MCP servers via --additional-mcp-config CLI flag.
-  // Write config as a file inside the sandbox and reference it with @path
-  // to avoid shell escaping issues with inline JSON.
+
+  // Write MCP config into sandbox if needed
   if (options.mcpServers?.length) {
     const mcpServers: Record<string, unknown> = {};
     for (const server of options.mcpServers) {
@@ -232,39 +305,32 @@ export function launchAcpSession(
     const mcpConfigJson = JSON.stringify({ mcpServers });
     const mcpConfigPath = "/tmp/vibe-mcp-config.json";
     try {
-      const writeEnv = { ...env };
-      delete writeEnv.NODE_OPTIONS;
-      // Write config file into the sandbox. Use spawn with stdin pipe to avoid
-      // any shell escaping issues with the JSON content.
-      const writeResult = execSync(
+      // Write config file into the sandbox via stdin pipe.
+      // execSync is fine here — this is a fast 10s-timeout write, not the slow sandbox create.
+      execSync(
         `docker sandbox exec -i ${sandboxName} tee ${mcpConfigPath}`,
-        { input: mcpConfigJson, env: writeEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
+        { input: mcpConfigJson, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
       );
       copilotArgs.push("--additional-mcp-config", `@${mcpConfigPath}`);
       console.log(`[ACP] Wrote MCP config to sandbox:${mcpConfigPath}`);
       console.log(`[ACP] MCP config: ${mcpConfigJson}`);
     } catch (err) {
-      // Fallback: pass inline JSON
       console.warn(`[ACP] Failed to write MCP config file, using inline JSON:`, err instanceof Error ? err.message : err);
       copilotArgs.push("--additional-mcp-config", JSON.stringify({ mcpServers }));
     }
 
-    // Allow sandbox network access to MCP server hosts.
-    // Docker sandbox uses a network proxy that blocks local connections by default.
+    // Allow sandbox network access to MCP server hosts
     for (const server of options.mcpServers) {
       if ("url" in server) {
         try {
           const url = new URL(server.url);
-          const allowEnv = { ...env };
-          delete allowEnv.NODE_OPTIONS;
           const hosts = new Set([url.hostname, "localhost", "127.0.0.1"]);
           const allowArgs = Array.from(hosts).flatMap(h => ["--allow-host", h]);
-          execSync(`docker sandbox network proxy ${sandboxName} ${allowArgs.join(" ")}`, {
-            env: allowEnv,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: 10_000,
-          });
+          await execFileAsync(
+            "docker",
+            ["sandbox", "network", "proxy", sandboxName, ...allowArgs],
+            { env: cleanEnv, timeout: 10_000 }
+          );
           console.log(`[ACP] Allowed sandbox network access to: ${Array.from(hosts).join(", ")}`);
         } catch (err) {
           console.warn(`[ACP] Failed to allow MCP host:`, err instanceof Error ? err.message : err);
@@ -274,15 +340,15 @@ export function launchAcpSession(
   }
   execArgs.push(...copilotArgs);
 
+  // Step 4: Spawn the exec process
   console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
-  // Strip NODE_OPTIONS to prevent Next.js flags (e.g. --no-warnings)
-  // from leaking into the copilot process inside the sandbox
   const spawnEnv = { ...env };
   delete spawnEnv.NODE_OPTIONS;
   const proc = spawn("docker", execArgs, {
     env: spawnEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  session.process = proc;
 
   // Capture stderr for debugging
   proc.stderr?.on("data", (data: Buffer) => {
@@ -301,11 +367,9 @@ export function launchAcpSession(
   const client: acp.Client = {
     async requestPermission(params) {
       events.emit("update", { kind: "permission_request", data: params });
-      // With --yolo active, permissions are auto-approved server-side.
-      // If we somehow receive one, select the first option (most permissive).
-      const options = (params as Record<string, unknown>).options as Array<{ id: string }> | undefined;
-      if (options && options.length > 0) {
-        return { outcome: { outcome: "selected" as const, optionId: options[0].id } };
+      const opts = (params as Record<string, unknown>).options as Array<{ id: string }> | undefined;
+      if (opts && opts.length > 0) {
+        return { outcome: { outcome: "selected" as const, optionId: opts[0].id } };
       }
       return { outcome: { outcome: "cancelled" as const } };
     },
@@ -319,8 +383,7 @@ export function launchAcpSession(
         case "agent_message_chunk": {
           if (content?.type === "text") {
             const text = content.text as string;
-            // Accumulate text into current message buffer
-            currentMessageBuffer += text;
+            msgBuffer.value += text;
             events.emit("update", { kind: "assistant_message_delta", data: { text } });
           } else if (content?.type === "tool_use") {
             events.emit("update", {
@@ -351,30 +414,28 @@ export function launchAcpSession(
         }
         case "agent_turn_start": {
           session.status = "busy";
-          currentMessageBuffer = "";
+          msgBuffer.value = "";
           events.emit("status", "busy");
           break;
         }
         case "agent_turn_end": {
-          // Flush accumulated message to session.messages
-          if (currentMessageBuffer.trim()) {
+          if (msgBuffer.value.trim()) {
             const msg: AcpMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
-              content: currentMessageBuffer,
+              content: msgBuffer.value,
               timestamp: new Date().toISOString(),
             };
             messages.push(msg);
             events.emit("message", msg);
           }
-          currentMessageBuffer = "";
+          msgBuffer.value = "";
           session.status = "ready";
           events.emit("status", "ready");
           events.emit("update", { kind: "turn_end", data: {} });
           break;
         }
         default: {
-          // Forward unknown events for debugging
           if (updateType) {
             events.emit("update", { kind: updateType, data: update });
           }
@@ -385,88 +446,39 @@ export function launchAcpSession(
   };
 
   const connection = new acp.ClientSideConnection((_agent) => client, stream);
-
-  const session: AcpSession = {
-    id: taskId,
-    process: proc,
-    connection,
-    sessionId: null,
-    status: "initializing",
-    events,
-    messages,
-    eventLog: [],
-    workDir: options.projectDir,
-    output,
-    autoCompleteTimer: null,
-    userIntervened: false,
-    completingGracefully: false,
-  };
+  session.connection = connection;
 
   proc.on("close", (code) => {
     if (session.autoCompleteTimer) {
       clearTimeout(session.autoCompleteTimer);
       session.autoCompleteTimer = null;
     }
-    // Flush any remaining message buffer that didn't get an agent_turn_end
-    if (currentMessageBuffer.trim()) {
+    if (msgBuffer.value.trim()) {
       const msg: AcpMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: currentMessageBuffer,
+        content: msgBuffer.value,
         timestamp: new Date().toISOString(),
       };
       messages.push(msg);
       events.emit("message", msg);
-      currentMessageBuffer = "";
+      msgBuffer.value = "";
     }
     session.status = "closed";
     events.emit("status", "closed");
-    // If we intentionally closed the session (auto-complete or manual complete),
-    // treat it as success (code 0) regardless of the actual exit code.
     const effectiveCode = session.completingGracefully ? 0 : (code ?? 0);
     events.emit("close", effectiveCode);
-    acpSessions.delete(taskId);
+    acpSessions.delete(session.id);
   });
 
   proc.on("error", (err) => {
     session.status = "error";
     events.emit("error", err);
-    acpSessions.delete(taskId);
+    acpSessions.delete(session.id);
   });
 
-  acpSessions.set(taskId, session);
-
-  // Buffer all events for replay on stream reconnect
-  events.on("update", (update: { kind: string; data: Record<string, unknown> }) => {
-    session.eventLog.push({ ...update, timestamp: new Date().toISOString() });
-  });
-  events.on("message", (msg: AcpMessage) => {
-    session.eventLog.push({
-      kind: "message",
-      data: { role: msg.role, content: msg.content, isIntervention: msg.metadata?.isIntervention ?? false },
-      timestamp: msg.timestamp,
-    });
-  });
-  events.on("status", (status: string) => {
-    session.eventLog.push({
-      kind: "status",
-      data: { status },
-      timestamp: new Date().toISOString(),
-    });
-  });
-
-  // Initialize connection asynchronously
-  initializeSession(session, { ...options, loadSessionId: options.loadSessionId }).catch((err) => {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error("ACP init failed:", err);
-    output.push(`[ACP INIT ERROR] ${errMsg}`);
-    session.status = "error";
-    events.emit("error", err);
-    // Kill the orphaned docker process so it exits promptly
-    try { proc.kill("SIGTERM"); } catch { /* already dead */ }
-  });
-
-  return session;
+  // Step 5: Initialize ACP session
+  await initializeSession(session, { ...options, loadSessionId: options.loadSessionId });
 }
 
 async function initializeSession(
@@ -475,6 +487,11 @@ async function initializeSession(
 ) {
   const MAX_INIT_RETRIES = 3;
   const INIT_DELAY_MS = 1500;
+
+  if (!session.connection) {
+    throw new Error("Connection not established before initialization");
+  }
+  const connection = session.connection;
 
   // Sandbox is already created — exec connects directly to copilot ACP.
   // Retry initialization in case copilot is slow to start (e.g. under load
@@ -488,7 +505,7 @@ async function initializeSession(
 
     try {
       console.log(`[ACP] Sending initialize... (attempt ${attempt}/${MAX_INIT_RETRIES})`);
-      await session.connection.initialize({
+      await connection.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
       });
@@ -513,18 +530,16 @@ async function initializeSession(
     // Resume existing session — agent replays conversation history
     console.log(`[ACP] Loading session: ${options.loadSessionId}`);
     try {
-      const loadResult = await session.connection.loadSession({
+      await connection.loadSession({
         sessionId: options.loadSessionId,
         cwd: absCwd,
         mcpServers,
       });
-      // loadSession uses the same sessionId we passed
       session.sessionId = options.loadSessionId;
       console.log(`[ACP] Session loaded: ${session.sessionId}`);
     } catch (err) {
       console.warn("[ACP] session/load failed, falling back to session/new:", err);
-      // Fall back to new session if load fails
-      const sessionResult = await session.connection.newSession({
+      const sessionResult = await connection.newSession({
         cwd: absCwd,
         mcpServers,
       });
@@ -539,7 +554,7 @@ async function initializeSession(
         setTimeout(() => reject(new Error("session/new timed out after 30s")), 30_000)
       );
       const sessionResult = await Promise.race([
-        session.connection.newSession({ cwd: absCwd, mcpServers }),
+        connection.newSession({ cwd: absCwd, mcpServers }),
         timeoutPromise,
       ]);
       session.sessionId = sessionResult.sessionId;
@@ -568,7 +583,7 @@ export async function sendAcpPrompt(
   message: string,
 ): Promise<{ success: boolean; stopReason?: string }> {
   const session = acpSessions.get(taskId);
-  if (!session || !session.sessionId || session.status === "closed") {
+  if (!session || !session.sessionId || !session.connection || session.status === "closed") {
     return { success: false };
   }
 
@@ -667,7 +682,7 @@ export function cancelAcpOperation(taskId: string): boolean {
   if (!session) return false;
   // Kill the process — ACP SDK doesn't have a cancel method yet
   try {
-    session.process.kill("SIGTERM");
+    session.process?.kill("SIGTERM");
   } catch {
     // already dead
   }
@@ -689,8 +704,8 @@ export function closeAcpSession(taskId: string): boolean {
   if (!session) return false;
   session.completingGracefully = true;
   try {
-    session.process.stdin?.end();
-    session.process.kill("SIGTERM");
+    session.process?.stdin?.end();
+    session.process?.kill("SIGTERM");
   } catch {
     // already dead
   }
