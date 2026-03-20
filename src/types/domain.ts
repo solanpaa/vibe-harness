@@ -102,6 +102,7 @@ export const TaskStatus = z.enum([
   "awaiting_review",
   "completed",
   "failed",
+  "cancelled",
 ]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
@@ -135,11 +136,14 @@ export type CreateTask = z.infer<typeof CreateTaskSchema>;
 export const WorkflowRunStatus = z.enum([
   "pending",
   "running",
+  "paused",
   "awaiting_review",
   "awaiting_split_review",
+  "running_parallel",
   "finalizing",
   "completed",
   "failed",
+  "cancelled",
 ]);
 export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatus>;
 

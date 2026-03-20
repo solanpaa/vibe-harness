@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { transitionTask } from "@/lib/state-machine";
 import { finalizeAndMerge, stopTask } from "@/lib/services/task-manager";
 import { removeWorktree } from "@/lib/services/worktree";
 
@@ -157,24 +158,23 @@ export async function PATCH(
       }
     }
 
-    // Mark winner as completed
-    db.update(schema.tasks)
-      .set({ status: "completed", completedAt: new Date().toISOString() })
-      .where(eq(schema.tasks.id, winnerTaskId))
-      .run();
+    // Mark winner as completed via state machine if still running
+    if (winnerTask.status === "running") {
+      await transitionTask(winnerTaskId, { type: "COMPLETE" });
+    }
 
     // Stop running losers and clean up their worktrees
     for (const task of tasks) {
       if (task.id === winnerTaskId) continue;
 
       if (task.status === "running") {
-        stopTask(task.id);
+        await stopTask(task.id);
       }
 
-      db.update(schema.tasks)
-        .set({ status: "failed", completedAt: new Date().toISOString() })
-        .where(eq(schema.tasks.id, task.id))
-        .run();
+      // Mark non-terminal losers as cancelled
+      if (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
+        await transitionTask(task.id, { type: "CANCEL" });
+      }
 
       // Clean up loser worktrees
       if (project) {
@@ -234,7 +234,7 @@ export async function DELETE(
 
   for (const task of tasks) {
     if (task.status === "running") {
-      stopTask(task.id);
+      await stopTask(task.id);
     }
     db.delete(schema.tasks).where(eq(schema.tasks.id, task.id)).run();
   }

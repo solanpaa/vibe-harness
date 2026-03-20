@@ -15,8 +15,8 @@ function MessageBlock({ content }: { content: string }) {
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-[11px] font-semibold text-terminal-text-accent">Copilot</span>
       </div>
-      <div className="text-[13px] text-terminal-text whitespace-pre-wrap break-words leading-relaxed">
-        {content}
+      <div className="text-[13px] text-terminal-text leading-relaxed prose prose-invert prose-sm max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
       </div>
     </div>
   );
@@ -38,7 +38,7 @@ function UserMessageBlock({ content }: { content: string }) {
 function ReasoningBlock({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = content.length > 150;
-  const display = isLong && !expanded ? content.slice(0, 150) + "…" : content;
+  const preview = content.slice(0, 150) + "…";
 
   return (
     <div
@@ -47,23 +47,17 @@ function ReasoningBlock({ content }: { content: string }) {
     >
       <div className="flex items-start gap-1">
         <span className="text-[10px] text-terminal-text-muted shrink-0 mt-0.5">›</span>
-        <div className="text-[11px] text-terminal-text-muted italic leading-relaxed min-w-0 reasoning-markdown">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              p: ({ children }) => <span>{children} </span>,
-              strong: ({ children }) => <strong className="text-terminal-text font-semibold">{children}</strong>,
-              em: ({ children }) => <em>{children}</em>,
-              code: ({ children }) => <code className="text-terminal-text bg-terminal-bg-elevated rounded px-1 text-[10px]">{children}</code>,
-              a: ({ children }) => <span className="text-terminal-text">{children}</span>,
-              ul: ({ children }) => <span>{children}</span>,
-              ol: ({ children }) => <span>{children}</span>,
-              li: ({ children }) => <span>• {children} </span>,
-            }}
-          >
-            {display}
-          </ReactMarkdown>
-        </div>
+        {isLong && !expanded ? (
+          <div className="text-[11px] text-terminal-text-muted italic leading-relaxed min-w-0">
+            {preview}
+          </div>
+        ) : (
+          <div className="text-[11px] text-terminal-text-muted italic leading-relaxed min-w-0 prose prose-invert prose-xs max-w-none [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_pre]:my-1 [&_code]:text-[10px] [&_code]:bg-terminal-bg-elevated [&_strong]:text-terminal-text">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
         {isLong && (
           <ChevronRight className={`h-3 w-3 text-terminal-text-muted shrink-0 mt-0.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
         )}

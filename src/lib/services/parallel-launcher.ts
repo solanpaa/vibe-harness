@@ -1,7 +1,7 @@
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { listProposals } from "./proposal-service";
@@ -97,29 +97,33 @@ export async function launchProposals(input: {
 
   // Build dependency graph to determine launch order
   const proposalMap = new Map(proposals.map((p) => [p.title, p]));
-  const readyToLaunch: typeof proposals = [];
-  const queued: typeof proposals = [];
+
+  // Sort: independent proposals first, then dependent ones
+  // (dependencies reference other proposals by title — if the dep isn't in
+  //  this batch, launch anyway since it won't be satisfied)
+  const independent: typeof proposals = [];
+  const dependent: typeof proposals = [];
 
   for (const p of proposals) {
     const hasDeps =
       p.dependsOn.length > 0 &&
       p.dependsOn.some((dep: string) => proposalMap.has(dep));
     if (hasDeps) {
-      queued.push(p);
+      dependent.push(p);
     } else {
-      readyToLaunch.push(p);
+      independent.push(p);
     }
   }
+
+  // Launch all proposals — independent first, then dependent
+  const allToLaunch = [...independent, ...dependent];
 
   // Get the agent definition from the split task
   const agentId = splitTask.agentDefinitionId;
 
-  // Launch ready proposals (up to MAX_CONCURRENT)
   const workflowRunIds: string[] = [];
-  const toLaunch = readyToLaunch.slice(0, MAX_CONCURRENT);
-  const overflow = readyToLaunch.slice(MAX_CONCURRENT);
 
-  for (const proposal of toLaunch) {
+  for (const proposal of allToLaunch) {
     const prompt = buildSubTaskPrompt(proposal);
 
     try {
@@ -159,35 +163,14 @@ export async function launchProposals(input: {
     }
   }
 
-  // Mark overflow and dependency-blocked proposals as approved (queued)
-  for (const p of [...overflow, ...queued]) {
-    db.update(schema.taskProposals)
-      .set({
-        status: "approved",
-        parallelGroupId: groupId,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.taskProposals.id, p.id))
-      .run();
-  }
-
-  // Transition the parent workflow run to "completed" — the split is done,
-  // child runs are independent workflow runs tracked via the parallel group.
-  if (splitTask.workflowRunId) {
-    db.update(schema.workflowRuns)
-      .set({
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.workflowRuns.id, splitTask.workflowRunId))
-      .run();
-  }
+  // The parent workflow run's status transition to "running_parallel" is handled
+  // by the state machine (LAUNCH_PROPOSALS event). No direct DB update needed here.
 
   return {
     parallelGroupId: groupId,
     workflowRunIds,
-    launched: toLaunch.length,
-    queued: overflow.length + queued.length,
+    launched: workflowRunIds.length,
+    queued: 0,
   };
 }
 
@@ -325,11 +308,20 @@ export function consolidateParallelGroup(groupId: string): {
       const taskBranch = `vibe-harness/task-${shortTaskId}`;
 
       try {
-        execSync(
-          `git merge "${taskBranch}" --no-ff -m "Merge sub-task ${shortTaskId}: ${run.title || "sub-task"}"`,
+        const mergeMsg = `Merge sub-task ${shortTaskId}: ${(run.title || "sub-task").replace(/[^\w\s\-_./:]/g, "")}`;
+        const mergeResult = spawnSync(
+          "git", ["merge", taskBranch, "--no-ff", "-m", mergeMsg],
           { cwd: projectDir, stdio: "pipe" }
         );
+        if (mergeResult.status !== 0) {
+          throw new Error(mergeResult.stderr?.toString() || "merge failed");
+        }
         mergedCount++;
+
+        // Delete the child branch — merged into consolidation branch
+        try {
+          spawnSync("git", ["branch", "-D", taskBranch], { cwd: projectDir, stdio: "pipe" });
+        } catch { /* non-critical */ }
       } catch (e) {
         // Merge conflict — abort and report
         try {
@@ -362,10 +354,13 @@ export function consolidateParallelGroup(groupId: string): {
       cwd: projectDir,
       stdio: "pipe",
     });
-    execSync(
-      `git merge "${consolidationBranch}" --no-ff -m "Merge parallel group ${shortGroupId}"`,
+    const finalMerge = spawnSync(
+      "git", ["merge", consolidationBranch, "--no-ff", "-m", `Merge parallel group ${shortGroupId}`],
       { cwd: projectDir, stdio: "pipe" }
     );
+    if (finalMerge.status !== 0) {
+      throw new Error(finalMerge.stderr?.toString() || "final merge failed");
+    }
 
     // Clean up child worktrees
     for (const run of childRuns) {

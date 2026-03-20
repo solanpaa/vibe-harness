@@ -2,8 +2,8 @@ import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { bundleCommentsAsPrompt, getOriginTaskId } from "./review-service";
-import { startTask } from "./task-manager";
-import { buildStagePrompt, getStageConfig } from "./workflow-engine";
+import { startTask, getTransitionTask } from "./task-manager";
+import { buildStagePrompt, getStageConfig } from "./workflow-config";
 
 /**
  * Handle "request changes" on a review:
@@ -127,15 +127,13 @@ export async function rerunWithComments(reviewId: string): Promise<{
     })
     .run();
 
-  // Update workflow run status to "running"
-  if (originalTask.workflowRunId) {
-    db.update(schema.workflowRuns)
-      .set({ status: "running" })
-      .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
-      .run();
-  }
+  // Workflow run status transition to "running" is handled by the state machine
+  // (REQUEST_CHANGES event). No direct DB update needed here.
 
   const agentCommand = agent.commandTemplate || "claude";
+
+  // Transition to provisioning before launching
+  await getTransitionTask()(newTaskId, { type: "PROVISION" });
 
   // Use startTask which properly registers sandbox, creates worktree, etc.
   startTask({

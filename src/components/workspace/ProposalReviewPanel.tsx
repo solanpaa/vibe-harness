@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -304,9 +306,11 @@ export function ProposalReviewPanel({
                 className="mt-2 min-h-[80px] text-sm"
               />
             ) : (
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                {proposal.description}
-              </p>
+              <div className="text-sm text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {proposal.description}
+                </ReactMarkdown>
+              </div>
             )}
 
             {/* Affected files */}

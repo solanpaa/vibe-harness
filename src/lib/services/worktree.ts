@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 
@@ -121,17 +121,21 @@ export function commitAndMergeWorktree(
       // No changes staged — nothing to commit, but branch may already have commits
     } catch {
       // There are staged changes — commit them
-      execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+      const safeMsg = commitMessage.replace(/[^\w\s\-_./:()#@,]/g, "");
+      spawnSync("git", ["commit", "-m", safeMsg], {
         cwd: worktreePath,
         stdio: "pipe",
       });
     }
 
     // Merge into whatever branch the main working tree is on
-    execSync(`git merge "${branch}" --no-ff -m "Merge approved task ${shortId}"`, {
-      cwd: projectDir,
-      stdio: "pipe",
-    });
+    const merge = spawnSync(
+      "git", ["merge", branch, "--no-ff", "-m", `Merge approved task ${shortId}`],
+      { cwd: projectDir, stdio: "pipe" }
+    );
+    if (merge.status !== 0) {
+      throw new Error(merge.stderr?.toString() || "merge failed");
+    }
 
     return { merged: true, branch };
   } catch (e) {
