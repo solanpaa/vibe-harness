@@ -144,7 +144,10 @@ export function commitAndMergeWorktree(
     // Merge into the target branch (or whatever branch the main working tree is on)
     if (targetBranch) {
       assertSafeRef(targetBranch);
-      spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+      const checkout = spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+      if (checkout.status !== 0) {
+        return { merged: false, branch, error: `Failed to checkout target branch "${targetBranch}": ${checkout.stderr?.toString()}` };
+      }
     }
     const merge = spawnSync(
       "git", ["merge", branch, "--no-ff", "-m", `Merge approved task ${shortId}`],
@@ -176,7 +179,10 @@ export function fastForwardMerge(
   try {
     if (targetBranch) {
       assertSafeRef(targetBranch);
-      spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+      const checkout = spawnSync("git", ["checkout", targetBranch], { cwd: projectDir, stdio: "pipe" });
+      if (checkout.status !== 0) {
+        return { merged: false, branch, error: `Failed to checkout target branch "${targetBranch}": ${checkout.stderr?.toString()}` };
+      }
     }
     execSync(`git merge "${branch}" --ff-only`, {
       cwd: projectDir,
@@ -269,7 +275,19 @@ export function getWorktreeDiff(
 ): string {
   try {
     // Get the merge base (where the worktree branched from)
-    const mergeBase = execSync("git merge-base HEAD main", {
+    let defaultBranch = "main";
+    try {
+      const ref = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+        cwd: worktreePath,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      defaultBranch = ref.replace("refs/remotes/origin/", "");
+    } catch {
+      // Fall back to "main"
+    }
+    assertSafeRef(defaultBranch);
+    const mergeBase = execSync(`git merge-base HEAD ${defaultBranch}`, {
       cwd: worktreePath,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

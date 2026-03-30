@@ -73,7 +73,8 @@ export function startTask(options: StartTaskOptions) {
         branch = wt.branch;
         isWorktree = wt.isWorktree;
       } catch (e) {
-        console.error("Failed to create worktree, using project dir directly:", e);
+        console.error("Failed to create worktree:", e);
+        throw new Error(`Cannot create isolated worktree: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -149,67 +150,80 @@ export function startTask(options: StartTaskOptions) {
 
   // Listen for completion
   session.events.on("close", async (code: number) => {
-    // Build output: conversation messages + always include stderr/raw output for diagnostics
-    const conversationOutput = session.messages
-      .map((m) => `[${m.role}] ${m.content}`)
-      .join("\n\n");
-    const stderrOutput = session.output.join("\n").trim();
-    const outputParts = [
-      conversationOutput,
-      stderrOutput ? `\n--- stderr / raw ---\n${stderrOutput}` : "",
-    ];
-    const output = outputParts.filter(Boolean).join("\n") || `(no output captured, exit code: ${code})`;
-    const lastMsg = session.messages.filter((m) => m.role === "assistant").pop();
-    const lastAiMessage = lastMsg?.content || null;
+    try {
+      // Build output: conversation messages + always include stderr/raw output for diagnostics
+      const conversationOutput = session.messages
+        .map((m) => `[${m.role}] ${m.content}`)
+        .join("\n\n");
+      const stderrOutput = session.output.join("\n").trim();
+      const outputParts = [
+        conversationOutput,
+        stderrOutput ? `\n--- stderr / raw ---\n${stderrOutput}` : "",
+      ];
+      const output = outputParts.filter(Boolean).join("\n") || `(no output captured, exit code: ${code})`;
+      const lastMsg = session.messages.filter((m) => m.role === "assistant").pop();
+      const lastAiMessage = lastMsg?.content || null;
 
-    // Store ACP session ID on workflow run so next stage can load it
-    const currentTask = db
-      .select({
-        workflowRunId: schema.tasks.workflowRunId,
-        stageName: schema.tasks.stageName,
-        projectId: schema.tasks.projectId,
-      })
-      .from(schema.tasks)
-      .where(eq(schema.tasks.id, options.taskId))
-      .get();
-
-    if (currentTask?.workflowRunId && session.sessionId) {
-      db.update(schema.workflowRuns)
-        .set({ acpSessionId: session.sessionId })
-        .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
-        .run();
-    }
-
-    // Check if this was a manual pause — if so, just save output and stop
-    const freshTask = db
-      .select({ status: schema.tasks.status })
-      .from(schema.tasks)
-      .where(eq(schema.tasks.id, options.taskId))
-      .get();
-    if (freshTask?.status === "paused") {
-      db.update(schema.tasks)
-        .set({ output, lastAiMessage })
+      // Store ACP session ID on workflow run so next stage can load it
+      const currentTask = db
+        .select({
+          workflowRunId: schema.tasks.workflowRunId,
+          stageName: schema.tasks.stageName,
+          projectId: schema.tasks.projectId,
+        })
+        .from(schema.tasks)
         .where(eq(schema.tasks.id, options.taskId))
-        .run();
-      return;
-    }
+        .get();
 
-    // Dispatch to state machine — all branching logic (split/autoAdvance/review,
-    // workflow advancement, review creation) is handled by the machines.
-    if (code === 0) {
-      await getTransitionTask()(options.taskId, {
-        type: "COMPLETE",
-        output,
-        lastAiMessage,
-        exitCode: code,
-      });
-    } else {
-      await getTransitionTask()(options.taskId, {
-        type: "FAIL",
-        output,
-        lastAiMessage,
-        exitCode: code,
-      });
+      if (currentTask?.workflowRunId && session.sessionId) {
+        db.update(schema.workflowRuns)
+          .set({ acpSessionId: session.sessionId })
+          .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
+          .run();
+      }
+
+      // Check if this was a manual pause — if so, just save output and stop
+      const freshTask = db
+        .select({ status: schema.tasks.status })
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, options.taskId))
+        .get();
+      if (freshTask?.status === "paused") {
+        db.update(schema.tasks)
+          .set({ output, lastAiMessage })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+        return;
+      }
+
+      // Dispatch to state machine — all branching logic (split/autoAdvance/review,
+      // workflow advancement, review creation) is handled by the machines.
+      if (code === 0) {
+        await getTransitionTask()(options.taskId, {
+          type: "COMPLETE",
+          output,
+          lastAiMessage,
+          exitCode: code,
+        });
+      } else {
+        await getTransitionTask()(options.taskId, {
+          type: "FAIL",
+          output,
+          lastAiMessage,
+          exitCode: code,
+        });
+      }
+    } catch (err) {
+      console.error(`[task-manager] close handler error for task ${options.taskId}:`, err);
+      try {
+        await getTransitionTask()(options.taskId, {
+          type: "FAIL",
+          output: "Internal error during task completion",
+          exitCode: code,
+        });
+      } catch {
+        /* best-effort — already failing */
+      }
     }
   });
 
@@ -290,6 +304,26 @@ export function finalizeAndMerge(
   );
   if (commitResult.error) {
     console.warn("Commit step had an error:", commitResult.error);
+  }
+
+  // If nothing was committed and no error, check whether the branch has
+  // any existing commits ahead of the target.  If not, there is nothing
+  // to merge and we can bail early.
+  if (!commitResult.committed && !commitResult.error) {
+    const shortId = originTaskId.slice(0, 8);
+    const worktreePath = path.join(project.localPath, WORKTREE_DIR, shortId);
+    try {
+      const ahead = execSync(`git rev-list --count ${targetBranch}..HEAD`, {
+        cwd: worktreePath,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      if (ahead === "0") {
+        return { merged: false, branch: `vibe-harness/task-${shortId}`, error: "No changes to merge" };
+      }
+    } catch {
+      // Unable to determine — proceed with merge attempt
+    }
   }
 
   // 2. Try to rebase onto target branch
