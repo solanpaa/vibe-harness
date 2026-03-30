@@ -102,20 +102,21 @@ function shortenValue(value: string): string {
 
 function ToolStartLine({ name, detail, args }: { name: string; detail: string; args?: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false);
-  const isLong = detail.length > 80;
-  const truncated = isLong ? detail.slice(0, 80) + "…" : detail;
-  const icon = toolIcon(name);
+  const canExpand = args && Object.keys(args).length > 0;
+  const truncated = detail.length > 80 ? detail.slice(0, 80) + "…" : detail;
 
   return (
     <div className="font-mono text-[11px] py-0.5 min-w-0">
       <div
-        className={`flex items-baseline gap-1.5 ${isLong ? "cursor-pointer" : ""}`}
-        onClick={() => isLong && setExpanded(!expanded)}
+        className={`flex items-baseline gap-1.5 ${canExpand ? "cursor-pointer" : ""}`}
+        onClick={() => canExpand && setExpanded(!expanded)}
       >
         <span className="text-terminal-text-muted shrink-0">
-          {isLong ? (
+          {canExpand ? (
             <ChevronRight className={`inline h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
-          ) : icon}
+          ) : (
+            <span>{toolIcon(name)}</span>
+          )}
         </span>
         <span className="text-terminal-text font-semibold shrink-0">{name}</span>
         {!expanded && detail && (
