@@ -16,13 +16,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_25.x | bash - \
     && npm install -g pnpm typescript tsx \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# HashiCorp Terraform
-RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-       > /etc/apt/sources.list.d/hashicorp.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends terraform \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# HashiCorp Terraform (direct binary — avoids lsb_release / unsupported distro issues)
+RUN TERRAFORM_VERSION=$(curl -fsSL https://checkpoint-api.hashicorp.com/v1/check/terraform | python3 -c "import sys,json;print(json.load(sys.stdin)['current_version'])") \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_$(dpkg --print-architecture).zip" -o /tmp/terraform.zip \
+    && unzip -o /tmp/terraform.zip -d /usr/local/bin \
+    && rm /tmp/terraform.zip \
+    && chmod +x /usr/local/bin/terraform
 
 # --- User-level tools (run as agent) ---
 USER agent
