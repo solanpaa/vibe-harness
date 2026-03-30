@@ -4,6 +4,11 @@ import { v4 as uuid } from "uuid";
 import { desc, eq } from "drizzle-orm";
 import { generateTitle } from "@/lib/services/title-generator";
 
+function safeParseUsageStats(raw: string | null): unknown {
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
 export async function GET(request: NextRequest) {
   const db = getDb();
   const { searchParams } = new URL(request.url);
@@ -15,13 +20,18 @@ export async function GET(request: NextRequest) {
         id: schema.tasks.id,
         projectId: schema.tasks.projectId,
         originTaskId: schema.tasks.originTaskId,
+        workflowRunId: schema.tasks.workflowRunId,
         prompt: schema.tasks.prompt,
         status: schema.tasks.status,
         createdAt: schema.tasks.createdAt,
+        usageStats: schema.tasks.usageStats,
       })
       .from(schema.tasks)
       .all();
-    return NextResponse.json(rows);
+    return NextResponse.json(rows.map(r => ({
+      ...r,
+      usageStats: safeParseUsageStats(r.usageStats),
+    })));
   }
 
   // Enriched listing — tasks with related project, agent, workflow, and review data
@@ -43,6 +53,7 @@ export async function GET(request: NextRequest) {
         sandboxId: schema.tasks.sandboxId,
         executionMode: schema.tasks.executionMode,
         comparisonGroupId: schema.tasks.comparisonGroupId,
+        usageStats: schema.tasks.usageStats,
         createdAt: schema.tasks.createdAt,
         completedAt: schema.tasks.completedAt,
         wrTitle: schema.workflowRuns.title,
@@ -108,6 +119,7 @@ export async function GET(request: NextRequest) {
       sandboxId: row.sandboxId,
       executionMode: row.executionMode,
       comparisonGroupId: row.comparisonGroupId,
+      usageStats: safeParseUsageStats(row.usageStats),
       createdAt: row.createdAt,
       completedAt: row.completedAt,
       latestReview,
@@ -133,7 +145,10 @@ export async function GET(request: NextRequest) {
   }
 
   const allTasks = db.select().from(schema.tasks).all();
-  return NextResponse.json(allTasks);
+  return NextResponse.json(allTasks.map(t => ({
+    ...t,
+    usageStats: safeParseUsageStats(t.usageStats),
+  })));
 }
 
 export async function POST(request: NextRequest) {

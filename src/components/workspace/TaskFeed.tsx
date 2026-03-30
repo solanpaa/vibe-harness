@@ -30,6 +30,10 @@ export interface EnrichedTask {
   sandboxId: string | null;
   executionMode?: string;
   comparisonGroupId?: string | null;
+  usageStats: {
+    premiumRequests?: number;
+    sessionDurationMs?: number;
+  } | null;
   createdAt: string;
   completedAt: string | null;
   latestReview: { id: string; round: number; status: string; createdAt?: string } | null;

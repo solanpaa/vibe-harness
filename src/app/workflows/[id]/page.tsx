@@ -20,6 +20,7 @@ import {
   Save,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -43,6 +44,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { formatDuration } from "@/lib/format";
 import type {
   CredentialSet,
   Project,
@@ -181,6 +183,11 @@ export default function WorkflowDetailPage({
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Aggregate usage stats per run
+  const [runUsageStats, setRunUsageStats] = useState<
+    Record<string, { premiumRequests: number; sessionDurationMs: number }>
+  >({});
+
   // Run dialog
   const [runOpen, setRunOpen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -300,6 +307,27 @@ export default function WorkflowDetailPage({
               "workflowTemplateId" in item && item.workflowTemplateId === id,
           );
           setRuns(filtered);
+
+          // Fetch tasks to compute aggregate usage stats per run
+          if (filtered.length > 0) {
+            fetch("/api/tasks?fields=summary")
+              .then((r) => r.json())
+              .then((tasks: Array<{ workflowRunId?: string; usageStats?: { premiumRequests?: number; sessionDurationMs?: number } | null }>) => {
+                const runIds = new Set(filtered.map((r) => r.id));
+                const stats: Record<string, { premiumRequests: number; sessionDurationMs: number }> = {};
+                for (const task of tasks) {
+                  if (!task.workflowRunId || !runIds.has(task.workflowRunId)) continue;
+                  if (!task.usageStats) continue;
+                  if (!stats[task.workflowRunId]) {
+                    stats[task.workflowRunId] = { premiumRequests: 0, sessionDurationMs: 0 };
+                  }
+                  stats[task.workflowRunId].premiumRequests += task.usageStats.premiumRequests ?? 0;
+                  stats[task.workflowRunId].sessionDurationMs += task.usageStats.sessionDurationMs ?? 0;
+                }
+                setRunUsageStats(stats);
+              })
+              .catch(() => {});
+          }
         })
         .catch(() => setRuns([])),
     ]).finally(() => setLoading(false));
@@ -693,6 +721,7 @@ export default function WorkflowDetailPage({
               {runs.map((run) => {
                 const cfg = runStatusConfig[run.status] ??
                   runStatusConfig.pending;
+                const stats = runUsageStats[run.id];
                 return (
                   <div
                     key={run.id}
@@ -706,6 +735,18 @@ export default function WorkflowDetailPage({
                       {run.currentStage && (
                         <span className="text-sm text-muted-foreground">
                           Stage: {run.currentStage}
+                        </span>
+                      )}
+                      {stats && stats.premiumRequests > 0 && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Zap className="h-3 w-3" />
+                          {stats.premiumRequests} premium
+                        </span>
+                      )}
+                      {stats && stats.sessionDurationMs > 0 && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          {formatDuration(stats.sessionDurationMs)}
                         </span>
                       )}
                     </div>

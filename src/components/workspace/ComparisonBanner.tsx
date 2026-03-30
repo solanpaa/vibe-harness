@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { statusDotClass, isTerminalTask, isActiveTask } from "@/lib/status-config";
+import { formatDuration } from "@/lib/format";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -115,13 +116,7 @@ export function ComparisonBanner({
     }
   }
 
-  function formatDuration(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${minutes}m ${secs}s`;
-  }
+
 
   return (
     <div className="border-b bg-muted/30">

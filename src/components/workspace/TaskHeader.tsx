@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, Square, TerminalSquare, Trash2, Workflow } from "lucide-react";
+import { Clock, Play, Square, TerminalSquare, Trash2, Workflow, Zap } from "lucide-react";
+import { formatDuration } from "@/lib/format";
 import { toast } from "sonner";
 import type { EnrichedTask } from "./TaskFeed";
 import type { TaskStatusConfig } from "@/lib/status-config";
@@ -12,6 +13,10 @@ interface TaskHeaderProps {
   statusConfig: TaskStatusConfig;
   sandboxId: string | null;
   shellCommand: string | null;
+  usageStats: {
+    premiumRequests?: number;
+    sessionDurationMs?: number;
+  } | null;
   onStart: () => void;
   onStop: () => void;
   onResume: () => void;
@@ -24,6 +29,7 @@ export function TaskHeader({
   statusConfig,
   sandboxId,
   shellCommand,
+  usageStats,
   onStart,
   onStop,
   onResume,
@@ -129,6 +135,22 @@ export function TaskHeader({
         <span className="text-xs text-muted-foreground">
           {new Date(task.createdAt).toLocaleString()}
         </span>
+        {usageStats && (
+          <>
+            {usageStats.premiumRequests != null && (
+              <Badge variant="secondary" className="gap-1 text-xs">
+                <Zap className="h-3 w-3" />
+                {usageStats.premiumRequests} premium {usageStats.premiumRequests === 1 ? "request" : "requests"}
+              </Badge>
+            )}
+            {usageStats.sessionDurationMs != null && (
+              <Badge variant="outline" className="gap-1 text-xs">
+                <Clock className="h-3 w-3" />
+                {formatDuration(usageStats.sessionDurationMs)}
+              </Badge>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

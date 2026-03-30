@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TerminalEvent } from "./event-parser";
 import { stripOsc } from "./event-parser";
+import { formatDuration } from "@/lib/format";
 
 // ---- Event renderers ------------------------------------------------------
 
@@ -116,14 +117,6 @@ function ResultCard({
   durationMs?: number;
 }) {
   const ok = exitCode === 0;
-  const formatDuration = (ms: number) => {
-    if (ms < 1000) return `${ms}ms`;
-    const s = Math.round(ms / 1000);
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    const rem = s % 60;
-    return `${m}m ${rem}s`;
-  };
 
   return (
     <div

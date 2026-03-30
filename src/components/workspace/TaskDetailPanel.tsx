@@ -30,6 +30,10 @@ interface TaskDetail {
   originTaskId: string | null;
   comparisonGroupId: string | null;
   shellCommand: string | null;
+  usageStats: {
+    premiumRequests?: number;
+    sessionDurationMs?: number;
+  } | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -170,6 +174,7 @@ export function TaskDetailPanel({
         statusConfig={config}
         sandboxId={detail?.sandboxId ?? null}
         shellCommand={detail?.shellCommand ?? null}
+        usageStats={detail?.usageStats ?? task.usageStats ?? null}
         onStart={handleStart}
         onStop={handleStop}
         onResume={() => handleResume()}
