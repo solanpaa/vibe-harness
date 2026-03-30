@@ -107,6 +107,168 @@ function countChainReviewRounds(taskId: string): number {
 }
 
 /**
+ * Generate a diff for a task's worktree or committed changes.
+ * Returns structured result with diffText, parsed files, diagnostics, and the workDir used.
+ */
+export async function generateTaskDiff(taskId: string): Promise<{
+  diffText: string;
+  files: ReturnType<typeof parseUnifiedDiff>;
+  summary: string;
+  workDir: string;
+  method: string;
+  diagnostics: string[];
+  reviewUpdated?: boolean;
+}> {
+  const db = getDb();
+  const diagnostics: string[] = [];
+
+  const task = db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .get();
+
+  if (!task) throw new Error(`Task ${taskId} not found`);
+
+  const project = db
+    .select()
+    .from(schema.projects)
+    .where(eq(schema.projects.id, task.projectId))
+    .get();
+
+  if (!project) throw new Error(`Project ${task.projectId} not found`);
+
+  const originId = getOriginTaskId(taskId);
+  const workDir = resolveTaskWorkDir(project.localPath, originId);
+  diagnostics.push(`workDir: ${workDir}`);
+  diagnostics.push(`originTaskId: ${originId}`);
+
+  // Check if workDir exists
+  if (!fs.existsSync(workDir)) {
+    diagnostics.push(`ERROR: workDir does not exist`);
+    return { diffText: "", files: [], summary: "0 files changed", workDir, method: "none", diagnostics };
+  }
+
+  // Check git status before staging
+  try {
+    const statusBefore = execSync("git status --porcelain", {
+      cwd: workDir, encoding: "utf-8", maxBuffer: 1024 * 1024,
+    });
+    diagnostics.push(`git status before staging: ${statusBefore.trim().split("\n").length} files`);
+    if (statusBefore.trim()) {
+      diagnostics.push(`status sample: ${statusBefore.trim().split("\n").slice(0, 5).join(" | ")}`);
+    }
+  } catch (e) {
+    diagnostics.push(`git status failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  let diffText = "";
+  let method = "none";
+
+  try {
+    // Stage changes to tracked files (modified, deleted)
+    execSync("git add -u", { cwd: workDir, stdio: "pipe" });
+    diagnostics.push("git add -u: OK");
+
+    // Stage new files too, but exclude bulk directories
+    // Use :(exclude) long-form pathspec — short form ':!' fails on some git versions
+    try {
+      execSync(
+        'git add -A --ignore-errors -- . ":(exclude)node_modules" ":(exclude).pnpm-store" ":(exclude).venv" ":(exclude)__pycache__"',
+        { cwd: workDir, stdio: "pipe" },
+      );
+      diagnostics.push("git add -A (with exclusions): OK");
+    } catch (e) {
+      diagnostics.push(`git add -A failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Check status after staging
+    try {
+      const statusAfter = execSync("git diff --cached --stat HEAD", {
+        cwd: workDir, encoding: "utf-8", maxBuffer: 1024 * 1024,
+      });
+      diagnostics.push(`staged diff stat: ${statusAfter.trim() || "(empty)"}`);
+    } catch (e) {
+      diagnostics.push(`diff --cached --stat failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Primary: diff staged changes against HEAD
+    diffText = execSync("git diff --cached HEAD", {
+      cwd: workDir,
+      encoding: "utf-8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    if (diffText.trim()) {
+      method = "diff --cached HEAD";
+      diagnostics.push(`diff --cached HEAD: ${diffText.length} bytes`);
+    } else {
+      diagnostics.push("diff --cached HEAD: empty");
+
+      // Fallback: agent may have already committed — diff against merge-base
+      try {
+        let defaultBranch = "main";
+        try {
+          const ref = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+            cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          defaultBranch = ref.replace("refs/remotes/origin/", "");
+        } catch { /* fall back to main */ }
+        diagnostics.push(`defaultBranch: ${defaultBranch}`);
+
+        const mergeBase = execSync(`git merge-base HEAD ${defaultBranch}`, {
+          cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+        diagnostics.push(`mergeBase: ${mergeBase}`);
+
+        const headSha = execSync("git rev-parse HEAD", {
+          cwd: workDir, encoding: "utf-8",
+        }).trim();
+        diagnostics.push(`HEAD: ${headSha}`);
+
+        if (mergeBase === headSha) {
+          diagnostics.push("mergeBase === HEAD, no committed changes");
+        }
+
+        diffText = execSync(`git diff ${mergeBase} HEAD`, {
+          cwd: workDir,
+          encoding: "utf-8",
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        method = `diff ${mergeBase.slice(0, 8)} HEAD`;
+        diagnostics.push(`merge-base diff: ${diffText.length} bytes`);
+      } catch (e) {
+        diagnostics.push(`merge-base failed: ${e instanceof Error ? e.message : String(e)}`);
+        // Last resort: plain diff against HEAD
+        diffText = execSync("git diff HEAD", {
+          cwd: workDir, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+        });
+        method = "diff HEAD";
+        diagnostics.push(`diff HEAD: ${diffText.length} bytes`);
+      }
+    }
+  } catch (e) {
+    diagnostics.push(`primary diff path failed: ${e instanceof Error ? e.message : String(e)}`);
+    try {
+      diffText = execSync("git diff", {
+        cwd: workDir,
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      method = "diff (unstaged)";
+    } catch {
+      diffText = "<!-- No git diff available -->";
+      method = "error";
+    }
+  }
+
+  const files = parseUnifiedDiff(diffText);
+  const summary = diffSummary(files);
+
+  return { diffText, files, summary, workDir, method, diagnostics };
+}
+
+/**
  * Create a review after an agent task completes.
  * Captures git diff from the worktree (includes uncommitted changes),
  * generates a summary, and stores as a Review record.
@@ -130,65 +292,19 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 
   if (!project) return null;
 
-  const workDir = resolveTaskWorkDir(project.localPath, getOriginTaskId(taskId));
-
-  // Capture ALL changes: staged, unstaged, committed, and untracked new files
-  let diffText = "";
+  let diffResult;
   try {
-    // Stage changes to tracked files (modified, deleted)
-    execSync("git add -u", { cwd: workDir, stdio: "pipe" });
-    // Stage new files too, but exclude bulk directories
-    execSync(
-      "git add -A --ignore-errors -- . ':!node_modules' ':!.pnpm-store' ':!.venv' ':!__pycache__' ':!.git'",
-      { cwd: workDir, stdio: "pipe" },
-    );
-
-    // First try: diff staged changes against HEAD (catches uncommitted work)
-    diffText = execSync("git diff --cached HEAD", {
-      cwd: workDir,
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-    });
-
-    // If empty, the agent may have already committed — diff against merge-base
-    if (!diffText.trim()) {
-      try {
-        let defaultBranch = "main";
-        try {
-          const ref = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
-            cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
-          }).trim();
-          defaultBranch = ref.replace("refs/remotes/origin/", "");
-        } catch { /* fall back to main */ }
-        const mergeBase = execSync(`git merge-base HEAD ${defaultBranch}`, {
-          cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
-        diffText = execSync(`git diff ${mergeBase} HEAD`, {
-          cwd: workDir,
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-        });
-      } catch {
-        // merge-base failed — try plain diff against HEAD
-        diffText = execSync("git diff HEAD", {
-          cwd: workDir, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
-        });
-      }
+    diffResult = await generateTaskDiff(taskId);
+    console.log(`[review-service] Diff generated for ${taskId}: method=${diffResult.method}, ${diffResult.files.length} files`);
+    if (diffResult.diagnostics.length > 0) {
+      console.log(`[review-service] Diagnostics:\n  ${diffResult.diagnostics.join("\n  ")}`);
     }
-  } catch {
-    try {
-      diffText = execSync("git diff", {
-        cwd: workDir,
-        encoding: "utf-8",
-        maxBuffer: 10 * 1024 * 1024,
-      });
-    } catch {
-      diffText = "<!-- No git diff available -->";
-    }
+  } catch (e) {
+    console.error(`[review-service] generateTaskDiff failed for ${taskId}:`, e);
+    diffResult = { diffText: "", files: [] as ReturnType<typeof parseUnifiedDiff>, summary: "0 files changed" };
   }
 
-  // Parse and generate summary
-  const files = parseUnifiedDiff(diffText);
+  const { diffText, files } = diffResult;
   const isEmpty = diffText.trim() === "" || files.length === 0;
 
   if (isEmpty) {
@@ -239,6 +355,41 @@ export async function createReviewForTask(taskId: string): Promise<string | null
     .run();
 
   return reviewId;
+}
+
+/**
+ * Regenerate a review's diffSnapshot and aiSummary from a fresh diff result.
+ * Used by the /api/tasks/[id]/diff?update_review=true endpoint.
+ */
+export function regenerateReviewFromDiff(
+  taskId: string,
+  diffResult: { diffText: string; files: ReturnType<typeof parseUnifiedDiff>; summary: string },
+): boolean {
+  const db = getDb();
+
+  const review = db
+    .select()
+    .from(schema.reviews)
+    .where(eq(schema.reviews.taskId, taskId))
+    .get();
+  if (!review) return false;
+
+  const task = db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .get();
+  if (!task) return false;
+
+  const isEmpty = diffResult.diffText.trim() === "" || diffResult.files.length === 0;
+  const aiSummary = generateStructuredSummary(task, diffResult.files, diffResult.summary, isEmpty);
+
+  db.update(schema.reviews)
+    .set({ diffSnapshot: diffResult.diffText, aiSummary })
+    .where(eq(schema.reviews.id, review.id))
+    .run();
+
+  return true;
 }
 
 function generateStructuredSummary(

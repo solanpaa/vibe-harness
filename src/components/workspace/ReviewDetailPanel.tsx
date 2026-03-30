@@ -87,6 +87,7 @@ export function ReviewDetailPanel({
   const [selectedFile, setSelectedFile] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
   const [planExpanded, setPlanExpanded] = useState(true);
   const [summaryExpanded, setSummaryExpanded] = useState(true);
   const [branches, setBranches] = useState<{ branches: string[]; current: string }>({ branches: [], current: "" });
@@ -244,6 +245,32 @@ export function ReviewDetailPanel({
   }, [activeReview?.id, hasDiff]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
+
+  async function handleRegenerateDiff() {
+    if (!activeReview) return;
+    setRegenerating(true);
+    try {
+      const res = await fetch(
+        `/api/tasks/${activeReview.taskId}/diff?update_review=true`
+      );
+      if (!res.ok) {
+        toast.error("Failed to regenerate diff");
+        return;
+      }
+      const data = await res.json();
+      if (data.reviewUpdated && data.files?.length > 0) {
+        toast.success(`Diff regenerated: ${data.files.length} file(s) changed`);
+        // Refresh reviews to pick up the new diffSnapshot
+        await fetchReviews();
+      } else if (data.files?.length === 0) {
+        toast.info("No changes found in worktree");
+      }
+    } catch {
+      toast.error("Error regenerating diff");
+    } finally {
+      setRegenerating(false);
+    }
+  }
 
   async function handleAddComment(comment: InlineComment) {
     if (!activeReview) return;
@@ -576,10 +603,18 @@ export function ReviewDetailPanel({
             </div>
           )}
 
-          {/* No diff and no plan */}
-          {!hasDiff && !hasPlan && (
+          {/* No diff — show regenerate button */}
+          {!hasDiff && (
             <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-              No changes to review
+              <p className="mb-3">No changes to review</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRegenerateDiff}
+                disabled={regenerating}
+              >
+                {regenerating ? "Regenerating…" : "🔄 Regenerate Diff"}
+              </Button>
             </div>
           )}
         </div>

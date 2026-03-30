@@ -37,15 +37,33 @@ interface DiffViewProps {
   readOnly?: boolean;
 }
 
+const LARGE_FILE_LINE_THRESHOLD = 300;
+
+const LARGE_FILE_PATTERNS = [
+  /lock\.(yaml|json|toml)$/i,
+  /package-lock\.json$/i,
+  /\.lock$/i,
+];
+
+function isLargeFile(file: DiffFile): boolean {
+  const totalLines = file.additions + file.deletions;
+  if (totalLines > LARGE_FILE_LINE_THRESHOLD) return true;
+  return LARGE_FILE_PATTERNS.some((p) => p.test(file.path));
+}
+
 export function DiffView({
   files,
   comments = [],
   onAddComment,
   readOnly = false,
 }: DiffViewProps) {
-  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
-    new Set(files.map((f) => f.path))
-  );
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(() => {
+    const expanded = new Set<string>();
+    for (const f of files) {
+      if (!isLargeFile(f)) expanded.add(f.path);
+    }
+    return expanded;
+  });
   const [commentingAt, setCommentingAt] = useState<{
     file: string;
     line: number | null;
@@ -112,6 +130,11 @@ export function DiffView({
               )}
               {statusIcon[file.status]}
               <span className="flex-1 truncate">{file.path}</span>
+              {isLargeFile(file) && !isExpanded && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  Large file — click to expand
+                </Badge>
+              )}
               <span className="text-green-600 text-xs">+{file.additions}</span>
               <span className="text-red-600 text-xs">-{file.deletions}</span>
             </button>
