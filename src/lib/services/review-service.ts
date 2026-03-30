@@ -135,8 +135,9 @@ export async function createReviewForTask(taskId: string): Promise<string | null
   // Capture ALL changes: staged, unstaged, committed, and untracked new files
   let diffText = "";
   try {
-    // Stage all changes (modified, deleted, new) so nothing is missed
-    execSync("git add -A", { cwd: workDir, stdio: "pipe" });
+    // Stage changes to tracked files (modified, deleted) — avoids indexing
+    // node_modules, pnpm store, or other untracked bulk directories
+    execSync("git add -u", { cwd: workDir, stdio: "pipe" });
 
     // First try: diff staged changes against HEAD (catches uncommitted work)
     diffText = execSync("git diff --cached HEAD", {
