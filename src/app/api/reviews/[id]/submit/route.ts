@@ -26,6 +26,13 @@ export async function POST(
     return NextResponse.json({ error: "Review not found" }, { status: 404 });
   }
 
+  if (review.status !== "pending_review") {
+    return NextResponse.json(
+      { error: `Review already processed (status: ${review.status})` },
+      { status: 409 }
+    );
+  }
+
   if (action === "approve") {
     if (!review.workflowRunId) {
       // Non-workflow task: just approve the review directly
@@ -53,6 +60,7 @@ export async function POST(
           mergeResult = finalizeAndMerge(originId, { targetBranch });
         } catch (e) {
           console.error("Failed to finalize:", e);
+          mergeResult = { merged: false, branch: "", error: e instanceof Error ? e.message : String(e) };
         }
       }
 
@@ -132,6 +140,18 @@ export async function POST(
             workflowAdvanced = { mergeConflict: true, error: mergeResult.error };
           }
         }
+      }
+
+      // Catch-all: if mergeResult is still null, nothing above succeeded —
+      // don't leave the workflow stuck in "finalizing"
+      if (!mergeResult) {
+        try {
+          await transitionWorkflowRun(review.workflowRunId, { type: "MERGE_CONFLICT" });
+        } catch {
+          console.error("Failed to transition workflow after merge failure");
+        }
+        mergeResult = { merged: false, branch: "", error: "Merge failed with no recovery" };
+        workflowAdvanced = { mergeConflict: true, error: mergeResult.error };
       }
     } else if (result.to === "running") {
       // Advancing to next stage (launchNextStageTask action fired)

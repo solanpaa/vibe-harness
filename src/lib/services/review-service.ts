@@ -46,8 +46,12 @@ function capturePlanFromSandbox(sandboxName: string): string | null {
       `docker sandbox exec ${sandboxName} cat "${planPath}"`,
       { encoding: "utf-8", maxBuffer: 1024 * 1024, timeout: 10000 }
     );
-  } catch {
+  } catch (err) {
     // Sandbox may not support exec, or plan.md doesn't exist
+    console.warn(
+      `[capturePlanFromSandbox] Failed to capture plan from sandbox "${sandboxName}":`,
+      err instanceof Error ? err.message : String(err)
+    );
     return null;
   }
 }

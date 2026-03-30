@@ -116,6 +116,11 @@ export async function launchProposals(input: {
   }
 
   // Launch all proposals — independent first, then dependent
+  if (dependent.length > 0) {
+    console.warn(
+      `[parallel-launcher] ${dependent.length} proposal(s) have dependencies but will be launched in parallel. Dependencies are not currently enforced at runtime.`
+    );
+  }
   const allToLaunch = [...independent, ...dependent];
 
   // Get the agent definition from the split task

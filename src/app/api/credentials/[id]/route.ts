@@ -25,6 +25,21 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const db = getDb();
+
+  // Check if any tasks reference this credential set before deleting
+  const referencingTasks = db
+    .select({ id: schema.tasks.id })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.credentialSetId, id))
+    .all();
+
+  if (referencingTasks.length > 0) {
+    return NextResponse.json(
+      { error: `Credential set is referenced by ${referencingTasks.length} task(s)` },
+      { status: 409 }
+    );
+  }
+
   // Cascade: delete entries first
   db.delete(schema.credentialEntries)
     .where(eq(schema.credentialEntries.credentialSetId, id))

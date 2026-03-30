@@ -213,6 +213,14 @@ export function startTask(options: StartTaskOptions) {
           exitCode: code,
         });
       }
+      // Clean up Docker sandbox for non-workflow (standalone) tasks
+      if (!currentTask?.workflowRunId) {
+        try {
+          execSync(`docker sandbox stop ${sandboxName}`, { stdio: "pipe" });
+        } catch {
+          // Best effort — sandbox may already be gone
+        }
+      }
     } catch (err) {
       console.error(`[task-manager] close handler error for task ${options.taskId}:`, err);
       try {
@@ -295,6 +303,13 @@ export function finalizeAndMerge(
     originTask.prompt.split("\n")[0].slice(0, 72) ||
     `vibe-harness: finalize task ${originTaskId.slice(0, 8)}`;
   const commitMessage = subject;
+
+  // Check if the worktree exists — tasks with useWorktree:false won't have one
+  const shortIdCheck = originTaskId.slice(0, 8);
+  const worktreeCheckPath = path.join(project.localPath, WORKTREE_DIR, shortIdCheck);
+  if (!fs.existsSync(worktreeCheckPath)) {
+    return { merged: false, branch: "", error: "Task ran without worktree isolation — manual merge required" };
+  }
 
   // 1. Commit any uncommitted changes in the worktree
   const commitResult = commitWorktreeChanges(

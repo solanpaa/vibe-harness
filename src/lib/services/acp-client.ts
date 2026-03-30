@@ -486,7 +486,7 @@ async function bootstrapAcpSession(
     }
     session.status = "closed";
     events.emit("status", "closed");
-    const effectiveCode = session.completingGracefully ? 0 : (code ?? 0);
+    const effectiveCode = session.completingGracefully ? 0 : (code ?? 1);
     events.emit("close", effectiveCode);
     acpSessions.delete(session.id);
   });

@@ -23,6 +23,22 @@ export async function POST(
       .where(eq(schema.parallelGroups.id, id))
       .get();
 
+    // Check if all children are in terminal state
+    const allRuns = db
+      .select()
+      .from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.parallelGroupId, id))
+      .all();
+    const stillRunning = allRuns.filter(
+      (r) => !["completed", "failed", "cancelled"].includes(r.status)
+    );
+    if (stillRunning.length > 0) {
+      return NextResponse.json(
+        { error: `${stillRunning.length} child run(s) still in progress` },
+        { status: 409 }
+      );
+    }
+
     // Perform the actual git consolidation
     const mergeResult = consolidateParallelGroup(id);
 

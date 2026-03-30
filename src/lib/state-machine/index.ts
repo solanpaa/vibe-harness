@@ -667,6 +667,14 @@ export async function transitionWorkflowRun(
     }
   }
 
+  // Log failed side-effect actions for monitoring
+  if (result.ok && result.failedActions && result.failedActions.length > 0) {
+    console.error(
+      `[StateMachine] Transition ${result.event} on workflow ${workflowRunId} had ${result.failedActions.length} failed action(s):`,
+      result.failedActions.join(", ")
+    );
+  }
+
   return result;
 }
 
