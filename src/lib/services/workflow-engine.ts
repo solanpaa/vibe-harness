@@ -59,9 +59,26 @@ export async function startWorkflowRun(input: {
 
   const stages: WorkflowStage[] = JSON.parse(template.stages);
   if (stages.length === 0) throw new Error("Workflow has no stages");
+  for (const stage of stages) {
+    if (!stage.name) throw new Error("Workflow stage missing 'name'");
+    if (!stage.promptTemplate) throw new Error(`Workflow stage "${stage.name}" missing 'promptTemplate'`);
+  }
 
   const firstStage = stages[0];
   const now = new Date().toISOString();
+
+  // Get agent — use provided, stage-specific, or first available
+  // Validate before inserting workflow run to avoid orphaned rows
+  const agentId = input.agentDefinitionId || firstStage.agentDefinitionId;
+  const agent = agentId
+    ? db
+        .select()
+        .from(schema.agentDefinitions)
+        .where(eq(schema.agentDefinitions.id, agentId))
+        .get()
+    : db.select().from(schema.agentDefinitions).get();
+
+  if (!agent) throw new Error("No agent definition found");
 
   // Create workflow run with task description — starts as "pending"
   const runId = uuid();
@@ -103,18 +120,6 @@ export async function startWorkflowRun(input: {
     .get();
 
   if (!project) throw new Error("Project not found");
-
-  // Get agent — use provided, stage-specific, or first available
-  const agentId = input.agentDefinitionId || firstStage.agentDefinitionId;
-  const agent = agentId
-    ? db
-        .select()
-        .from(schema.agentDefinitions)
-        .where(eq(schema.agentDefinitions.id, agentId))
-        .get()
-    : db.select().from(schema.agentDefinitions).get();
-
-  if (!agent) throw new Error("No agent definition found");
 
   // Build combined prompt: task description + stage instructions
   const prompt = buildStagePrompt(input.taskDescription, firstStage);

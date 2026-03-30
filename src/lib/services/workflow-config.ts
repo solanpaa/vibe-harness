@@ -85,6 +85,9 @@ export function buildStagePrompt(
   stage: WorkflowStage,
   previousPlan?: string | null
 ): string {
+  if (!taskDescription?.trim()) {
+    throw new Error("taskDescription is required for building stage prompt");
+  }
   const parts = [`## Task`, taskDescription, ``];
   if (previousPlan) {
     parts.push(`## Context from Previous Stage`, previousPlan, ``);

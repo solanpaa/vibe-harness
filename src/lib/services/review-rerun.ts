@@ -33,6 +33,12 @@ export async function rerunWithComments(reviewId: string): Promise<{
     .get();
   if (!originalTask) return null;
 
+  const terminalStatuses = ["completed", "failed", "cancelled"];
+  if (!terminalStatuses.includes(originalTask.status)) {
+    console.warn(`[rerunWithComments] Original task ${originalTask.id} is still in status "${originalTask.status}", skipping rerun`);
+    return null;
+  }
+
   const project = db
     .select()
     .from(schema.projects)
@@ -49,6 +55,10 @@ export async function rerunWithComments(reviewId: string): Promise<{
 
   // Bundle review comments
   const commentPrompt = bundleCommentsAsPrompt(reviewId);
+  if (!commentPrompt || commentPrompt.trim() === "") {
+    console.warn(`[rerunWithComments] No comments found for review ${reviewId}, skipping rerun`);
+    return null;
+  }
 
   // Build stage-aware prompt when this task is part of a workflow
   let combinedPrompt: string;

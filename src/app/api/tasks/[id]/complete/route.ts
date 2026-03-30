@@ -9,6 +9,7 @@ export async function POST(
 ) {
   const { id } = await params;
   const db = getDb();
+  // Intentionally fall back to {} for internal callers that may not send a body
   const body = await request.json().catch(() => ({}));
 
   const task = db

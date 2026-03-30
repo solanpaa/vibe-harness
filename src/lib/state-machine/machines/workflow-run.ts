@@ -16,6 +16,8 @@ export const workflowRunMachine = setup({
   },
   guards: {
     isSplitStage: ({ context }) => context.currentStageName === "split",
+    isPlanStage: ({ context }) =>
+      context.currentStageName?.includes("plan") === true,
     isAutoAdvance: ({ context }) => context.autoAdvance === true,
     isLastStage: ({ context }) => context.isLastStage === true,
     allChildrenDone: ({ context }) => context.allChildrenDone === true,
@@ -132,6 +134,7 @@ export const workflowRunMachine = setup({
           actions: ["setReviewChangesRequested", "spawnRerunTask"],
         },
         SPLIT: {
+          guard: "isPlanStage",
           target: "running",
           actions: [
             "setReviewApproved",

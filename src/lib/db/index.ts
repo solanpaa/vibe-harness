@@ -18,6 +18,7 @@ function createDb() {
   const sqlite = new Database(DB_PATH);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
   return drizzle(sqlite, { schema });
 }
 
@@ -150,6 +151,7 @@ export function getDb() {
       initialized = true;
     } catch (e) {
       console.error("Migration/seed error:", e);
+      throw e;
     }
   }
   return db;

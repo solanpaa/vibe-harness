@@ -241,9 +241,9 @@ export async function stopTask(taskId: string) {
 }
 
 /** Send input to a running task via ACP */
-export function sendTaskInput(taskId: string, input: string) {
-  sendAcpPrompt(taskId, input);
-  return true;
+export async function sendTaskInput(taskId: string, input: string) {
+  const result = await sendAcpPrompt(taskId, input);
+  return result.success;
 }
 
 /** Get ACP session for streaming */
