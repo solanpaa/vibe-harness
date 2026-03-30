@@ -284,6 +284,7 @@ export async function transitionWorkflowRun(
             await createReviewForTask(e.taskId);
           } catch (err) {
             console.error("[StateMachine] Failed to create review:", err);
+            throw err;
           }
         }
       },
@@ -785,33 +786,34 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
   );
 
   const taskId = uuid();
-  db.insert(schema.tasks)
-    .values({
-      id: taskId,
-      projectId: run.projectId,
-      workflowRunId,
-      stageName: nextStage.name,
-      agentDefinitionId: agent.id,
-      credentialSetId: firstTask.credentialSetId,
-      sandboxId: null,
-      originTaskId: firstTask.id,
-      status: "pending",
-      prompt,
-      model: firstTask.model,
-      useWorktree: firstTask.useWorktree,
-      branch: firstTask.branch,
-      targetBranch: firstTask.targetBranch,
-      output: null,
-      createdAt: new Date().toISOString(),
-      completedAt: null,
-    })
-    .run();
+  db.transaction((tx) => {
+    tx.insert(schema.tasks)
+      .values({
+        id: taskId,
+        projectId: run.projectId,
+        workflowRunId,
+        stageName: nextStage.name,
+        agentDefinitionId: agent.id,
+        credentialSetId: firstTask.credentialSetId,
+        sandboxId: null,
+        originTaskId: firstTask.id,
+        status: "pending",
+        prompt,
+        model: firstTask.model,
+        useWorktree: firstTask.useWorktree,
+        branch: firstTask.branch,
+        targetBranch: firstTask.targetBranch,
+        output: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+      })
+      .run();
 
-  // Update workflow stage
-  db.update(schema.workflowRuns)
-    .set({ currentStage: nextStage.name })
-    .where(eq(schema.workflowRuns.id, workflowRunId))
-    .run();
+    tx.update(schema.workflowRuns)
+      .set({ currentStage: nextStage.name })
+      .where(eq(schema.workflowRuns.id, workflowRunId))
+      .run();
+  });
 
   // Provision and launch
   await transitionTask(taskId, { type: "PROVISION" });

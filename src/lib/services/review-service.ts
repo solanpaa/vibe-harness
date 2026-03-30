@@ -2,7 +2,7 @@ import { execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { getDb, schema } from "@/lib/db";
-import { eq, or, inArray } from "drizzle-orm";
+import { eq, or, and, inArray } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { parseUnifiedDiff, diffSummary } from "./diff-service";
 
@@ -154,16 +154,37 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 
   // Parse and generate summary
   const files = parseUnifiedDiff(diffText);
+  const isEmpty = diffText.trim() === "" || files.length === 0;
+
+  if (isEmpty) {
+    console.warn(
+      `[review-service] Task ${taskId} completed with no changes (empty diff). Creating review for audit trail.`
+    );
+  }
+
   const summary = diffSummary(files);
 
   // Build AI summary (for now, use a structured summary; later, call an agent)
-  const aiSummary = generateStructuredSummary(task, files, summary);
+  const aiSummary = generateStructuredSummary(task, files, summary, isEmpty);
 
   // Try to capture agent's plan.md from the sandbox VM
   const planMarkdown = task.sandboxId ? capturePlanFromSandbox(task.sandboxId) : null;
 
   // Count existing reviews across the entire task chain to determine round
   const round = countChainReviewRounds(taskId) + 1;
+
+  // Guard against duplicate review for the same task+round (concurrent creation)
+  const existingReview = db.select({ id: schema.reviews.id })
+    .from(schema.reviews)
+    .where(and(
+      eq(schema.reviews.taskId, taskId),
+      eq(schema.reviews.round, round)
+    ))
+    .get();
+  if (existingReview) {
+    console.warn(`[createReviewForTask] Review already exists for task ${taskId} round ${round}`);
+    return existingReview.id;
+  }
 
   // Create review record
   const reviewId = uuid();
@@ -188,15 +209,20 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 function generateStructuredSummary(
   task: { prompt: string; output: string | null; lastAiMessage?: string | null },
   files: ReturnType<typeof parseUnifiedDiff>,
-  changeSummary: string
+  changeSummary: string,
+  isEmpty: boolean = false
 ): string {
   const totalAdded = files.reduce((s, f) => s + f.additions, 0);
   const totalDeleted = files.reduce((s, f) => s + f.deletions, 0);
 
   let md = `## Task Summary\n\n`;
+
+  if (isEmpty) {
+    md += `> ⚠️ **No changes detected.** The agent completed without modifying any files.\n\n`;
+  }
   
   // Clean the prompt — strip markdown heading markers for inline display
-  const cleanPrompt = task.prompt
+  const cleanPrompt = (task.prompt ?? "")
     .replace(/^##\s+Task\s*/m, "")
     .replace(/^##\s+Current Stage:\s*/m, "**Current Stage:** ")
     .trim();

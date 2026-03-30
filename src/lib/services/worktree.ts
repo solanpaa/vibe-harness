@@ -53,6 +53,7 @@ export function createWorktree(
   // Create the worktree with a new branch from the start point
   const resolvedStart = startPoint || "HEAD";
   if (startPoint) assertSafeRef(startPoint);
+  assertSafeRef(branch);
   try {
     const result = spawnSync("git", ["worktree", "add", "-b", branch, worktreePath, resolvedStart], {
       cwd: projectDir,
@@ -211,6 +212,7 @@ export function rebaseWorktree(
     return { rebased: false, error: "Worktree not found" };
   }
 
+  assertSafeRef(targetBranch);
   try {
     execSync(`git rebase "${targetBranch}"`, {
       cwd: worktreePath,

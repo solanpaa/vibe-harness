@@ -128,6 +128,13 @@ export async function PATCH(
       );
     }
 
+    if (group.status === "completed") {
+      return NextResponse.json(
+        { error: "Comparison group already completed" },
+        { status: 409 }
+      );
+    }
+
     const project = db
       .select()
       .from(schema.projects)
@@ -148,7 +155,12 @@ export async function PATCH(
       );
     }
 
-    // Finalize and merge the winner
+    // Stop/complete running task BEFORE merging
+    if (winnerTask.status === "running") {
+      await transitionTask(winnerTaskId, { type: "COMPLETE" });
+    }
+
+    // Now safe to merge
     let mergeResult: { merged: boolean; branch: string; error?: string } = { merged: false, branch: "" };
     if (project) {
       try {
@@ -156,11 +168,6 @@ export async function PATCH(
       } catch (e) {
         console.error("Failed to merge winner:", e);
       }
-    }
-
-    // Mark winner as completed via state machine if still running
-    if (winnerTask.status === "running") {
-      await transitionTask(winnerTaskId, { type: "COMPLETE" });
     }
 
     // Stop running losers and clean up their worktrees

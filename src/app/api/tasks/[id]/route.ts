@@ -151,15 +151,6 @@ export async function PATCH(
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
-    // Transition task via state machine (validates paused → running)
-    const result = await transitionTask(id, { type: "RESUME" });
-    if (!result.ok) {
-      return NextResponse.json(
-        { error: `Transition failed: ${result.error}` },
-        { status: 409 }
-      );
-    }
-
     const project = db
       .select()
       .from(schema.projects)
@@ -176,6 +167,15 @@ export async function PATCH(
       .get();
     if (!agent) {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
+
+    // Transition task via state machine (validates paused → running)
+    const result = await transitionTask(id, { type: "RESUME" });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: `Transition failed: ${result.error}` },
+        { status: 409 }
+      );
     }
 
     try {
@@ -276,26 +276,41 @@ export async function DELETE(
   const { id } = await params;
   const db = getDb();
 
-  // Delete associated reviews and their comments first (no cascade rule in schema)
+  // Stop running/provisioning tasks before deletion
+  const task = db
+    .select({ status: schema.tasks.status })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, id))
+    .get();
+  if (task?.status === "running" || task?.status === "provisioning") {
+    try {
+      await stopTask(id);
+    } catch {
+      // Best effort
+    }
+  }
+
+  // Atomic cascading delete in a transaction
   const reviews = db
     .select({ id: schema.reviews.id })
     .from(schema.reviews)
     .where(eq(schema.reviews.taskId, id))
     .all();
-  for (const review of reviews) {
-    db.delete(schema.reviewComments)
-      .where(eq(schema.reviewComments.reviewId, review.id))
+
+  db.transaction((tx) => {
+    for (const review of reviews) {
+      tx.delete(schema.reviewComments)
+        .where(eq(schema.reviewComments.reviewId, review.id))
+        .run();
+    }
+    tx.delete(schema.reviews).where(eq(schema.reviews.taskId, id)).run();
+    tx.update(schema.tasks)
+      .set({ originTaskId: null })
+      .where(eq(schema.tasks.originTaskId, id))
       .run();
-  }
-  db.delete(schema.reviews).where(eq(schema.reviews.taskId, id)).run();
+    // taskMessages cascade automatically via schema onDelete rule
+    tx.delete(schema.tasks).where(eq(schema.tasks.id, id)).run();
+  });
 
-  // Clear originTaskId references from child tasks (avoid orphan FK errors)
-  db.update(schema.tasks)
-    .set({ originTaskId: null })
-    .where(eq(schema.tasks.originTaskId, id))
-    .run();
-
-  // taskMessages cascade automatically via schema onDelete rule
-  db.delete(schema.tasks).where(eq(schema.tasks.id, id)).run();
   return NextResponse.json({ ok: true });
 }
