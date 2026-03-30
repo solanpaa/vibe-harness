@@ -132,20 +132,46 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 
   const workDir = resolveTaskWorkDir(project.localPath, getOriginTaskId(taskId));
 
-  // Capture ALL changes: staged, unstaged, and untracked new files
+  // Capture ALL changes: staged, unstaged, committed, and untracked new files
   let diffText = "";
   try {
-    // First, add untracked files to the index so they show up in the diff
-    execSync("git add -N .", { cwd: workDir, stdio: "pipe" });
-    // Then diff everything against HEAD
-    diffText = execSync("git diff HEAD", {
+    // Stage all changes (modified, deleted, new) so nothing is missed
+    execSync("git add -A", { cwd: workDir, stdio: "pipe" });
+
+    // First try: diff staged changes against HEAD (catches uncommitted work)
+    diffText = execSync("git diff --cached HEAD", {
       cwd: workDir,
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
     });
+
+    // If empty, the agent may have already committed — diff against merge-base
+    if (!diffText.trim()) {
+      try {
+        let defaultBranch = "main";
+        try {
+          const ref = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+            cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          defaultBranch = ref.replace("refs/remotes/origin/", "");
+        } catch { /* fall back to main */ }
+        const mergeBase = execSync(`git merge-base HEAD ${defaultBranch}`, {
+          cwd: workDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+        diffText = execSync(`git diff ${mergeBase} HEAD`, {
+          cwd: workDir,
+          encoding: "utf-8",
+          maxBuffer: 10 * 1024 * 1024,
+        });
+      } catch {
+        // merge-base failed — try plain diff against HEAD
+        diffText = execSync("git diff HEAD", {
+          cwd: workDir, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+        });
+      }
+    }
   } catch {
     try {
-      // Fallback: just diff working tree
       diffText = execSync("git diff", {
         cwd: workDir,
         encoding: "utf-8",
