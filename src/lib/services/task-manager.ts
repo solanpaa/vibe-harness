@@ -2,6 +2,7 @@ import { getDb, schema } from "@/lib/db";
 import { launchAcpSession, getAcpSession, closeAcpSession, sendAcpPrompt, isAcpSession } from "./acp-client";
 import type { AcpMessage, AcpLaunchOptions } from "./acp-client";
 import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktree, rebaseWorktree, commitWorktreeChanges } from "./worktree";
+import { CopilotJsonlParser } from "./jsonl-parser";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { execSync } from "child_process";
@@ -196,6 +197,16 @@ export function startTask(options: StartTaskOptions) {
         return;
       }
 
+      // Parse stderr for usage stats (Copilot CLI may output result event there)
+      const jsonlParser = new CopilotJsonlParser();
+      for (const raw of session.output) {
+        for (const line of raw.split("\n")) {
+          jsonlParser.parseLine(line);
+        }
+      }
+      const parsedResult = jsonlParser.getResult();
+      const usageStats = parsedResult.usage ? JSON.stringify(parsedResult.usage) : null;
+
       // Dispatch to state machine — all branching logic (split/autoAdvance/review,
       // workflow advancement, review creation) is handled by the machines.
       if (code === 0) {
@@ -204,6 +215,7 @@ export function startTask(options: StartTaskOptions) {
           output,
           lastAiMessage,
           exitCode: code,
+          usageStats,
         });
       } else {
         await getTransitionTask()(options.taskId, {
@@ -211,6 +223,7 @@ export function startTask(options: StartTaskOptions) {
           output,
           lastAiMessage,
           exitCode: code,
+          usageStats,
         });
       }
       // Clean up Docker sandbox for non-workflow (standalone) tasks

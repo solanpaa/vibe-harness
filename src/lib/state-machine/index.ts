@@ -82,12 +82,13 @@ export async function transitionTask(
     actionHandlers: {
       saveOutput: (ctx, evt) => {
         const db = getDb();
-        const e = evt as TaskEvent & { output?: string; lastAiMessage?: string | null; exitCode?: number };
+        const e = evt as TaskEvent & { output?: string; lastAiMessage?: string | null; exitCode?: number; usageStats?: string | null };
         db.update(schema.tasks)
           .set({
             output: e.output ?? null,
             lastAiMessage: e.lastAiMessage ?? null,
             exitCode: e.exitCode ?? null,
+            usageStats: e.usageStats ?? null,
           })
           .where(eq(schema.tasks.id, taskId))
           .run();
