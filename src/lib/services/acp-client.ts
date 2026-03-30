@@ -281,7 +281,7 @@ async function bootstrapAcpSession(
 
   // Step 3: Build exec args
   const execArgs = ["sandbox", "exec", "-i"];
-  execArgs.push("-e", "NODE_OPTIONS=");
+  execArgs.push("-e", "NODE_OPTIONS=--max-old-space-size=3072");
   if (env.GITHUB_TOKEN) {
     execArgs.push("-e", `GITHUB_TOKEN=${env.GITHUB_TOKEN}`);
   }
