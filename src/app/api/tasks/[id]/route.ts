@@ -37,7 +37,10 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({ ...task, shellCommand });
+  let parsedUsageStats = null;
+  try { if (task.usageStats) parsedUsageStats = JSON.parse(task.usageStats); } catch {}
+
+  return NextResponse.json({ ...task, usageStats: parsedUsageStats, shellCommand });
 }
 
 export async function PATCH(
