@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Terminal, Loader2, TerminalSquare, Zap, Send, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import type { TerminalEvent } from "./event-parser";
-import { mapJsonlEvent, parseLine } from "./event-parser";
+import { mapJsonlEvent, parseLine, toolDetail } from "./event-parser";
 import { renderEvent } from "./EventRenderers";
 import { isTerminalTask, isActiveTask } from "@/lib/status-config";
 
@@ -153,8 +153,9 @@ export function TerminalOutput({
             msgAccumIdx.current = -1;
             reasonAccumIdx.current = -1;
             const name = data.data?.name || data.data?.detail?.split(" ")[0] || "tool";
-            const detail = data.data?.detail || JSON.stringify(data.data?.input || "").slice(0, 100);
-            setStreamedEvents((prev) => [...prev, { kind: "tool_start" as const, name: String(name), detail: String(detail) }]);
+            const args = (data.data?.input || data.data?.arguments || {}) as Record<string, unknown>;
+            const detail = toolDetail(String(name), args);
+            setStreamedEvents((prev) => [...prev, { kind: "tool_start" as const, name: String(name), detail, args }]);
           } else if (data.kind === "tool_complete" || data.kind === "tool_call_update") {
             // Tool done — next text starts a new message
             msgAccumIdx.current = -1;

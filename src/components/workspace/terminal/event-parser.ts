@@ -5,7 +5,7 @@ export type TerminalEvent =
   | { kind: "user_message"; content: string }
   | { kind: "session_info"; text: string }
   | { kind: "reasoning"; content: string }
-  | { kind: "tool_start"; name: string; detail: string }
+  | { kind: "tool_start"; name: string; detail: string; args?: Record<string, unknown> }
   | { kind: "result"; exitCode: number; premiumRequests?: number; durationMs?: number }
   | { kind: "raw"; text: string };
 
@@ -91,7 +91,7 @@ export function mapJsonlEvent(event: Record<string, unknown>): TerminalEvent | n
       const name = (data.toolName as string) ?? (data.name as string) ?? "tool";
       if (name === "report_intent") return null;
       const args = (data.arguments as Record<string, unknown>) ?? {};
-      return { kind: "tool_start", name, detail: toolDetail(name, args) };
+      return { kind: "tool_start", name, detail: toolDetail(name, args), args };
     }
     case "result": {
       const exitCode = (event.exitCode as number) ?? 0;

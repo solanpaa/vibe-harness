@@ -92,27 +92,49 @@ function toolIcon(name: string): string {
   }
 }
 
-function ToolStartLine({ name, detail }: { name: string; detail: string }) {
+/** Shorten long path values for display */
+function shortenValue(value: string): string {
+  return value
+    .replace(/\/\S*\.vibe-harness-worktrees\/[^/\s]+\//g, "")
+    .replace(/\/Users\/[^/]+\/[^/]+\/[^/]+\//g, "…/")
+    .replace(/\/home\/[^/]+\/[^/]+\//g, "…/");
+}
+
+function ToolStartLine({ name, detail, args }: { name: string; detail: string; args?: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = detail.length > 80;
   const truncated = isLong ? detail.slice(0, 80) + "…" : detail;
   const icon = toolIcon(name);
 
   return (
-    <div
-      className={`font-mono text-[11px] py-0.5 flex items-baseline gap-1.5 min-w-0 ${isLong ? "cursor-pointer" : ""}`}
-      onClick={() => isLong && setExpanded(!expanded)}
-    >
-      <span className="text-terminal-text-muted shrink-0">
-        {isLong ? (
-          <ChevronRight className={`inline h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
-        ) : icon}
-      </span>
-      <span className="text-terminal-text font-semibold shrink-0">{name}</span>
-      {detail && (
-        <span className={`text-terminal-text-muted ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
-          {expanded ? detail : truncated}
+    <div className="font-mono text-[11px] py-0.5 min-w-0">
+      <div
+        className={`flex items-baseline gap-1.5 ${isLong ? "cursor-pointer" : ""}`}
+        onClick={() => isLong && setExpanded(!expanded)}
+      >
+        <span className="text-terminal-text-muted shrink-0">
+          {isLong ? (
+            <ChevronRight className={`inline h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
+          ) : icon}
         </span>
+        <span className="text-terminal-text font-semibold shrink-0">{name}</span>
+        {!expanded && detail && (
+          <span className="text-terminal-text-muted truncate">{truncated}</span>
+        )}
+      </div>
+      {expanded && args && (
+        <div className="ml-5 mt-0.5 space-y-0.5 text-terminal-text-muted">
+          {Object.entries(args).map(([key, value]) => {
+            const strVal = typeof value === "string" ? value : JSON.stringify(value);
+            const displayVal = shortenValue(strVal);
+            return (
+              <div key={key} className="flex gap-2 min-w-0">
+                <span className="text-terminal-text shrink-0">{key}:</span>
+                <span className="whitespace-pre-wrap break-all">{displayVal}</span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -181,7 +203,7 @@ export function renderEvent(ev: TerminalEvent, index: number) {
     case "reasoning":
       return <ReasoningBlock key={index} content={ev.content} />;
     case "tool_start":
-      return <ToolStartLine key={index} name={ev.name} detail={ev.detail} />;
+      return <ToolStartLine key={index} name={ev.name} detail={ev.detail} args={ev.args} />;
     case "result":
       return (
         <ResultCard
