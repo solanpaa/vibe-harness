@@ -422,10 +422,11 @@ async function bootstrapAcpSession(
           break;
         }
         case "tool_call": {
-          const name = (update.rawInput as Record<string, unknown>)?.description as string
+          const rawInput = (update.rawInput as Record<string, unknown>) || {};
+          const name = (rawInput.description as string)
             || (update as Record<string, unknown>).toolName as string || "tool";
-          const detail = JSON.stringify((update.rawInput as Record<string, unknown>) || {}).slice(0, 150);
-          events.emit("update", { kind: "tool_start", data: { name, detail } });
+          const detail = JSON.stringify(rawInput).slice(0, 150);
+          events.emit("update", { kind: "tool_start", data: { name, detail, args: rawInput } });
           break;
         }
         case "tool_call_update": {

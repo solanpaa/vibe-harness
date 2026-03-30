@@ -153,7 +153,7 @@ export function TerminalOutput({
             msgAccumIdx.current = -1;
             reasonAccumIdx.current = -1;
             const name = data.data?.name || data.data?.detail?.split(" ")[0] || "tool";
-            const args = (data.data?.input || data.data?.arguments || {}) as Record<string, unknown>;
+            const args = (data.data?.args || data.data?.input || data.data?.arguments || {}) as Record<string, unknown>;
             const detail = toolDetail(String(name), args);
             setStreamedEvents((prev) => [...prev, { kind: "tool_start" as const, name: String(name), detail, args }]);
           } else if (data.kind === "tool_complete" || data.kind === "tool_call_update") {
