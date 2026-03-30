@@ -102,7 +102,12 @@ function shortenValue(value: string): string {
 
 function ToolStartLine({ name, detail, args }: { name: string; detail: string; args?: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false);
-  const canExpand = args && Object.keys(args).length > 0;
+  // Build expanded entries from args (exclude description since it's the name)
+  const expandedEntries = args
+    ? Object.entries(args).filter(([key]) => key !== "description")
+    : [];
+  // Always allow expand — show full detail string if no structured args
+  const canExpand = expandedEntries.length > 0 || detail.length > 80;
   const truncated = detail.length > 80 ? detail.slice(0, 80) + "…" : detail;
 
   return (
@@ -123,18 +128,22 @@ function ToolStartLine({ name, detail, args }: { name: string; detail: string; a
           <span className="text-terminal-text-muted truncate">{truncated}</span>
         )}
       </div>
-      {expanded && args && (
+      {expanded && (
         <div className="ml-5 mt-0.5 space-y-0.5 text-terminal-text-muted">
-          {Object.entries(args).map(([key, value]) => {
-            const strVal = typeof value === "string" ? value : JSON.stringify(value);
-            const displayVal = shortenValue(strVal);
-            return (
-              <div key={key} className="flex gap-2 min-w-0">
-                <span className="text-terminal-text shrink-0">{key}:</span>
-                <span className="whitespace-pre-wrap break-all">{displayVal}</span>
-              </div>
-            );
-          })}
+          {expandedEntries.length > 0 ? (
+            expandedEntries.map(([key, value]) => {
+              const strVal = typeof value === "string" ? value : JSON.stringify(value);
+              const displayVal = shortenValue(strVal);
+              return (
+                <div key={key} className="flex gap-2 min-w-0">
+                  <span className="text-terminal-text shrink-0">{key}:</span>
+                  <span className="whitespace-pre-wrap break-all">{displayVal}</span>
+                </div>
+              );
+            })
+          ) : (
+            <span className="whitespace-pre-wrap break-all">{detail}</span>
+          )}
         </div>
       )}
     </div>
