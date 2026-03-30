@@ -35,8 +35,14 @@ export function toolDetail(name: string, args: Record<string, unknown>): string 
     case "bash":
     case "shell": {
       const cmd = (args.command as string) ?? (args.cmd as string) ?? "";
-      // Shorten paths within bash commands
-      return cmd.replace(/\/\S*\.vibe-harness-worktrees\/[^/\s]+\//g, "");
+      const desc = (args.description as string) ?? "";
+      // Prefer the description if available (human-readable summary)
+      if (desc) return desc;
+      // Shorten worktree and common absolute paths in bash commands
+      return cmd
+        .replace(/\/\S*\.vibe-harness-worktrees\/[^/\s]+\//g, "")
+        .replace(/\/Users\/[^/]+\/[^/]+\/[^/]+\//g, "…/")
+        .replace(/\/home\/[^/]+\/[^/]+\//g, "…/");
     }
     case "edit":
     case "view":

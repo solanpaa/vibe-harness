@@ -93,15 +93,26 @@ function toolIcon(name: string): string {
 }
 
 function ToolStartLine({ name, detail }: { name: string; detail: string }) {
-  const truncated = detail.length > 100 ? detail.slice(0, 100) + "…" : detail;
+  const [expanded, setExpanded] = useState(false);
+  const isLong = detail.length > 80;
+  const truncated = isLong ? detail.slice(0, 80) + "…" : detail;
   const icon = toolIcon(name);
 
   return (
-    <div className="font-mono text-[11px] py-0.5 flex items-baseline gap-1.5 min-w-0">
-      <span className="text-terminal-text-muted shrink-0">{icon}</span>
+    <div
+      className={`font-mono text-[11px] py-0.5 flex items-baseline gap-1.5 min-w-0 ${isLong ? "cursor-pointer" : ""}`}
+      onClick={() => isLong && setExpanded(!expanded)}
+    >
+      <span className="text-terminal-text-muted shrink-0">
+        {isLong ? (
+          <ChevronRight className={`inline h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
+        ) : icon}
+      </span>
       <span className="text-terminal-text font-semibold shrink-0">{name}</span>
-      {truncated && (
-        <span className="text-terminal-text-muted truncate">{truncated}</span>
+      {detail && (
+        <span className={`text-terminal-text-muted ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
+          {expanded ? detail : truncated}
+        </span>
       )}
     </div>
   );
