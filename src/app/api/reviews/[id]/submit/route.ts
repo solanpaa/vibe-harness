@@ -6,6 +6,62 @@ import { getOriginTaskId } from "@/lib/services/review-service";
 import { finalizeAndMerge } from "@/lib/services/task-manager";
 import { commitAndMergeWorktree, removeWorktree } from "@/lib/services/worktree";
 
+/**
+ * Run finalizeAndMerge in the background and transition the workflow state.
+ * Does NOT block the HTTP response.
+ */
+function backgroundMerge(
+  originId: string,
+  workflowRunId: string | null,
+  targetBranch: string | undefined,
+) {
+  Promise.resolve().then(async () => {
+    const db = getDb();
+    try {
+      let mergeResult = finalizeAndMerge(originId, { workflowRunId, targetBranch });
+
+      if (workflowRunId) {
+        if (mergeResult.merged) {
+          await transitionWorkflowRun(workflowRunId, { type: "FINALIZE" });
+        } else {
+          console.error("[backgroundMerge] Merge failed:", mergeResult.error);
+          // Fallback: commitAndMergeWorktree
+          const task = db.select().from(schema.tasks).where(eq(schema.tasks.id, originId)).get();
+          const project = task
+            ? db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get()
+            : null;
+
+          if (project && task) {
+            const shortPrompt = task.prompt.slice(0, 60).replace(/\n/g, " ");
+            mergeResult = commitAndMergeWorktree(
+              project.localPath,
+              originId,
+              `vibe-harness: ${shortPrompt}`,
+              targetBranch,
+            );
+            if (mergeResult.merged) {
+              try { removeWorktree(project.localPath, originId); } catch { /* non-critical */ }
+              await transitionWorkflowRun(workflowRunId, { type: "FINALIZE" });
+            } else {
+              await transitionWorkflowRun(workflowRunId, { type: "MERGE_CONFLICT" });
+            }
+          } else {
+            await transitionWorkflowRun(workflowRunId, { type: "MERGE_CONFLICT" });
+          }
+        }
+      }
+      console.log(`[backgroundMerge] Done for ${originId}: merged=${mergeResult.merged}`);
+    } catch (e) {
+      console.error("[backgroundMerge] Unhandled error:", e);
+      if (workflowRunId) {
+        try {
+          await transitionWorkflowRun(workflowRunId, { type: "MERGE_CONFLICT" });
+        } catch { /* don't leave stuck */ }
+      }
+    }
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -34,47 +90,34 @@ export async function POST(
   }
 
   if (action === "approve") {
+    const originId = getOriginTaskId(review.taskId);
+
+    if (targetBranch) {
+      db.update(schema.tasks)
+        .set({ targetBranch })
+        .where(eq(schema.tasks.id, originId))
+        .run();
+    }
+
     if (!review.workflowRunId) {
-      // Non-workflow task: just approve the review directly
+      // Non-workflow task: approve and merge in background
       db.update(schema.reviews)
         .set({ status: "approved" })
         .where(eq(schema.reviews.id, id))
         .run();
 
-      const originId = getOriginTaskId(review.taskId);
-      const task = db
-        .select()
-        .from(schema.tasks)
-        .where(eq(schema.tasks.id, originId))
-        .get();
-
-      let mergeResult: { merged: boolean; branch: string; error?: string; mergeStrategy?: string } | null = null;
-      if (task) {
-        try {
-          if (targetBranch) {
-            db.update(schema.tasks)
-              .set({ targetBranch })
-              .where(eq(schema.tasks.id, originId))
-              .run();
-          }
-          mergeResult = finalizeAndMerge(originId, { targetBranch });
-        } catch (e) {
-          console.error("Failed to finalize:", e);
-          mergeResult = { merged: false, branch: "", error: e instanceof Error ? e.message : String(e) };
-        }
-      }
+      backgroundMerge(originId, null, targetBranch);
 
       return NextResponse.json({
         status: "approved",
         reviewId: id,
-        merged: mergeResult?.merged ?? false,
-        mergeError: mergeResult?.error ?? null,
-        mergeStrategy: mergeResult?.mergeStrategy ?? null,
+        merging: true,
+        message: "Approved — merge running in background",
         workflowAdvanced: null,
       });
     }
 
-    // Workflow task: transition via state machine
+    // Workflow task: transition via state machine → finalizing or running
     const result = await transitionWorkflowRun(review.workflowRunId, {
       type: "APPROVE",
       reviewId: id,
@@ -87,84 +130,33 @@ export async function POST(
       );
     }
 
-    let mergeResult: { merged: boolean; branch: string; error?: string; mergeStrategy?: string } | null = null;
-    let workflowAdvanced: Record<string, unknown> | null = null;
-
     if (result.to === "finalizing") {
-      // Last stage — attempt merge
-      const originId = getOriginTaskId(review.taskId);
-      try {
-        if (targetBranch) {
-          db.update(schema.tasks)
-            .set({ targetBranch })
-            .where(eq(schema.tasks.id, originId))
-            .run();
-        }
-        mergeResult = finalizeAndMerge(originId, {
-          workflowRunId: review.workflowRunId,
-          targetBranch,
-        });
+      // Last stage — kick off merge in background, return immediately
+      backgroundMerge(originId, review.workflowRunId, targetBranch);
 
-        if (mergeResult.merged) {
-          await transitionWorkflowRun(review.workflowRunId, { type: "FINALIZE" });
-          workflowAdvanced = { completed: true };
-        } else {
-          await transitionWorkflowRun(review.workflowRunId, { type: "MERGE_CONFLICT" });
-          workflowAdvanced = { mergeConflict: true, error: mergeResult.error };
-        }
-      } catch (e) {
-        console.error("Failed to finalize, falling back to mechanical merge:", e);
-        const task = db
-          .select()
-          .from(schema.tasks)
-          .where(eq(schema.tasks.id, originId))
-          .get();
-        const project = task
-          ? db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get()
-          : null;
+      return NextResponse.json({
+        status: "approved",
+        reviewId: id,
+        merging: true,
+        message: "Approved — merge running in background",
+        workflowAdvanced: { finalizing: true },
+      });
+    }
 
-        if (project && task) {
-          const shortPrompt = task.prompt.slice(0, 60).replace(/\n/g, " ");
-          mergeResult = commitAndMergeWorktree(
-            project.localPath,
-            originId,
-            `vibe-harness: ${shortPrompt}`,
-            undefined
-          );
-          if (mergeResult.merged) {
-            try { removeWorktree(project.localPath, originId); } catch { /* non-critical */ }
-            await transitionWorkflowRun(review.workflowRunId, { type: "FINALIZE" });
-            workflowAdvanced = { completed: true };
-          } else {
-            await transitionWorkflowRun(review.workflowRunId, { type: "MERGE_CONFLICT" });
-            workflowAdvanced = { mergeConflict: true, error: mergeResult.error };
-          }
-        }
-      }
-
-      // Catch-all: if mergeResult is still null, nothing above succeeded —
-      // don't leave the workflow stuck in "finalizing"
-      if (!mergeResult) {
-        try {
-          await transitionWorkflowRun(review.workflowRunId, { type: "MERGE_CONFLICT" });
-        } catch {
-          console.error("Failed to transition workflow after merge failure");
-        }
-        mergeResult = { merged: false, branch: "", error: "Merge failed with no recovery" };
-        workflowAdvanced = { mergeConflict: true, error: mergeResult.error };
-      }
-    } else if (result.to === "running") {
-      // Advancing to next stage (launchNextStageTask action fired)
-      workflowAdvanced = { nextStage: true };
+    if (result.to === "running") {
+      return NextResponse.json({
+        status: "approved",
+        reviewId: id,
+        merging: false,
+        workflowAdvanced: { nextStage: true },
+      });
     }
 
     return NextResponse.json({
       status: "approved",
       reviewId: id,
-      merged: mergeResult?.merged ?? false,
-      mergeError: mergeResult?.error ?? null,
-      mergeStrategy: mergeResult?.mergeStrategy ?? null,
-      workflowAdvanced,
+      merging: false,
+      workflowAdvanced: { state: result.to },
     });
   }
 

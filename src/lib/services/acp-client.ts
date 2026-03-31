@@ -377,6 +377,14 @@ async function bootstrapAcpSession(
     events.emit("update", { kind: "stderr", data: { text } });
   });
 
+  // Tee stdout: feed it to the ACP SDK AND capture raw lines for result parsing.
+  // The `result` JSONL event (with usage stats) is emitted on stdout after the
+  // ACP protocol ends, so the SDK never sees it. We capture all stdout into
+  // output[] so the close handler can parse result/usage data.
+  proc.stdout!.on("data", (data: Buffer) => {
+    output.push(data.toString());
+  });
+
   // With docker sandbox exec -i, stdout is clean NDJSON — no boot
   // messages or shell prompt markers to filter. Connect SDK directly.
   const sdkOutput = Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>;

@@ -197,7 +197,7 @@ export function startTask(options: StartTaskOptions) {
         return;
       }
 
-      // Parse stderr for usage stats (Copilot CLI may output result event there)
+      // Parse stdout/stderr for usage stats (result JSONL event with usage data)
       const jsonlParser = new CopilotJsonlParser();
       for (const raw of session.output) {
         for (const line of raw.split("\n")) {
