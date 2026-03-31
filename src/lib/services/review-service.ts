@@ -61,9 +61,9 @@ function capturePlanFromSandbox(sandboxName: string): string | null {
  * If the task has an originTaskId, return it. Otherwise, the task
  * itself is the origin.
  */
-export function getOriginTaskId(taskId: string): string {
-  const db = getDb();
-  const task = db
+export async function getOriginTaskId(taskId: string): Promise<string> {
+  const db = await getDb();
+  const task = await db
     .select({ originTaskId: schema.tasks.originTaskId })
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -74,9 +74,9 @@ export function getOriginTaskId(taskId: string): string {
 /**
  * Get all task IDs in a chain (the origin + all reruns).
  */
-export function getTaskChainIds(originTaskId: string): string[] {
-  const db = getDb();
-  const tasks = db
+export async function getTaskChainIds(originTaskId: string): Promise<string[]> {
+  const db = await getDb();
+  const tasks = await db
     .select({ id: schema.tasks.id })
     .from(schema.tasks)
     .where(
@@ -92,13 +92,13 @@ export function getTaskChainIds(originTaskId: string): string[] {
 /**
  * Count the total review rounds across a task chain.
  */
-function countChainReviewRounds(taskId: string): number {
-  const originId = getOriginTaskId(taskId);
-  const chainIds = getTaskChainIds(originId);
+async function countChainReviewRounds(taskId: string): Promise<number> {
+  const originId = await getOriginTaskId(taskId);
+  const chainIds = await getTaskChainIds(originId);
   if (chainIds.length === 0) return 0;
 
-  const db = getDb();
-  const reviews = db
+  const db = await getDb();
+  const reviews = await db
     .select()
     .from(schema.reviews)
     .where(inArray(schema.reviews.taskId, chainIds))
@@ -119,10 +119,10 @@ export async function generateTaskDiff(taskId: string): Promise<{
   diagnostics: string[];
   reviewUpdated?: boolean;
 }> {
-  const db = getDb();
+  const db = await getDb();
   const diagnostics: string[] = [];
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -130,7 +130,7 @@ export async function generateTaskDiff(taskId: string): Promise<{
 
   if (!task) throw new Error(`Task ${taskId} not found`);
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, task.projectId))
@@ -138,7 +138,7 @@ export async function generateTaskDiff(taskId: string): Promise<{
 
   if (!project) throw new Error(`Project ${task.projectId} not found`);
 
-  const originId = getOriginTaskId(taskId);
+  const originId = await getOriginTaskId(taskId);
   const workDir = resolveTaskWorkDir(project.localPath, originId);
   diagnostics.push(`workDir: ${workDir}`);
   diagnostics.push(`originTaskId: ${originId}`);
@@ -274,9 +274,9 @@ export async function generateTaskDiff(taskId: string): Promise<{
  * generates a summary, and stores as a Review record.
  */
 export async function createReviewForTask(taskId: string): Promise<string | null> {
-  const db = getDb();
+  const db = await getDb();
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -284,7 +284,7 @@ export async function createReviewForTask(taskId: string): Promise<string | null
 
   if (!task) return null;
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, task.projectId))
@@ -322,10 +322,10 @@ export async function createReviewForTask(taskId: string): Promise<string | null
   const planMarkdown = task.sandboxId ? capturePlanFromSandbox(task.sandboxId) : null;
 
   // Count existing reviews across the entire task chain to determine round
-  const round = countChainReviewRounds(taskId) + 1;
+  const round = await countChainReviewRounds(taskId) + 1;
 
   // Guard against duplicate review for the same task+round (concurrent creation)
-  const existingReview = db.select({ id: schema.reviews.id })
+  const existingReview = await db.select({ id: schema.reviews.id })
     .from(schema.reviews)
     .where(and(
       eq(schema.reviews.taskId, taskId),
@@ -340,7 +340,7 @@ export async function createReviewForTask(taskId: string): Promise<string | null
   // Create review record
   const reviewId = uuid();
   const now = new Date().toISOString();
-  db.insert(schema.reviews)
+  await db.insert(schema.reviews)
     .values({
       id: reviewId,
       workflowRunId: task.workflowRunId,
@@ -361,20 +361,20 @@ export async function createReviewForTask(taskId: string): Promise<string | null
  * Regenerate a review's diffSnapshot and aiSummary from a fresh diff result.
  * Used by the /api/tasks/[id]/diff?update_review=true endpoint.
  */
-export function regenerateReviewFromDiff(
+export async function regenerateReviewFromDiff(
   taskId: string,
   diffResult: { diffText: string; files: ReturnType<typeof parseUnifiedDiff>; summary: string },
-): boolean {
-  const db = getDb();
+): Promise<boolean> {
+  const db = await getDb();
 
-  const review = db
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.taskId, taskId))
     .get();
   if (!review) return false;
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -384,7 +384,7 @@ export function regenerateReviewFromDiff(
   const isEmpty = diffResult.diffText.trim() === "" || diffResult.files.length === 0;
   const aiSummary = generateStructuredSummary(task, diffResult.files, diffResult.summary, isEmpty);
 
-  db.update(schema.reviews)
+  await db.update(schema.reviews)
     .set({ diffSnapshot: diffResult.diffText, aiSummary })
     .where(eq(schema.reviews.id, review.id))
     .run();
@@ -439,10 +439,10 @@ function generateStructuredSummary(
 /**
  * Bundle review comments into a structured prompt for the next agent round.
  */
-export function bundleCommentsAsPrompt(reviewId: string): string {
-  const db = getDb();
+export async function bundleCommentsAsPrompt(reviewId: string): Promise<string> {
+  const db = await getDb();
 
-  const review = db
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, reviewId))
@@ -450,7 +450,7 @@ export function bundleCommentsAsPrompt(reviewId: string): string {
 
   if (!review) return "";
 
-  const comments = db
+  const comments = await db
     .select()
     .from(schema.reviewComments)
     .where(eq(schema.reviewComments.reviewId, reviewId))

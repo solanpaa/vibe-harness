@@ -52,10 +52,10 @@ export async function launchProposals(input: {
   launched: number;
   queued: number;
 }> {
-  const db = getDb();
+  const db = await getDb();
 
   // Get the split task
-  const splitTask = db
+  const splitTask = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, input.taskId))
@@ -64,7 +64,7 @@ export async function launchProposals(input: {
   if (!splitTask) throw new Error("Task not found");
 
   // Get proposals
-  const allProposals = listProposals(input.taskId);
+  const allProposals = await listProposals(input.taskId);
   const proposals = input.proposalIds
     ? allProposals.filter((p) => input.proposalIds!.includes(p.id))
     : allProposals.filter((p) => p.status !== "discarded");
@@ -84,7 +84,7 @@ export async function launchProposals(input: {
   // Create parallel group
   const now = new Date().toISOString();
   const groupId = uuid();
-  db.insert(schema.parallelGroups)
+  await db.insert(schema.parallelGroups)
     .values({
       id: groupId,
       sourceWorkflowRunId: splitTask.workflowRunId || splitTask.id,
@@ -146,7 +146,7 @@ export async function launchProposals(input: {
       workflowRunIds.push(result.runId);
 
       // Link the workflow run to the parallel group and proposal
-      db.update(schema.workflowRuns)
+      await db.update(schema.workflowRuns)
         .set({
           parallelGroupId: groupId,
           sourceProposalId: proposal.id,
@@ -155,7 +155,7 @@ export async function launchProposals(input: {
         .run();
 
       // Update proposal status
-      db.update(schema.taskProposals)
+      await db.update(schema.taskProposals)
         .set({
           status: "launched",
           parallelGroupId: groupId,
@@ -183,10 +183,10 @@ export async function launchProposals(input: {
 /**
  * Get aggregated status for a parallel group.
  */
-export function getParallelGroupStatus(groupId: string) {
-  const db = getDb();
+export async function getParallelGroupStatus(groupId: string) {
+  const db = await getDb();
 
-  const group = db
+  const group = await db
     .select()
     .from(schema.parallelGroups)
     .where(eq(schema.parallelGroups.id, groupId))
@@ -194,7 +194,7 @@ export function getParallelGroupStatus(groupId: string) {
 
   if (!group) return null;
 
-  const childRuns = db
+  const childRuns = await db
     .select({ status: schema.workflowRuns.status })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.parallelGroupId, groupId))
@@ -218,15 +218,15 @@ export function getParallelGroupStatus(groupId: string) {
  * Consolidate all completed child run branches into a single consolidation branch.
  * Merges branches sequentially; stops on first conflict.
  */
-export function consolidateParallelGroup(groupId: string): {
+export async function consolidateParallelGroup(groupId: string): Promise<{
   success: boolean;
   branch: string;
   mergedCount: number;
   error?: string;
-} {
-  const db = getDb();
+}> {
+  const db = await getDb();
 
-  const group = db
+  const group = await db
     .select()
     .from(schema.parallelGroups)
     .where(eq(schema.parallelGroups.id, groupId))
@@ -237,7 +237,7 @@ export function consolidateParallelGroup(groupId: string): {
   }
 
   // Get the source workflow run to find the project
-  const sourceRun = db
+  const sourceRun = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, group.sourceWorkflowRunId))
@@ -248,17 +248,17 @@ export function consolidateParallelGroup(groupId: string): {
   }
 
   // Find the stored target branch from the source run's first task
-  const sourceFirstTask = db
+  const sourceFirstTask = (await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.workflowRunId, group.sourceWorkflowRunId))
-    .all()
+    .all())
     .filter((t) => !t.originTaskId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 
   const storedTargetBranch = sourceFirstTask?.targetBranch || sourceFirstTask?.branch || null;
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, sourceRun.projectId))
@@ -271,11 +271,11 @@ export function consolidateParallelGroup(groupId: string): {
   const projectDir = project.localPath;
 
   // Get all completed child runs
-  const childRuns = db
+  const childRuns = (await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.parallelGroupId, groupId))
-    .all()
+    .all())
     .filter((r) => r.status === "completed");
 
   if (childRuns.length === 0) {
@@ -320,11 +320,11 @@ export function consolidateParallelGroup(groupId: string): {
     let mergedCount = 0;
     for (const run of childRuns) {
       // Find the first task (origin) of this child run to get its branch name
-      const firstTask = db
+      const firstTask = (await db
         .select()
         .from(schema.tasks)
         .where(eq(schema.tasks.workflowRunId, run.id))
-        .all()
+        .all())
         .filter((t) => !t.originTaskId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 
@@ -361,7 +361,7 @@ export function consolidateParallelGroup(groupId: string): {
           stdio: "pipe",
         });
 
-        db.update(schema.parallelGroups)
+        await db.update(schema.parallelGroups)
           .set({ status: "failed" })
           .where(eq(schema.parallelGroups.id, groupId))
           .run();
@@ -390,11 +390,11 @@ export function consolidateParallelGroup(groupId: string): {
 
     // Clean up child worktrees
     for (const run of childRuns) {
-      const firstTask = db
+      const firstTask = (await db
         .select()
         .from(schema.tasks)
         .where(eq(schema.tasks.workflowRunId, run.id))
-        .all()
+        .all())
         .filter((t) => !t.originTaskId)[0];
 
       if (firstTask) {
@@ -424,7 +424,7 @@ export function consolidateParallelGroup(groupId: string): {
     }
 
     // Mark group as completed
-    db.update(schema.parallelGroups)
+    await db.update(schema.parallelGroups)
       .set({ status: "completed", completedAt: new Date().toISOString() })
       .where(eq(schema.parallelGroups.id, groupId))
       .run();
@@ -432,7 +432,7 @@ export function consolidateParallelGroup(groupId: string): {
     return { success: true, branch: consolidationBranch, mergedCount };
   } catch (e) {
     const msg = (e as Error).message;
-    db.update(schema.parallelGroups)
+    await db.update(schema.parallelGroups)
       .set({ status: "failed" })
       .where(eq(schema.parallelGroups.id, groupId))
       .run();

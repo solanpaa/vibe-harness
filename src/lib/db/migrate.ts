@@ -1,23 +1,24 @@
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import { getDb } from "./index";
 import path from "path";
+import { fileURLToPath } from "url";
 
-export function runMigrations() {
-  const db = getDb();
+export async function runMigrations() {
+  const db = await getDb();
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = path.join(
-    process.cwd(),
-    "src/lib/db/migrations"
+    __dirname,
+    "migrations"
   );
-  migrate(db, { migrationsFolder });
+  await migrate(db, { migrationsFolder });
 }
 
-// Seed default agent definition
-export function seedDefaults() {
-  const db = getDb();
-  const existing = db.query.agentDefinitions.findFirst();
+export async function seedDefaults() {
+  const db = await getDb();
+  const existing = await db.query.agentDefinitions.findFirst();
   if (!existing) {
     const now = new Date().toISOString();
-    db.insert(
+    await db.insert(
       require("./schema").agentDefinitions
     ).values({
       id: "00000000-0000-0000-0000-000000000001",

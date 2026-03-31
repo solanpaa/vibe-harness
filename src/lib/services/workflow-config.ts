@@ -12,20 +12,20 @@ import type { WorkflowStage } from "@/types/domain";
  * Look up the WorkflowStage config for a given workflow run and stage name.
  * Returns null for standalone tasks (no workflow) or if the stage isn't found.
  */
-export function getStageConfig(
+export async function getStageConfig(
   workflowRunId: string,
   stageName: string
-): WorkflowStage | null {
-  const db = getDb();
+): Promise<WorkflowStage | null> {
+  const db = await getDb();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .get();
   if (!run) return null;
 
-  const template = db
+  const template = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, run.workflowTemplateId))
@@ -40,20 +40,20 @@ export function getStageConfig(
  * Get the next stage after the given stage name.
  * Returns null if the stage is not found or is the last stage.
  */
-export function getNextStage(
+export async function getNextStage(
   workflowRunId: string,
   currentStageName: string
-): WorkflowStage | null {
-  const db = getDb();
+): Promise<WorkflowStage | null> {
+  const db = await getDb();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .get();
   if (!run) return null;
 
-  const template = db
+  const template = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, run.workflowTemplateId))

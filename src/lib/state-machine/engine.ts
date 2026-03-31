@@ -22,17 +22,17 @@ export async function applyTransition<
   machine: AnyStateMachine;
   entityId: string;
   event: TEvent;
-  readState: (id: string) => { status: string; context: TContext };
+  readState: (id: string) => { status: string; context: TContext } | Promise<{ status: string; context: TContext }>;
   /** Write new state. Receives expectedFromStatus for optimistic locking.
    *  Should throw if current DB status !== expectedFromStatus. */
-  writeState: (id: string, status: string, expectedFromStatus: string) => void;
+  writeState: (id: string, status: string, expectedFromStatus: string) => void | Promise<void>;
   actionHandlers: Record<string, ActionHandler<TContext, TEvent>>;
 }): Promise<TransitionResult> {
   const { machine, entityId, event, readState, writeState, actionHandlers } =
     opts;
 
   // 1. Read current state
-  const current = readState(entityId);
+  const current = await readState(entityId);
   const fromValue = current.status;
 
   // 2. Track which actions fire by providing instrumented action implementations
@@ -78,7 +78,7 @@ export async function applyTransition<
 
     // 5. Write new state to DB with optimistic lock (throws on conflict)
     if (stateChanged) {
-      writeState(entityId, nextValue, fromValue);
+      await writeState(entityId, nextValue, fromValue);
     }
 
     // 6. Execute real action handlers in the order they fired

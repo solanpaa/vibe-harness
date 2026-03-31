@@ -13,12 +13,12 @@ export { getStageConfig, buildStagePrompt } from "./workflow-config";
 /**
  * Create a workflow template with stages.
  */
-export function createWorkflowTemplate(input: {
+export async function createWorkflowTemplate(input: {
   name: string;
   description?: string;
   stages: WorkflowStage[];
 }) {
-  const db = getDb();
+  const db = await getDb();
   const now = new Date().toISOString();
   const template = {
     id: uuid(),
@@ -28,7 +28,7 @@ export function createWorkflowTemplate(input: {
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(schema.workflowTemplates).values(template).run();
+  await db.insert(schema.workflowTemplates).values(template).run();
   return { ...template, stages: input.stages };
 }
 
@@ -46,10 +46,10 @@ export async function startWorkflowRun(input: {
   useWorktree?: boolean;
   branch?: string | null;
 }) {
-  const db = getDb();
+  const db = await getDb();
 
   // Get the template
-  const template = db
+  const template = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, input.workflowTemplateId))
@@ -71,18 +71,18 @@ export async function startWorkflowRun(input: {
   // Validate before inserting workflow run to avoid orphaned rows
   const agentId = input.agentDefinitionId || firstStage.agentDefinitionId;
   const agent = agentId
-    ? db
+    ? await db
         .select()
         .from(schema.agentDefinitions)
         .where(eq(schema.agentDefinitions.id, agentId))
         .get()
-    : db.select().from(schema.agentDefinitions).get();
+    : await db.select().from(schema.agentDefinitions).get();
 
   if (!agent) throw new Error("No agent definition found");
 
   // Create workflow run with task description — starts as "pending"
   const runId = uuid();
-  db.insert(schema.workflowRuns)
+  await db.insert(schema.workflowRuns)
     .values({
       id: runId,
       workflowTemplateId: template.id,
@@ -100,9 +100,10 @@ export async function startWorkflowRun(input: {
 
   // Fire-and-forget title generation for the workflow run
   if (input.taskDescription) {
-    generateTitle(input.taskDescription).then((title) => {
+    generateTitle(input.taskDescription).then(async (title) => {
       if (title) {
-        db.update(schema.workflowRuns)
+        const db = await getDb();
+        await db.update(schema.workflowRuns)
           .set({ title })
           .where(eq(schema.workflowRuns.id, runId))
           .run();
@@ -113,7 +114,7 @@ export async function startWorkflowRun(input: {
   }
 
   // Get the project for the local path
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, input.projectId))
@@ -126,7 +127,7 @@ export async function startWorkflowRun(input: {
 
   // Create and start task for the first stage
   const taskId = uuid();
-  db.insert(schema.tasks)
+  await db.insert(schema.tasks)
     .values({
       id: taskId,
       projectId: input.projectId,
@@ -152,9 +153,9 @@ export async function startWorkflowRun(input: {
   // Set provisioning via state machine and launch in background
   await transitionTask(taskId, { type: "PROVISION" });
 
-  Promise.resolve().then(() => {
+  Promise.resolve().then(async () => {
     try {
-      startTask({
+      await startTask({
         taskId,
         projectDir: project.localPath,
         agentCommand,

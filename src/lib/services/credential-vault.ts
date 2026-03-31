@@ -4,15 +4,15 @@ import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import type { CredentialEntryType } from "@/types/domain";
 
-function logAudit(action: string, opts?: {
+async function logAudit(action: string, opts?: {
   credentialSetId?: string;
   credentialEntryId?: string;
   taskId?: string;
   details?: Record<string, unknown>;
 }) {
   try {
-    const db = getDb();
-    db.insert(schema.credentialAuditLog).values({
+    const db = await getDb();
+    await db.insert(schema.credentialAuditLog).values({
       id: uuid(),
       action,
       credentialSetId: opts?.credentialSetId || null,
@@ -40,8 +40,8 @@ export interface CredentialEntryInput {
   mountPath?: string | null;
 }
 
-export function createCredentialSet(input: CredentialSetInput) {
-  const db = getDb();
+export async function createCredentialSet(input: CredentialSetInput) {
+  const db = await getDb();
   const now = new Date().toISOString();
   const credSet = {
     id: uuid(),
@@ -50,13 +50,13 @@ export function createCredentialSet(input: CredentialSetInput) {
     projectId: input.projectId || null,
     createdAt: now,
   };
-  db.insert(schema.credentialSets).values(credSet).run();
-  logAudit("create_set", { credentialSetId: credSet.id, details: { name: input.name } });
+  await db.insert(schema.credentialSets).values(credSet).run();
+  await logAudit("create_set", { credentialSetId: credSet.id, details: { name: input.name } });
   return credSet;
 }
 
-export function addCredentialEntry(input: CredentialEntryInput) {
-  const db = getDb();
+export async function addCredentialEntry(input: CredentialEntryInput) {
+  const db = await getDb();
   const now = new Date().toISOString();
   const entry = {
     id: uuid(),
@@ -67,8 +67,8 @@ export function addCredentialEntry(input: CredentialEntryInput) {
     mountPath: input.mountPath || null,
     createdAt: now,
   };
-  db.insert(schema.credentialEntries).values(entry).run();
-  logAudit("add_entry", {
+  await db.insert(schema.credentialEntries).values(entry).run();
+  await logAudit("add_entry", {
     credentialSetId: input.credentialSetId,
     credentialEntryId: entry.id,
     details: { key: input.key, type: input.type },
@@ -76,9 +76,9 @@ export function addCredentialEntry(input: CredentialEntryInput) {
   return { ...entry, value: "***" }; // never return encrypted value to client
 }
 
-export function getCredentialEntries(credentialSetId: string) {
-  const db = getDb();
-  const entries = db
+export async function getCredentialEntries(credentialSetId: string) {
+  const db = await getDb();
+  const entries = await db
     .select()
     .from(schema.credentialEntries)
     .where(eq(schema.credentialEntries.credentialSetId, credentialSetId))
@@ -86,9 +86,9 @@ export function getCredentialEntries(credentialSetId: string) {
   return entries.map((e) => ({ ...e, value: "***" }));
 }
 
-export function getDecryptedEntries(credentialSetId: string) {
-  const db = getDb();
-  const entries = db
+export async function getDecryptedEntries(credentialSetId: string) {
+  const db = await getDb();
+  const entries = await db
     .select()
     .from(schema.credentialEntries)
     .where(eq(schema.credentialEntries.credentialSetId, credentialSetId))
@@ -96,14 +96,14 @@ export function getDecryptedEntries(credentialSetId: string) {
   return entries.map((e) => ({ ...e, value: decrypt(e.value) }));
 }
 
-export function deleteCredentialEntry(entryId: string) {
-  const db = getDb();
-  const entry = db.select().from(schema.credentialEntries)
+export async function deleteCredentialEntry(entryId: string) {
+  const db = await getDb();
+  const entry = await db.select().from(schema.credentialEntries)
     .where(eq(schema.credentialEntries.id, entryId)).get();
-  db.delete(schema.credentialEntries)
+  await db.delete(schema.credentialEntries)
     .where(eq(schema.credentialEntries.id, entryId))
     .run();
-  logAudit("delete_entry", {
+  await logAudit("delete_entry", {
     credentialSetId: entry?.credentialSetId,
     credentialEntryId: entryId,
     details: { key: entry?.key },
@@ -111,12 +111,12 @@ export function deleteCredentialEntry(entryId: string) {
 }
 
 /** Build env vars and mount args for Docker sandbox from a credential set */
-export function buildSandboxCredentials(credentialSetId: string, taskId?: string): {
+export async function buildSandboxCredentials(credentialSetId: string, taskId?: string): Promise<{
   envVars: Record<string, string>;
   fileMounts: Array<{ key: string; value: string; mountPath: string }>;
   dockerLogins: Array<{ registry: string; username: string; password: string }>;
-} {
-  const entries = getDecryptedEntries(credentialSetId);
+}> {
+  const entries = await getDecryptedEntries(credentialSetId);
   const envVars: Record<string, string> = {};
   const fileMounts: Array<{ key: string; value: string; mountPath: string }> = [];
   const dockerLogins: Array<{ registry: string; username: string; password: string }> = [];
@@ -152,7 +152,7 @@ export function buildSandboxCredentials(credentialSetId: string, taskId?: string
     }
   }
 
-  logAudit("access", {
+  await logAudit("access", {
     credentialSetId,
     taskId,
     details: {
@@ -166,12 +166,12 @@ export function buildSandboxCredentials(credentialSetId: string, taskId?: string
 }
 
 /** Get audit log entries for a credential set */
-export function getAuditLog(credentialSetId?: string) {
-  const db = getDb();
+export async function getAuditLog(credentialSetId?: string) {
+  const db = await getDb();
   if (credentialSetId) {
-    return db.select().from(schema.credentialAuditLog)
+    return await db.select().from(schema.credentialAuditLog)
       .where(eq(schema.credentialAuditLog.credentialSetId, credentialSetId))
       .all();
   }
-  return db.select().from(schema.credentialAuditLog).all();
+  return await db.select().from(schema.credentialAuditLog).all();
 }

@@ -17,16 +17,16 @@ export async function rerunWithComments(reviewId: string): Promise<{
   taskId: string;
   reviewRound: number;
 } | null> {
-  const db = getDb();
+  const db = await getDb();
 
-  const review = db
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, reviewId))
     .get();
   if (!review) return null;
 
-  const originalTask = db
+  const originalTask = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, review.taskId))
@@ -39,14 +39,14 @@ export async function rerunWithComments(reviewId: string): Promise<{
     return null;
   }
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, originalTask.projectId))
     .get();
   if (!project) return null;
 
-  const agent = db
+  const agent = await db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, originalTask.agentDefinitionId))
@@ -54,7 +54,7 @@ export async function rerunWithComments(reviewId: string): Promise<{
   if (!agent) return null;
 
   // Bundle review comments
-  const commentPrompt = bundleCommentsAsPrompt(reviewId);
+  const commentPrompt = await bundleCommentsAsPrompt(reviewId);
   if (!commentPrompt || commentPrompt.trim() === "") {
     console.warn(`[rerunWithComments] No comments found for review ${reviewId}, skipping rerun`);
     return null;
@@ -63,13 +63,13 @@ export async function rerunWithComments(reviewId: string): Promise<{
   // Build stage-aware prompt when this task is part of a workflow
   let combinedPrompt: string;
   if (originalTask.workflowRunId && originalTask.stageName) {
-    const run = db
+    const run = await db
       .select()
       .from(schema.workflowRuns)
       .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
       .get();
 
-    const stageConfig = getStageConfig(originalTask.workflowRunId, originalTask.stageName);
+    const stageConfig = await getStageConfig(originalTask.workflowRunId, originalTask.stageName);
 
     if (run && stageConfig) {
       const basePrompt = buildStagePrompt(
@@ -101,12 +101,12 @@ export async function rerunWithComments(reviewId: string): Promise<{
 
   // Track origin: if the original task already has an origin, use it;
   // otherwise, the original task IS the origin.
-  const originId = getOriginTaskId(originalTask.id);
+  const originId = await getOriginTaskId(originalTask.id);
 
   // Get ACP session ID for session continuation
   let loadSessionId: string | null = null;
   if (originalTask.workflowRunId) {
-    const run = db
+    const run = await db
       .select({ acpSessionId: schema.workflowRuns.acpSessionId })
       .from(schema.workflowRuns)
       .where(eq(schema.workflowRuns.id, originalTask.workflowRunId))
@@ -117,7 +117,7 @@ export async function rerunWithComments(reviewId: string): Promise<{
   // Create a new task record linked to the same chain
   const now = new Date().toISOString();
   const newTaskId = uuid();
-  db.insert(schema.tasks)
+  await db.insert(schema.tasks)
     .values({
       id: newTaskId,
       projectId: originalTask.projectId,
