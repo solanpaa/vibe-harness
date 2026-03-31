@@ -1,33 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vibe Harness
 
-## Getting Started
+AI coding agent orchestrator — run Copilot CLI, Claude Code, and Gemini in Docker sandboxes with workflow pipelines, code reviews, and parallel execution.
 
-First, run the development server:
+## Quick Start
+
+Run directly from GitHub with a single command:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npx github:jannesolanpaa/vibe-harness
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This installs dependencies, builds the app on first run, and starts the server at [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Options
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx github:jannesolanpaa/vibe-harness --port 4000     # Custom port
+npx github:jannesolanpaa/vibe-harness --no-open        # Don't open browser
+npx github:jannesolanpaa/vibe-harness --data-dir ~/my-data  # Custom data dir
+```
 
-## Learn More
+### Global Install
 
-To learn more about Next.js, take a look at the following resources:
+For frequent use without the `npx` overhead:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install -g github:jannesolanpaa/vibe-harness
+vibe-harness
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Pin a Version
+
+```bash
+npx github:jannesolanpaa/vibe-harness#v0.2.0   # tagged release
+npx github:jannesolanpaa/vibe-harness#main      # latest main
+```
+
+## Prerequisites
+
+The CLI checks for these on startup:
+
+- **Node.js >= 20**
+- **Docker Desktop** (running)
+- **git**
+- **GitHub CLI** (`gh`) — authenticated
+- **Copilot CLI** (`copilot`)
+
+## Data Directory
+
+Vibe Harness stores its database at `~/.vibe-harness/vibe-harness.db` by default. Override with `--data-dir` or the `DATABASE_URL` environment variable (use `file:` prefix, e.g. `DATABASE_URL=file:/path/to/db.sqlite`).
+
+## Development
+
+```bash
+npm install
+npm run dev          # Dev server on :3000
+npm run build        # Production build
+npm run lint         # ESLint
+```
+
+The dev server uses `./vibe-harness.db` in the project root. Delete it to reset.
 
 ## Custom Sandbox Image
 
@@ -46,14 +78,8 @@ Vibe Harness uses a custom Docker sandbox template that extends the official Cop
 docker build -t vibe-harness/copilot:latest -f docker/Dockerfile.copilot docker/
 ```
 
-The default agent definition references `vibe-harness/copilot:latest`. Docker's `--pull-template missing` policy (the default) will find the locally-built image without trying to pull from a registry.
+The CLI will detect if the image is missing and build it automatically on first run.
 
 ### Rebuilding after changes
 
-Edit `docker/Dockerfile.copilot` and re-run the build script. Delete `vibe-harness.db` if you need to re-seed the default agent definition, or update the agent's `dockerImage` field via the API.
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Edit `docker/Dockerfile.copilot` and re-run the build script. Delete `~/.vibe-harness/vibe-harness.db` if you need to re-seed the default agent definition, or update the agent's `dockerImage` field via the API.

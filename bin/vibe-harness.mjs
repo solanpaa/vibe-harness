@@ -1,0 +1,209 @@
+#!/usr/bin/env node
+
+import { execSync, spawn } from "child_process";
+import { existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+const args = process.argv.slice(2);
+
+function getFlag(name) {
+  return args.includes(`--${name}`);
+}
+
+function getOption(name, defaultValue) {
+  const idx = args.indexOf(`--${name}`);
+  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+  return defaultValue;
+}
+
+if (getFlag("help") || getFlag("h")) {
+  console.log(`
+  vibe-harness — AI coding agent orchestrator
+
+  Usage:
+    npx github:jannesolanpaa/vibe-harness [options]
+
+  Options:
+    --port <number>    Port to run on (default: 3000)
+    --no-open          Don't open browser automatically
+    --data-dir <path>  Data directory (default: ~/.vibe-harness)
+    --help, -h         Show this help message
+  `);
+  process.exit(0);
+}
+
+const port = getOption("port", "3000");
+const noOpen = getFlag("no-open");
+const dataDir = getOption("data-dir", path.join(homedir(), ".vibe-harness"));
+
+// ---------------------------------------------------------------------------
+// Prerequisite checks
+// ---------------------------------------------------------------------------
+const checks = [
+  {
+    name: "Node.js >= 20",
+    test: () => {
+      const major = parseInt(process.versions.node.split(".")[0], 10);
+      if (major < 20) throw new Error(`Found Node.js ${process.versions.node}, need >= 20`);
+    },
+  },
+  {
+    name: "git",
+    test: () => {
+      try {
+        execSync("git --version", { stdio: "pipe" });
+      } catch {
+        throw new Error("Install git: https://git-scm.com/downloads");
+      }
+    },
+  },
+  {
+    name: "Docker",
+    test: () => {
+      try {
+        execSync("docker info", { stdio: "pipe", timeout: 5000 });
+      } catch {
+        throw new Error("Docker not running. Install: https://docs.docker.com/get-docker/");
+      }
+    },
+  },
+  {
+    name: "GitHub CLI (gh)",
+    test: () => {
+      try {
+        execSync("gh auth status", { stdio: "pipe", timeout: 5000 });
+      } catch {
+        throw new Error("Install & authenticate gh: https://cli.github.com/");
+      }
+    },
+  },
+  {
+    name: "Copilot CLI",
+    test: () => {
+      try {
+        execSync("which copilot", { stdio: "pipe", timeout: 5000 });
+      } catch {
+        throw new Error("Install Copilot CLI: https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line");
+      }
+    },
+  },
+];
+
+console.log("\n🔍 Checking prerequisites...\n");
+
+let allPassed = true;
+for (const check of checks) {
+  try {
+    check.test();
+    console.log(`  ✅ ${check.name}`);
+  } catch (e) {
+    console.log(`  ❌ ${check.name}: ${e.message}`);
+    allPassed = false;
+  }
+}
+
+if (!allPassed) {
+  console.log("\n⚠️  Some prerequisites are missing. Vibe Harness may not work correctly.\n");
+}
+
+// ---------------------------------------------------------------------------
+// Data directory setup
+// ---------------------------------------------------------------------------
+if (!existsSync(dataDir)) {
+  console.log(`\n📁 Creating data directory: ${dataDir}`);
+  mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = `file:${path.join(dataDir, "vibe-harness.db")}`;
+
+// ---------------------------------------------------------------------------
+// First-run build
+// ---------------------------------------------------------------------------
+const nextDir = path.join(PROJECT_ROOT, ".next");
+if (!existsSync(nextDir)) {
+  console.log("\n🔨 First run detected — building Vibe Harness (this takes ~30s)...\n");
+  try {
+    execSync("npm run build", {
+      cwd: PROJECT_ROOT,
+      stdio: "inherit",
+      env: { ...process.env, DATABASE_URL: dbPath },
+    });
+    console.log("\n✅ Build complete!\n");
+  } catch (e) {
+    console.error("\n❌ Build failed. Check errors above.");
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Docker sandbox image check
+// ---------------------------------------------------------------------------
+try {
+  const images = execSync("docker images -q vibe-harness/copilot:latest", {
+    stdio: "pipe",
+    timeout: 5000,
+  }).toString().trim();
+
+  if (!images) {
+    console.log("\n🐳 Docker sandbox image not found. Building it now...\n");
+    const buildScript = path.join(PROJECT_ROOT, "docker", "build.sh");
+    if (existsSync(buildScript)) {
+      execSync(`bash "${buildScript}"`, { cwd: PROJECT_ROOT, stdio: "inherit" });
+      console.log("\n✅ Docker sandbox image built!\n");
+    } else {
+      console.log("⚠️  docker/build.sh not found. Build the image manually:");
+      console.log("   docker build -t vibe-harness/copilot:latest -f docker/Dockerfile.copilot docker/\n");
+    }
+  }
+} catch {
+  console.log("⚠️  Could not check for Docker sandbox image.\n");
+}
+
+// ---------------------------------------------------------------------------
+// Start the server
+// ---------------------------------------------------------------------------
+console.log(`\n🚀 Starting Vibe Harness on http://localhost:${port}\n`);
+
+const server = spawn("node", [path.join(PROJECT_ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", port], {
+  cwd: PROJECT_ROOT,
+  stdio: "inherit",
+  env: { ...process.env, DATABASE_URL: dbPath, PORT: port },
+});
+
+// Open browser after a short delay
+if (!noOpen) {
+  setTimeout(() => {
+    const url = `http://localhost:${port}`;
+    try {
+      const platform = process.platform;
+      if (platform === "darwin") execSync(`open "${url}"`, { stdio: "pipe" });
+      else if (platform === "linux") execSync(`xdg-open "${url}"`, { stdio: "pipe" });
+      else if (platform === "win32") execSync(`start "${url}"`, { stdio: "pipe" });
+    } catch {
+      // Silently fail — user can open browser manually
+    }
+  }, 2000);
+}
+
+// Graceful shutdown
+function shutdown() {
+  console.log("\n\n👋 Shutting down Vibe Harness...");
+  server.kill("SIGTERM");
+  process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+server.on("exit", (code) => {
+  process.exit(code ?? 0);
+});

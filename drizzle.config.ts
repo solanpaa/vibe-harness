@@ -5,6 +5,6 @@ export default defineConfig({
   out: "./src/lib/db/migrations",
   dialect: "sqlite",
   dbCredentials: {
-    url: process.env.DATABASE_URL || "./vibe-harness.db",
+    url: process.env.DATABASE_URL || "file:./vibe-harness.db",
   },
 });

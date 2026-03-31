@@ -1,7 +1,8 @@
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
+import { createClient, type Client } from "@libsql/client";
 import path from "path";
+import { fileURLToPath } from "url";
 import { eq } from "drizzle-orm";
 import * as schema from "./schema";
 import {
@@ -9,27 +10,32 @@ import {
   getDirectExecuteStages,
 } from "@/lib/services/workflow-engine";
 
-const DB_PATH = process.env.DATABASE_URL || "./vibe-harness.db";
+const DB_PATH = process.env.DATABASE_URL || "file:./vibe-harness.db";
 
-let db: ReturnType<typeof createDb>;
+type DbInstance = ReturnType<typeof drizzle<typeof schema>>;
+let db: DbInstance;
+let client: Client;
 let initialized = false;
 
 function createDb() {
-  const sqlite = new Database(DB_PATH);
-  sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("foreign_keys = ON");
-  sqlite.pragma("busy_timeout = 5000");
-  return drizzle(sqlite, { schema });
+  client = createClient({ url: DB_PATH });
+  return drizzle(client, { schema });
 }
 
-function seedDefaults(database: ReturnType<typeof createDb>) {
-  const existing = database
+async function initPragmas() {
+  await client.execute("PRAGMA journal_mode = WAL");
+  await client.execute("PRAGMA foreign_keys = ON");
+  await client.execute("PRAGMA busy_timeout = 5000");
+}
+
+async function seedDefaults(database: DbInstance) {
+  const existing = await database
     .select()
     .from(schema.agentDefinitions)
     .get();
   if (!existing) {
     const now = new Date().toISOString();
-    database
+    await database
       .insert(schema.agentDefinitions)
       .values([
         {
@@ -44,14 +50,13 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
       ])
       .run();
   } else {
-    // Backfill dockerImage for existing default agent if not set
-    const defaultAgent = database
+    const defaultAgent = await database
       .select()
       .from(schema.agentDefinitions)
       .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
       .get();
     if (defaultAgent && !defaultAgent.dockerImage) {
-      database
+      await database
         .update(schema.agentDefinitions)
         .set({ dockerImage: "vibe-harness/copilot:latest" })
         .where(eq(schema.agentDefinitions.id, "00000000-0000-0000-0000-000000000001"))
@@ -59,12 +64,10 @@ function seedDefaults(database: ReturnType<typeof createDb>) {
     }
   }
 
-  // Seed default workflow templates
-  seedWorkflowTemplates(database);
+  await seedWorkflowTemplates(database);
 }
 
-/** Seed the built-in workflow templates if they don't exist yet. */
-function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
+async function seedWorkflowTemplates(database: DbInstance) {
   const templates = [
     {
       id: "00000000-0000-0000-0000-000000000010",
@@ -82,36 +85,35 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
     },
   ];
 
-  // Remove stale seeded templates that are no longer built-in
   const staleIds = ["00000000-0000-0000-0000-000000000011"];
   for (const staleId of staleIds) {
-    database
+    await database
       .delete(schema.workflowTemplates)
       .where(eq(schema.workflowTemplates.id, staleId))
       .run();
   }
-  // Remove on-demand sub-task template — sub-tasks now use Direct Execute
-  const subTaskTemplate = database
+  const allTemplates = await database
     .select()
     .from(schema.workflowTemplates)
-    .all()
+    .all();
+  const subTaskTemplate = allTemplates
     .find((t) => t.name === "Implement & Review (Sub-task)");
   if (subTaskTemplate) {
-    database
+    await database
       .delete(schema.workflowTemplates)
       .where(eq(schema.workflowTemplates.id, subTaskTemplate.id))
       .run();
   }
 
   for (const t of templates) {
-    const existing = database
+    const existing = await database
       .select()
       .from(schema.workflowTemplates)
       .where(eq(schema.workflowTemplates.id, t.id))
       .get();
     if (!existing) {
       const now = new Date().toISOString();
-      database
+      await database
         .insert(schema.workflowTemplates)
         .values({
           id: t.id,
@@ -123,8 +125,7 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
         })
         .run();
     } else {
-      // Update existing seeded templates with latest stage definitions
-      database
+      await database
         .update(schema.workflowTemplates)
         .set({
           stages: JSON.stringify(t.stages),
@@ -136,18 +137,20 @@ function seedWorkflowTemplates(database: ReturnType<typeof createDb>) {
   }
 }
 
-export function getDb() {
+export async function getDb() {
   if (!db) {
     db = createDb();
   }
   if (!initialized) {
     try {
+      await initPragmas();
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
       const migrationsFolder = path.join(
-        process.cwd(),
-        "src/lib/db/migrations"
+        __dirname,
+        "migrations"
       );
-      migrate(db, { migrationsFolder });
-      seedDefaults(db);
+      await migrate(db, { migrationsFolder });
+      await seedDefaults(db);
       initialized = true;
     } catch (e) {
       console.error("Migration/seed error:", e);
@@ -157,5 +160,5 @@ export function getDb() {
   return db;
 }
 
-export type Db = ReturnType<typeof getDb>;
+export type Db = DbInstance;
 export { schema };
