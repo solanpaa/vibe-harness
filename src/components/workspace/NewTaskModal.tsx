@@ -123,34 +123,44 @@ export function NewTaskModal({
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/credentials").then((r) => r.json()),
       fetch("/api/workflows").then((r) => r.json()),
+      fetch("/api/last-run-config").then((r) => r.json()).catch(() => null),
     ])
-      .then(([p, a, c, w]) => {
+      .then(([p, a, c, w, lastConfig]) => {
         setProjects(p);
         setAgents(a);
         setCredSets(c);
         setWorkflows(w);
+
+        // Apply last run config as defaults (prompt always stays empty)
+        if (lastConfig) {
+          setForm((f) => ({
+            ...f,
+            projectId:
+              defaultProjectId ??
+              (p.some((proj: { id: string }) => proj.id === lastConfig.projectId)
+                ? lastConfig.projectId
+                : f.projectId),
+            agentDefinitionId:
+              a.some((ag: { id: string }) => ag.id === lastConfig.agentDefinitionId)
+                ? lastConfig.agentDefinitionId
+                : a[0]?.id ?? f.agentDefinitionId,
+            credentialSetId:
+              c.some((cs: { id: string }) => cs.id === lastConfig.credentialSetId)
+                ? lastConfig.credentialSetId
+                : "",
+            model: lastConfig.model ?? "",
+            useWorktree: lastConfig.useWorktree != null ? !!lastConfig.useWorktree : true,
+            workflowTemplateId:
+              w.some((wf: { id: string }) => wf.id === lastConfig.workflowTemplateId)
+                ? lastConfig.workflowTemplateId
+                : DIRECT_EXECUTE_ID,
+          }));
+        }
       })
       .catch(() => {
         toast.error("Failed to load form data");
       });
-  }, [open]);
-
-  // Auto-select first agent when agents load
-  useEffect(() => {
-    if (agents.length > 0 && !form.agentDefinitionId) {
-      setForm((f) => ({ ...f, agentDefinitionId: agents[0].id }));
-    }
-  }, [agents, form.agentDefinitionId]);
-
-  // Auto-select project from defaultProjectId prop
-  useEffect(() => {
-    if (defaultProjectId && projects.length > 0) {
-      const match = projects.find((p) => p.id === defaultProjectId);
-      if (match) {
-        setForm((f) => ({ ...f, projectId: match.id }));
-      }
-    }
-  }, [defaultProjectId, projects]);
+  }, [open, defaultProjectId]);
 
   // Fetch branches when project changes
   useEffect(() => {
@@ -183,6 +193,21 @@ export function NewTaskModal({
   const canSubmit = isCompareMode ? canSubmitCompare : canSubmitSingle;
 
   // ── Form helpers ─────────────────────────────────────────────────
+
+  function saveLastRunConfig() {
+    fetch("/api/last-run-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: form.projectId || null,
+        agentDefinitionId: form.agentDefinitionId || null,
+        credentialSetId: form.credentialSetId || null,
+        model: form.model.trim() || null,
+        useWorktree: form.useWorktree,
+        workflowTemplateId: form.workflowTemplateId || null,
+      }),
+    }).catch(() => {});
+  }
 
   function resetForm() {
     setForm({
@@ -244,6 +269,7 @@ export function NewTaskModal({
         }
         const result = await res.json();
         toast.success(`Comparison started with ${result.tasks.length} variants`);
+        saveLastRunConfig();
         onOpenChange(false);
         resetForm();
         onTaskCreated?.(result.tasks[0]?.taskId);
@@ -271,6 +297,7 @@ export function NewTaskModal({
         }
         const result = await res.json();
         toast.success(`Workflow started — stage: ${result.stageName}`);
+        saveLastRunConfig();
         onOpenChange(false);
         resetForm();
         onTaskCreated?.(result.taskId);

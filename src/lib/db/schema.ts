@@ -233,3 +233,16 @@ export const credentialAuditLog = sqliteTable("credential_audit_log", {
   details: text("details"), // JSON
   createdAt: text("created_at").notNull(),
 });
+
+// ── Last Run Config ───────────────────────────────────────────────
+
+export const lastRunConfig = sqliteTable("last_run_config", {
+  id: integer("id").primaryKey(), // always 1
+  projectId: text("project_id"),
+  agentDefinitionId: text("agent_definition_id"),
+  credentialSetId: text("credential_set_id"),
+  model: text("model"),
+  useWorktree: integer("use_worktree"), // 0 or 1
+  workflowTemplateId: text("workflow_template_id"),
+  updatedAt: text("updated_at").notNull(),
+});

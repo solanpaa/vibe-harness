@@ -71,6 +71,13 @@
       "when": 1774906840976,
       "tag": "0009_tan_mattie_franklin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1774907067332,
+      "tag": "0010_flippant_big_bertha",
+      "breakpoints": true
     }
   ]
 }
