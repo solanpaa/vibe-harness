@@ -16,9 +16,9 @@ function backgroundMerge(
   targetBranch: string | undefined,
 ) {
   Promise.resolve().then(async () => {
-    const db = getDb();
+    const db = await getDb();
     try {
-      let mergeResult = finalizeAndMerge(originId, { workflowRunId, targetBranch });
+      let mergeResult = await finalizeAndMerge(originId, { workflowRunId, targetBranch });
 
       if (workflowRunId) {
         if (mergeResult.merged) {
@@ -26,9 +26,9 @@ function backgroundMerge(
         } else {
           console.error("[backgroundMerge] Merge failed:", mergeResult.error);
           // Fallback: commitAndMergeWorktree
-          const task = db.select().from(schema.tasks).where(eq(schema.tasks.id, originId)).get();
+          const task = await db.select().from(schema.tasks).where(eq(schema.tasks.id, originId)).get();
           const project = task
-            ? db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get()
+            ? await db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get()
             : null;
 
           if (project && task) {
@@ -67,12 +67,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
   const action = body.action as "approve" | "request_changes" | "split";
   const targetBranch = body.targetBranch as string | undefined;
 
-  const review = db
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, id))
@@ -90,10 +90,10 @@ export async function POST(
   }
 
   if (action === "approve") {
-    const originId = getOriginTaskId(review.taskId);
+    const originId = await getOriginTaskId(review.taskId);
 
     if (targetBranch) {
-      db.update(schema.tasks)
+      await db.update(schema.tasks)
         .set({ targetBranch })
         .where(eq(schema.tasks.id, originId))
         .run();
@@ -101,7 +101,7 @@ export async function POST(
 
     if (!review.workflowRunId) {
       // Non-workflow task: approve and merge in background
-      db.update(schema.reviews)
+      await db.update(schema.reviews)
         .set({ status: "approved" })
         .where(eq(schema.reviews.id, id))
         .run();
@@ -163,7 +163,7 @@ export async function POST(
   if (action === "request_changes") {
     if (!review.workflowRunId) {
       // Non-workflow: just mark review and import rerun directly
-      db.update(schema.reviews)
+      await db.update(schema.reviews)
         .set({ status: "changes_requested" })
         .where(eq(schema.reviews.id, id))
         .run();

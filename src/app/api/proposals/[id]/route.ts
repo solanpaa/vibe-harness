@@ -17,7 +17,7 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json();
 
-  const result = updateProposal(id, body);
+  const result = await updateProposal(id, body);
   if (!result) {
     return NextResponse.json(
       { error: "Proposal not found" },
@@ -39,7 +39,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const deleted = deleteProposal(id);
+  const deleted = await deleteProposal(id);
 
   if (!deleted) {
     return NextResponse.json(

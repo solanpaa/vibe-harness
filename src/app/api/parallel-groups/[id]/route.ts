@@ -10,9 +10,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const group = db
+  const group = await db
     .select()
     .from(schema.parallelGroups)
     .where(eq(schema.parallelGroups.id, id))
@@ -26,7 +26,7 @@ export async function GET(
   }
 
   // Get all workflow runs in this group
-  const childRuns = db
+  const childRuns = await db
     .select({
       id: schema.workflowRuns.id,
       title: schema.workflowRuns.title,
@@ -41,11 +41,11 @@ export async function GET(
     .all();
 
   // Get proposals linked to this group
-  const proposals = db
+  const proposals = (await db
     .select()
     .from(schema.taskProposals)
     .where(eq(schema.taskProposals.parallelGroupId, id))
-    .all()
+    .all())
     .map((p) => ({
       ...p,
       affectedFiles: p.affectedFiles ? JSON.parse(p.affectedFiles) : [],

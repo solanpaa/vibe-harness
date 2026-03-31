@@ -10,9 +10,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const group = db
+  const group = await db
     .select()
     .from(schema.comparisonGroups)
     .where(eq(schema.comparisonGroups.id, id))
@@ -25,21 +25,21 @@ export async function GET(
     );
   }
 
-  const tasks = db
+  const tasks = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.comparisonGroupId, id))
     .all();
 
   // Enrich tasks with agent info and review data
-  const enrichedTasks = tasks.map((task) => {
-    const agent = db
+  const enrichedTasks = await Promise.all(tasks.map(async (task) => {
+    const agent = await db
       .select()
       .from(schema.agentDefinitions)
       .where(eq(schema.agentDefinitions.id, task.agentDefinitionId))
       .get();
 
-    const review = db
+    const review = await db
       .select()
       .from(schema.reviews)
       .where(eq(schema.reviews.taskId, task.id))
@@ -90,7 +90,7 @@ export async function GET(
       reviewStatus: review?.status ?? null,
       diffStats,
     };
-  });
+  }));
 
   return NextResponse.json({
     ...group,
@@ -103,7 +103,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   // Pick winner action
@@ -116,7 +116,7 @@ export async function PATCH(
       );
     }
 
-    const group = db
+    const group = await db
       .select()
       .from(schema.comparisonGroups)
       .where(eq(schema.comparisonGroups.id, id))
@@ -135,13 +135,13 @@ export async function PATCH(
       );
     }
 
-    const project = db
+    const project = await db
       .select()
       .from(schema.projects)
       .where(eq(schema.projects.id, group.projectId))
       .get();
 
-    const tasks = db
+    const tasks = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.comparisonGroupId, id))
@@ -164,7 +164,7 @@ export async function PATCH(
     let mergeResult: { merged: boolean; branch: string; error?: string } = { merged: false, branch: "" };
     if (project) {
       try {
-        mergeResult = finalizeAndMerge(winnerTaskId);
+        mergeResult = await finalizeAndMerge(winnerTaskId);
       } catch (e) {
         console.error("Failed to merge winner:", e);
       }
@@ -194,7 +194,7 @@ export async function PATCH(
     }
 
     // Mark group as completed
-    db.update(schema.comparisonGroups)
+    await db.update(schema.comparisonGroups)
       .set({ status: "completed", completedAt: new Date().toISOString() })
       .where(eq(schema.comparisonGroups.id, id))
       .run();
@@ -210,13 +210,13 @@ export async function PATCH(
   // Generic update
   const { action, ...updates } = body;
   if (Object.keys(updates).length > 0) {
-    db.update(schema.comparisonGroups)
+    await db.update(schema.comparisonGroups)
       .set(updates)
       .where(eq(schema.comparisonGroups.id, id))
       .run();
   }
 
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.comparisonGroups)
     .where(eq(schema.comparisonGroups.id, id))
@@ -230,10 +230,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
   // Stop and delete all tasks in the group
-  const tasks = db
+  const tasks = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.comparisonGroupId, id))
@@ -243,10 +243,10 @@ export async function DELETE(
     if (task.status === "running") {
       await stopTask(task.id);
     }
-    db.delete(schema.tasks).where(eq(schema.tasks.id, task.id)).run();
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, task.id)).run();
   }
 
-  db.delete(schema.comparisonGroups)
+  await db.delete(schema.comparisonGroups)
     .where(eq(schema.comparisonGroups.id, id))
     .run();
 

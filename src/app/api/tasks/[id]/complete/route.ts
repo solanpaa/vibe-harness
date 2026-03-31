@@ -8,11 +8,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   // Intentionally fall back to {} for internal callers that may not send a body
   const body = await request.json().catch(() => ({}));
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))

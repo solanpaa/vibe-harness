@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const project = db
+  const db = await getDb();
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, id))
@@ -25,7 +25,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   if (body.localPath) {
@@ -37,11 +37,11 @@ export async function PATCH(
     }
   }
 
-  db.update(schema.projects)
+  await db.update(schema.projects)
     .set({ ...body, updatedAt: new Date().toISOString() })
     .where(eq(schema.projects.id, id))
     .run();
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, id))
@@ -54,7 +54,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.delete(schema.projects).where(eq(schema.projects.id, id)).run();
+  const db = await getDb();
+  await db.delete(schema.projects).where(eq(schema.projects.id, id)).run();
   return NextResponse.json({ ok: true });
 }

@@ -7,8 +7,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const template = db
+  const db = await getDb();
+  const template = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, id))
@@ -24,10 +24,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
-  const existing = db
+  const existing = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, id))
@@ -43,12 +43,12 @@ export async function PATCH(
   if (body.description !== undefined) updates.description = body.description;
   if (body.stages !== undefined) updates.stages = JSON.stringify(body.stages);
 
-  db.update(schema.workflowTemplates)
+  await db.update(schema.workflowTemplates)
     .set(updates)
     .where(eq(schema.workflowTemplates.id, id))
     .run();
 
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, id))
@@ -62,8 +62,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.delete(schema.workflowTemplates)
+  const db = await getDb();
+  await db.delete(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.id, id))
     .run();
   return NextResponse.json({ ok: true });

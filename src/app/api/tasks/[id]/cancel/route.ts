@@ -8,9 +8,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))

@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the workflow run for this task
-    const db = getDb();
-    const task = db
+    const db = await getDb();
+    const task = await db
       .select({ workflowRunId: schema.tasks.workflowRunId })
       .from(schema.tasks)
       .where(eq(schema.tasks.id, taskId))

@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
     switch (tool) {
       case "propose_task": {
-        const proposal = createProposal({
+        const proposal = await createProposal({
           taskId: resolvedTaskId,
           title: args.title,
           description: args.description,
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       }
 
       case "get_plan": {
-        const plan = getPlan(resolvedTaskId);
+        const plan = await getPlan(resolvedTaskId);
         if (!plan) {
           return NextResponse.json({
             content: [
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       }
 
       case "list_proposals": {
-        const proposals = listProposals(resolvedTaskId);
+        const proposals = await listProposals(resolvedTaskId);
         if (proposals.length === 0) {
           return NextResponse.json({
             content: [
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
       }
 
       case "delete_proposal": {
-        const deleted = deleteProposal(args.proposalId);
+        const deleted = await deleteProposal(args.proposalId);
         return NextResponse.json({
           content: [
             {
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
       }
 
       case "get_project_tree": {
-        const tree = getProjectTree(resolvedTaskId, {
+        const tree = await getProjectTree(resolvedTaskId, {
           maxDepth: args?.maxDepth,
           directory: args?.directory,
         });

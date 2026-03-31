@@ -18,8 +18,8 @@ export async function POST(
     );
   }
 
-  const db = getDb();
-  const task = db
+  const db = await getDb();
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))
@@ -55,7 +55,7 @@ export async function POST(
 
   // Persist the intervention message
   const messageId = crypto.randomUUID();
-  db.insert(schema.taskMessages)
+  await db.insert(schema.taskMessages)
     .values({
       id: messageId,
       taskId: id,
@@ -75,9 +75,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const messages = db
+  const messages = await db
     .select()
     .from(schema.taskMessages)
     .where(eq(schema.taskMessages.taskId, id))

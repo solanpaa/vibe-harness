@@ -13,18 +13,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
   try {
     // Find the parent workflow run
-    const group = db
+    const group = await db
       .select({ sourceWorkflowRunId: schema.parallelGroups.sourceWorkflowRunId })
       .from(schema.parallelGroups)
       .where(eq(schema.parallelGroups.id, id))
       .get();
 
     // Check if all children are in terminal state
-    const allRuns = db
+    const allRuns = await db
       .select()
       .from(schema.workflowRuns)
       .where(eq(schema.workflowRuns.parallelGroupId, id))
@@ -40,7 +40,7 @@ export async function POST(
     }
 
     // Perform the actual git consolidation
-    const mergeResult = consolidateParallelGroup(id);
+    const mergeResult = await consolidateParallelGroup(id);
 
     // Transition the parent workflow via state machine
     if (group?.sourceWorkflowRunId) {

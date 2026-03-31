@@ -10,12 +10,12 @@ function safeParseUsageStats(raw: string | null): unknown {
 }
 
 export async function GET(request: NextRequest) {
-  const db = getDb();
+  const db = await getDb();
   const { searchParams } = new URL(request.url);
 
   // Lightweight listing for review grouping — omits large output field
   if (searchParams.get("fields") === "summary") {
-    const rows = db
+    const rows = await db
       .select({
         id: schema.tasks.id,
         projectId: schema.tasks.projectId,
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
 
   // Enriched listing — tasks with related project, agent, workflow, and review data
   if (searchParams.get("include") === "enriched") {
-    const rows = db
+    const rows = await db
       .select({
         id: schema.tasks.id,
         projectId: schema.tasks.projectId,
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
     // Build a map of taskId → all reviews (for timeline display)
     type ReviewInfo = { id: string; round: number; status: string; createdAt: string };
     const reviewsMap = new Map<string, ReviewInfo[]>();
-    const allReviews = db
+    const allReviews = await db
       .select({
         id: schema.reviews.id,
         taskId: schema.reviews.taskId,
@@ -144,7 +144,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(enriched);
   }
 
-  const allTasks = db.select().from(schema.tasks).all();
+  const allTasks = await db.select().from(schema.tasks).all();
   return NextResponse.json(allTasks.map(t => ({
     ...t,
     usageStats: safeParseUsageStats(t.usageStats),
@@ -152,15 +152,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   // Validate foreign keys exist
-  const project = db.select().from(schema.projects).where(eq(schema.projects.id, body.projectId)).get();
+  const project = await db.select().from(schema.projects).where(eq(schema.projects.id, body.projectId)).get();
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 400 });
   }
-  const agent = db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, body.agentDefinitionId)).get();
+  const agent = await db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, body.agentDefinitionId)).get();
   if (!agent) {
     return NextResponse.json({ error: "Agent definition not found" }, { status: 400 });
   }
@@ -188,16 +188,16 @@ export async function POST(request: NextRequest) {
   };
 
   try {
-    db.insert(schema.tasks).values(task).run();
+    await db.insert(schema.tasks).values(task).run();
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to create task";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
   // Fire-and-forget title generation
-  generateTitle(task.prompt).then((title) => {
+  generateTitle(task.prompt).then(async (title) => {
     if (title) {
-      db.update(schema.tasks)
+      await db.update(schema.tasks)
         .set({ title })
         .where(eq(schema.tasks.id, task.id))
         .run();

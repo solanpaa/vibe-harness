@@ -4,13 +4,13 @@ import { v4 as uuid } from "uuid";
 import fs from "fs";
 
 export async function GET() {
-  const db = getDb();
-  const allProjects = db.select().from(schema.projects).all();
+  const db = await getDb();
+  const allProjects = await db.select().from(schema.projects).all();
   return NextResponse.json(allProjects);
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   if (!body.name?.trim()) {
@@ -37,6 +37,6 @@ export async function POST(request: NextRequest) {
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(schema.projects).values(project).run();
+  await db.insert(schema.projects).values(project).run();
   return NextResponse.json(project, { status: 201 });
 }

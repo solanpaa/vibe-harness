@@ -7,8 +7,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const agent = db
+  const db = await getDb();
+  const agent = await db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, id))
@@ -24,10 +24,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
-  const existing = db
+  const existing = await db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, id))
@@ -37,12 +37,12 @@ export async function PATCH(
   }
 
   const { id: _id, createdAt: _ca, ...updateFields } = body;
-  db.update(schema.agentDefinitions)
+  await db.update(schema.agentDefinitions)
     .set(updateFields)
     .where(eq(schema.agentDefinitions.id, id))
     .run();
 
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, id))
@@ -55,8 +55,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.delete(schema.agentDefinitions)
+  const db = await getDb();
+  await db.delete(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, id))
     .run();
   return NextResponse.json({ ok: true });

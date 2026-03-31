@@ -4,8 +4,8 @@ import { eq } from "drizzle-orm";
 import { createReviewForTask } from "@/lib/services/review-service";
 
 export async function GET() {
-  const db = getDb();
-  const allReviews = db.select().from(schema.reviews).all();
+  const db = await getDb();
+  const allReviews = await db.select().from(schema.reviews).all();
   return NextResponse.json(allReviews);
 }
 
@@ -25,8 +25,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-    const review = db
+    const db = await getDb();
+    const review = await db
       .select()
       .from(schema.reviews)
       .where(eq(schema.reviews.id, reviewId))

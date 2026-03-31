@@ -7,8 +7,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; entryId: string }> }
 ) {
   const { id, entryId } = await params;
-  const db = getDb();
-  db.delete(schema.credentialEntries)
+  const db = await getDb();
+  await db.delete(schema.credentialEntries)
     .where(and(
       eq(schema.credentialEntries.id, entryId),
       eq(schema.credentialEntries.credentialSetId, id)

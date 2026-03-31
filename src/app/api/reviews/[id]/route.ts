@@ -7,8 +7,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const review = db
+  const db = await getDb();
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, id))
@@ -24,13 +24,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
-  db.update(schema.reviews)
+  await db.update(schema.reviews)
     .set(body)
     .where(eq(schema.reviews.id, id))
     .run();
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.id, id))
@@ -43,10 +43,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.delete(schema.reviewComments)
+  const db = await getDb();
+  await db.delete(schema.reviewComments)
     .where(eq(schema.reviewComments.reviewId, id))
     .run();
-  db.delete(schema.reviews).where(eq(schema.reviews.id, id)).run();
+  await db.delete(schema.reviews).where(eq(schema.reviews.id, id)).run();
   return NextResponse.json({ ok: true });
 }

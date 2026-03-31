@@ -9,8 +9,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const task = db
+  const db = await getDb();
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))
@@ -22,7 +22,7 @@ export async function GET(
   // Build shell command with correct working directory
   let shellCommand: string | null = null;
   if (task.sandboxId) {
-    const project = db
+    const project = await db
       .select({ localPath: schema.projects.localPath })
       .from(schema.projects)
       .where(eq(schema.projects.id, task.projectId))
@@ -48,11 +48,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   if (body.action === "start") {
-    const task = db
+    const task = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -61,7 +61,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
-    const project = db
+    const project = await db
       .select()
       .from(schema.projects)
       .where(eq(schema.projects.id, task.projectId))
@@ -70,7 +70,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    const agent = db
+    const agent = await db
       .select()
       .from(schema.agentDefinitions)
       .where(eq(schema.agentDefinitions.id, task.agentDefinitionId))
@@ -89,9 +89,9 @@ export async function PATCH(
     }
 
     // Fire-and-forget: startTask runs in the background
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       try {
-        startTask({
+        await startTask({
           taskId: id,
           projectDir: project.localPath,
           agentCommand: agent.commandTemplate || "claude",
@@ -112,7 +112,7 @@ export async function PATCH(
       }
     });
 
-    const updated = db
+    const updated = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -121,7 +121,7 @@ export async function PATCH(
   }
 
   if (body.action === "stop") {
-    const task = db
+    const task = await db
       .select({ workflowRunId: schema.tasks.workflowRunId })
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -136,7 +136,7 @@ export async function PATCH(
       } catch { /* workflow may already be in a non-pausable state */ }
     }
 
-    const updated = db
+    const updated = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -145,7 +145,7 @@ export async function PATCH(
   }
 
   if (body.action === "resume") {
-    const task = db
+    const task = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -154,7 +154,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
-    const project = db
+    const project = await db
       .select()
       .from(schema.projects)
       .where(eq(schema.projects.id, task.projectId))
@@ -163,7 +163,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    const agent = db
+    const agent = await db
       .select()
       .from(schema.agentDefinitions)
       .where(eq(schema.agentDefinitions.id, task.agentDefinitionId))
@@ -185,7 +185,7 @@ export async function PATCH(
       // Get ACP session ID to resume the conversation
       let loadSessionId: string | null = null;
       if (task.workflowRunId) {
-        const run = db
+        const run = await db
           .select({ acpSessionId: schema.workflowRuns.acpSessionId })
           .from(schema.workflowRuns)
           .where(eq(schema.workflowRuns.id, task.workflowRunId))
@@ -194,7 +194,7 @@ export async function PATCH(
       }
 
       // Resume with --continue, loading the previous session
-      startTask({
+      await startTask({
         taskId: id,
         projectDir: project.localPath,
         agentCommand: agent.commandTemplate || "copilot",
@@ -214,7 +214,7 @@ export async function PATCH(
         await transitionWorkflowRun(task.workflowRunId, { type: "RESUME" });
       }
 
-      const updated = db
+      const updated = await db
         .select()
         .from(schema.tasks)
         .where(eq(schema.tasks.id, id))
@@ -227,7 +227,7 @@ export async function PATCH(
   }
 
   if (body.action === "cancel") {
-    const task = db
+    const task = await db
       .select({ workflowRunId: schema.tasks.workflowRunId })
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -248,7 +248,7 @@ export async function PATCH(
       } catch { /* workflow may already be cancelled/completed */ }
     }
 
-    const updated = db
+    const updated = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, id))
@@ -259,12 +259,12 @@ export async function PATCH(
   // Generic update — exclude state-machine-managed fields
   const { action, status, completedAt, sandboxId, ...safeUpdates } = body;
   if (Object.keys(safeUpdates).length > 0) {
-    db.update(schema.tasks)
+    await db.update(schema.tasks)
       .set(safeUpdates)
       .where(eq(schema.tasks.id, id))
       .run();
   }
-  const updated = db
+  const updated = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))
@@ -277,10 +277,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
   // Stop running/provisioning tasks before deletion
-  const task = db
+  const task = await db
     .select({ status: schema.tasks.status })
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))
@@ -294,25 +294,25 @@ export async function DELETE(
   }
 
   // Atomic cascading delete in a transaction
-  const reviews = db
+  const reviews = await db
     .select({ id: schema.reviews.id })
     .from(schema.reviews)
     .where(eq(schema.reviews.taskId, id))
     .all();
 
-  db.transaction((tx) => {
+  await db.transaction(async (tx) => {
     for (const review of reviews) {
-      tx.delete(schema.reviewComments)
+      await tx.delete(schema.reviewComments)
         .where(eq(schema.reviewComments.reviewId, review.id))
         .run();
     }
-    tx.delete(schema.reviews).where(eq(schema.reviews.taskId, id)).run();
-    tx.update(schema.tasks)
+    await tx.delete(schema.reviews).where(eq(schema.reviews.taskId, id)).run();
+    await tx.update(schema.tasks)
       .set({ originTaskId: null })
       .where(eq(schema.tasks.originTaskId, id))
       .run();
     // taskMessages cascade automatically via schema onDelete rule
-    tx.delete(schema.tasks).where(eq(schema.tasks.id, id)).run();
+    await tx.delete(schema.tasks).where(eq(schema.tasks.id, id)).run();
   });
 
   return NextResponse.json({ ok: true });

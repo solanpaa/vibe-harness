@@ -3,14 +3,14 @@ import { getDb, schema } from "@/lib/db";
 import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
-  const db = getDb();
+  const db = await getDb();
 
-  const projects = db.select().from(schema.projects).all();
-  const allTasks = db.select().from(schema.tasks).all();
+  const projects = await db.select().from(schema.projects).all();
+  const allTasks = await db.select().from(schema.tasks).all();
   const activeTasks = allTasks.filter((s) => s.status === "running" || s.status === "awaiting_review");
-  const allReviews = db.select().from(schema.reviews).all();
+  const allReviews = await db.select().from(schema.reviews).all();
   const pendingReviews = allReviews.filter((s) => s.status === "pending_review");
-  const workflowRuns = db.select().from(schema.workflowRuns).all();
+  const workflowRuns = await db.select().from(schema.workflowRuns).all();
   const activeWorkflows = workflowRuns.filter(
     (w) => w.status === "running" || w.status === "awaiting_review"
   );

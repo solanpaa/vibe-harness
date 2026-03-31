@@ -7,8 +7,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; commentId: string }> }
 ) {
   const { id, commentId } = await params;
-  const db = getDb();
-  const deleted = db
+  const db = await getDb();
+  const deleted = await db
     .delete(schema.reviewComments)
     .where(
       and(
@@ -18,7 +18,7 @@ export async function DELETE(
     )
     .run();
 
-  if (deleted.changes === 0) {
+  if (deleted.rowsAffected === 0) {
     return NextResponse.json({ error: "Comment not found" }, { status: 404 });
   }
 

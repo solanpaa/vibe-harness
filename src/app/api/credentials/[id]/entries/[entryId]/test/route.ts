@@ -8,9 +8,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; entryId: string }> }
 ) {
   const { id, entryId } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const entry = db
+  const entry = await db
     .select()
     .from(schema.credentialEntries)
     .where(

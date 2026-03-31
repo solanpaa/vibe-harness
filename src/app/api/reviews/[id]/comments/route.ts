@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const comments = db
+  const db = await getDb();
+  const comments = await db
     .select()
     .from(schema.reviewComments)
     .where(eq(schema.reviewComments.reviewId, id))
@@ -22,7 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
   const now = new Date().toISOString();
   const comment = {
@@ -34,6 +34,6 @@ export async function POST(
     body: body.body,
     createdAt: now,
   };
-  db.insert(schema.reviewComments).values(comment).run();
+  await db.insert(schema.reviewComments).values(comment).run();
   return NextResponse.json(comment, { status: 201 });
 }

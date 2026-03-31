@@ -7,8 +7,8 @@ import {
 } from "@/lib/services/workflow-engine";
 
 export async function GET() {
-  const db = getDb();
-  const allWorkflows = db.select().from(schema.workflowTemplates).all();
+  const db = await getDb();
+  const allWorkflows = await db.select().from(schema.workflowTemplates).all();
   return NextResponse.json(
     allWorkflows.map((w) => ({ ...w, stages: JSON.parse(w.stages) }))
   );
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
 
   if (body.action === "create_template") {
-    const template = createWorkflowTemplate({
+    const template = await createWorkflowTemplate({
       name: body.name,
       description: body.description,
       stages: body.stages || getDefaultWorkflowStages(),

@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const project = db
+  const db = await getDb();
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, id))

@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const credSet = db
+  const db = await getDb();
+  const credSet = await db
     .select()
     .from(schema.credentialSets)
     .where(eq(schema.credentialSets.id, id))
@@ -25,10 +25,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
   // Check if any tasks reference this credential set before deleting
-  const referencingTasks = db
+  const referencingTasks = await db
     .select({ id: schema.tasks.id })
     .from(schema.tasks)
     .where(eq(schema.tasks.credentialSetId, id))
@@ -41,19 +41,19 @@ export async function DELETE(
     );
   }
 
-  const credSet = db.select().from(schema.credentialSets)
+  const credSet = await db.select().from(schema.credentialSets)
     .where(eq(schema.credentialSets.id, id)).get();
 
   // Cascade: delete entries first
-  db.delete(schema.credentialEntries)
+  await db.delete(schema.credentialEntries)
     .where(eq(schema.credentialEntries.credentialSetId, id))
     .run();
-  db.delete(schema.credentialSets)
+  await db.delete(schema.credentialSets)
     .where(eq(schema.credentialSets.id, id))
     .run();
 
   // Audit log
-  db.insert(schema.credentialAuditLog).values({
+  await db.insert(schema.credentialAuditLog).values({
     id: uuid(),
     action: "delete_set",
     credentialSetId: id,

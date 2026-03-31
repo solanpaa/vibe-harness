@@ -13,13 +13,13 @@ import { startWorkflowRun, createWorkflowTemplate, getDefaultWorkflowStages } fr
  * Usage: curl -X POST http://localhost:3000/api/test-workflow
  */
 export async function POST(request: NextRequest) {
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json().catch(() => ({}));
   const projectPath = body.projectPath || process.cwd();
   const taskDescription = body.taskDescription || "List the top-level files and describe what this project does in 2 sentences. Be very brief.";
 
   // 1. Ensure a test project exists
-  let project = db
+  let project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.name, "E2E Test Project"))
@@ -37,11 +37,11 @@ export async function POST(request: NextRequest) {
       createdAt: now,
       updatedAt: now,
     };
-    db.insert(schema.projects).values(project).run();
+    await db.insert(schema.projects).values(project).run();
   }
 
   // 2. Ensure a 3-stage workflow template exists
-  let template = db
+  let template = await db
     .select()
     .from(schema.workflowTemplates)
     .where(eq(schema.workflowTemplates.name, "E2E Test Workflow"))
@@ -74,12 +74,12 @@ export async function POST(request: NextRequest) {
         freshSession: false,
       },
     ];
-    createWorkflowTemplate({
+    await createWorkflowTemplate({
       name: "E2E Test Workflow",
       description: "3-stage workflow for E2E testing",
       stages,
     });
-    template = db
+    template = await db
       .select()
       .from(schema.workflowTemplates)
       .where(eq(schema.workflowTemplates.name, "E2E Test Workflow"))
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
   }
 
   // 3. Get the default agent
-  const agent = db.select().from(schema.agentDefinitions).get();
+  const agent = await db.select().from(schema.agentDefinitions).get();
   if (!agent) {
     return NextResponse.json({ error: "No agent definitions found" }, { status: 500 });
   }
@@ -130,9 +130,9 @@ export async function POST(request: NextRequest) {
  * Returns the status of all workflow runs for the E2E test project.
  */
 export async function GET() {
-  const db = getDb();
+  const db = await getDb();
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.name, "E2E Test Project"))
@@ -142,14 +142,14 @@ export async function GET() {
     return NextResponse.json({ message: "No test project exists. POST to create one." });
   }
 
-  const runs = db
+  const runs = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.projectId, project.id))
     .all();
 
-  const enrichedRuns = runs.map((run) => {
-    const tasks = db
+  const enrichedRuns = await Promise.all(runs.map(async (run) => {
+    const tasks = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.workflowRunId, run.id))
@@ -166,7 +166,7 @@ export async function GET() {
         completedAt: t.completedAt,
       })),
     };
-  });
+  }));
 
   return NextResponse.json(enrichedRuns);
 }

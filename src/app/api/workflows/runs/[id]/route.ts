@@ -10,8 +10,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const run = db
+  const db = await getDb();
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, id))
@@ -21,7 +21,7 @@ export async function GET(
   }
 
   // Include the parallel group ID if this workflow has spawned one
-  const group = db
+  const group = await db
     .select({ id: schema.parallelGroups.id })
     .from(schema.parallelGroups)
     .where(eq(schema.parallelGroups.sourceWorkflowRunId, id))
@@ -39,10 +39,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, id))
@@ -59,7 +59,7 @@ export async function PATCH(
         { status: 409 }
       );
     }
-    const updated = db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
+    const updated = await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
     return NextResponse.json(updated);
   }
 
@@ -71,7 +71,7 @@ export async function PATCH(
         { status: 409 }
       );
     }
-    const updated = db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
+    const updated = await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
     return NextResponse.json(updated);
   }
 
@@ -83,7 +83,7 @@ export async function PATCH(
         { status: 409 }
       );
     }
-    const updated = db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
+    const updated = await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, id)).get();
     return NextResponse.json(updated);
   }
 
@@ -99,9 +99,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, id))
@@ -110,14 +110,14 @@ export async function DELETE(
     return NextResponse.json({ error: "Workflow run not found" }, { status: 404 });
   }
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, run.projectId))
     .get();
 
   // Find all tasks in this workflow run
-  const tasks = db
+  const tasks = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.workflowRunId, id))
@@ -136,44 +136,44 @@ export async function DELETE(
 
   // 2. Delete review comments and reviews for each task
   for (const task of tasks) {
-    const reviews = db
+    const reviews = await db
       .select()
       .from(schema.reviews)
       .where(eq(schema.reviews.taskId, task.id))
       .all();
 
     for (const review of reviews) {
-      db.delete(schema.reviewComments)
+      await db.delete(schema.reviewComments)
         .where(eq(schema.reviewComments.reviewId, review.id))
         .run();
     }
 
-    db.delete(schema.reviews)
+    await db.delete(schema.reviews)
       .where(eq(schema.reviews.taskId, task.id))
       .run();
   }
 
   // 3. Delete task messages and tasks
   for (const task of tasks) {
-    db.delete(schema.taskMessages)
+    await db.delete(schema.taskMessages)
       .where(eq(schema.taskMessages.taskId, task.id))
       .run();
-    db.delete(schema.tasks)
+    await db.delete(schema.tasks)
       .where(eq(schema.tasks.id, task.id))
       .run();
   }
 
   // 4. Delete any remaining reviews linked directly to the workflow run
-  const orphanedReviews = db
+  const orphanedReviews = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.workflowRunId, id))
     .all();
   for (const review of orphanedReviews) {
-    db.delete(schema.reviewComments)
+    await db.delete(schema.reviewComments)
       .where(eq(schema.reviewComments.reviewId, review.id))
       .run();
-    db.delete(schema.reviews)
+    await db.delete(schema.reviews)
       .where(eq(schema.reviews.id, review.id))
       .run();
   }
@@ -195,7 +195,7 @@ export async function DELETE(
   }
 
   // 6. Delete the workflow run itself
-  db.delete(schema.workflowRuns)
+  await db.delete(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, id))
     .run();
 

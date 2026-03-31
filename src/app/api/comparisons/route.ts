@@ -6,16 +6,16 @@ import { startTask } from "@/lib/services/task-manager";
 import { generateTitle } from "@/lib/services/title-generator";
 
 export async function GET() {
-  const db = getDb();
-  const groups = db
+  const db = await getDb();
+  const groups = await db
     .select()
     .from(schema.comparisonGroups)
     .orderBy(desc(schema.comparisonGroups.createdAt))
     .all();
 
   // Enrich with task counts
-  const enriched = groups.map((group) => {
-    const tasks = db
+  const enriched = await Promise.all(groups.map(async (group) => {
+    const tasks = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.comparisonGroupId, group.id))
@@ -36,13 +36,13 @@ export async function GET() {
         status: t.status,
       })),
     };
-  });
+  }));
 
   return NextResponse.json(enriched);
 }
 
 export async function POST(request: NextRequest) {
-  const db = getDb();
+  const db = await getDb();
   const body = await request.json();
 
   const {
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, projectId))
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
   const now = new Date().toISOString();
   const groupId = crypto.randomUUID();
 
-  db.insert(schema.comparisonGroups)
+  await db.insert(schema.comparisonGroups)
     .values({
       id: groupId,
       projectId,
@@ -98,9 +98,9 @@ export async function POST(request: NextRequest) {
 
   // Fire-and-forget title generation
   generateTitle(prompt)
-    .then((title) => {
+    .then(async (title) => {
       if (title) {
-        db.update(schema.comparisonGroups)
+        await db.update(schema.comparisonGroups)
           .set({ title })
           .where(eq(schema.comparisonGroups.id, groupId))
           .run();
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
   for (const variant of variants) {
     const { agentDefinitionId, model, label } = variant;
 
-    const agent = db
+    const agent = await db
       .select()
       .from(schema.agentDefinitions)
       .where(eq(schema.agentDefinitions.id, agentDefinitionId))
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     const taskId = crypto.randomUUID();
 
-    db.insert(schema.tasks)
+    await db.insert(schema.tasks)
       .values({
         id: taskId,
         projectId,
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
     // Start each task — transition to provisioning first
     try {
       await transitionTask(taskId, { type: "PROVISION" });
-      startTask({
+      await startTask({
         taskId,
         projectDir: project.localPath,
         agentCommand: agent.commandTemplate || "copilot",
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
   // Check if all tasks failed
   const allFailed = createdTasks.length === 0;
   if (allFailed) {
-    db.update(schema.comparisonGroups)
+    await db.update(schema.comparisonGroups)
       .set({ status: "failed", completedAt: now })
       .where(eq(schema.comparisonGroups.id, groupId))
       .run();

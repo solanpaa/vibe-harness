@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const proposals = listProposals(taskId);
+  const proposals = await listProposals(taskId);
   return NextResponse.json(proposals);
 }
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const proposal = createProposal({
+  const proposal = await createProposal({
     taskId,
     title,
     description,

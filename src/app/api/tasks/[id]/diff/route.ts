@@ -16,9 +16,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: taskId } = await params;
-  const db = getDb();
+  const db = await getDb();
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -33,7 +33,7 @@ export async function GET(
   // Optionally update the review's stored diffSnapshot and aiSummary
   const updateReview = _req.nextUrl.searchParams.get("update_review") === "true";
   if (updateReview && result.diffText) {
-    const updated = regenerateReviewFromDiff(taskId, result);
+    const updated = await regenerateReviewFromDiff(taskId, result);
     result.reviewUpdated = updated;
   }
 
