@@ -9,7 +9,7 @@ import {
   Settings,
   Workflow,
   ListTodo,
-  Search,
+
   Sun,
   Moon,
 } from "lucide-react";
@@ -88,18 +88,6 @@ export function AppHeader() {
         />
       </nav>
       <div className="ml-auto flex items-center gap-1">
-        <button
-          onClick={() =>
-            document.dispatchEvent(new Event("open-command-palette"))
-          }
-          className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
-        >
-          <Search className="h-3 w-3" />
-          <span className="hidden sm:inline">Search</span>
-          <kbd className="pointer-events-none rounded border bg-muted px-1 text-[10px] font-mono">
-            ⌘K
-          </kbd>
-        </button>
         <Button
           variant="ghost"
           size="icon"
