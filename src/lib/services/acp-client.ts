@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import * as acp from "@agentclientprotocol/sdk";
-import { spawn, execFile, ChildProcess, execSync } from "child_process";
+import { spawn, execFile, execFileSync, ChildProcess, execSync } from "child_process";
 import { promisify } from "util";
 import { Readable, Writable } from "stream";
 import { EventEmitter } from "events";
@@ -301,8 +301,9 @@ async function bootstrapAcpSession(
           { env: cleanEnv, timeout: 10_000 }
         );
       }
-      execSync(
-        `docker sandbox exec -i ${sandboxName} tee ${mount.mountPath}`,
+      execFileSync(
+        "docker",
+        ["sandbox", "exec", "-i", sandboxName, "tee", mount.mountPath],
         { input: mount.value, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
       );
       // Set restrictive permissions for sensitive files
@@ -320,8 +321,9 @@ async function bootstrapAcpSession(
   // Step 2c: Inject docker login credentials into sandbox
   for (const login of credentialDockerLogins) {
     try {
-      execSync(
-        `docker sandbox exec -i ${sandboxName} docker login ${login.registry} -u ${login.username} --password-stdin`,
+      execFileSync(
+        "docker",
+        ["sandbox", "exec", "-i", sandboxName, "docker", "login", login.registry, "-u", login.username, "--password-stdin"],
         { input: login.password, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 15_000 }
       );
       console.log(`[ACP] Docker login for registry "${login.registry}" completed`);
@@ -381,9 +383,9 @@ async function bootstrapAcpSession(
     const mcpConfigPath = "/tmp/vibe-mcp-config.json";
     try {
       // Write config file into the sandbox via stdin pipe.
-      // execSync is fine here — this is a fast 10s-timeout write, not the slow sandbox create.
-      execSync(
-        `docker sandbox exec -i ${sandboxName} tee ${mcpConfigPath}`,
+      execFileSync(
+        "docker",
+        ["sandbox", "exec", "-i", sandboxName, "tee", mcpConfigPath],
         { input: mcpConfigJson, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
       );
       copilotArgs.push("--additional-mcp-config", `@${mcpConfigPath}`);

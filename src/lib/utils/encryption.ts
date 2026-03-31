@@ -37,7 +37,9 @@ function getMasterKey(): string {
   const envLine = `VIBE_HARNESS_MASTER_KEY=${generated}\n`;
 
   if (fs.existsSync(envLocalPath)) {
-    fs.appendFileSync(envLocalPath, envLine);
+    const existing = fs.readFileSync(envLocalPath, "utf-8");
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(envLocalPath, prefix + envLine);
   } else {
     fs.writeFileSync(envLocalPath, envLine);
   }

@@ -302,9 +302,12 @@ export default function CredentialsPage() {
                       {isExpanded && (
                         <Dialog
                           open={addEntryOpen === credSet.id}
-                          onOpenChange={(open) =>
-                            setAddEntryOpen(open ? credSet.id : null)
-                          }
+                          onOpenChange={(open) => {
+                            setAddEntryOpen(open ? credSet.id : null);
+                            if (!open) {
+                              setEntryForm({ key: "", value: "", type: "env_var", mountPath: "", username: "", password: "" });
+                            }
+                          }}
                         >
                           <DialogTrigger
                             render={

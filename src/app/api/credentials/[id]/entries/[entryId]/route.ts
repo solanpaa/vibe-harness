@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, schema } from "@/lib/db";
-import { eq, and } from "drizzle-orm";
+import { deleteCredentialEntry } from "@/lib/services/credential-vault";
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; entryId: string }> }
 ) {
-  const { id, entryId } = await params;
-  const db = await getDb();
-  await db.delete(schema.credentialEntries)
-    .where(and(
-      eq(schema.credentialEntries.id, entryId),
-      eq(schema.credentialEntries.credentialSetId, id)
-    ))
-    .run();
+  const { entryId } = await params;
+  deleteCredentialEntry(entryId);
   return NextResponse.json({ ok: true });
 }
