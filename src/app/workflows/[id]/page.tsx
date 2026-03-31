@@ -10,97 +10,29 @@ import {
   ArrowDown,
   CheckCircle,
   CircleDot,
-  Clock,
-  GitFork,
+
   Loader2,
-  Merge,
+
   Pencil,
-  Play,
   Plus,
   Save,
   Trash2,
   X,
-  Zap,
+
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDuration } from "@/lib/format";
 import type {
-  CredentialSet,
-  Project,
-  WorkflowRun,
   WorkflowStage,
   WorkflowTemplate,
 } from "@/types/domain";
-
-/* ------------------------------------------------------------------ */
-/*  Status badge config                                                */
-/* ------------------------------------------------------------------ */
-
-const runStatusConfig: Record<
-  string,
-  { icon: React.ReactNode; className: string; label: string }
-> = {
-  pending: {
-    icon: <Clock className="h-3 w-3" />,
-    className: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-    label: "Pending",
-  },
-  running: {
-    icon: <Loader2 className="h-3 w-3 animate-spin" />,
-    className: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-    label: "Running",
-  },
-  awaiting_review: {
-    icon: <CircleDot className="h-3 w-3" />,
-    className:
-      "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-    label: "Awaiting Review",
-  },
-  awaiting_split_review: {
-    icon: <GitFork className="h-3 w-3" />,
-    className:
-      "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
-    label: "Review Proposals",
-  },
-  finalizing: {
-    icon: <Merge className="h-3 w-3 animate-spin" />,
-    className:
-      "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300",
-    label: "Finalizing",
-  },
-  completed: {
-    icon: <CheckCircle className="h-3 w-3" />,
-    className:
-      "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-    label: "Completed",
-  },
-  failed: {
-    icon: <Clock className="h-3 w-3" />,
-    className: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-    label: "Failed",
-  },
-};
 
 /* ------------------------------------------------------------------ */
 /*  Stage pipeline visualisation                                       */
@@ -178,26 +110,9 @@ export default function WorkflowDetailPage({
   const router = useRouter();
 
   const [template, setTemplate] = useState<WorkflowTemplate | null>(null);
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  // Aggregate usage stats per run
-  const [runUsageStats, setRunUsageStats] = useState<
-    Record<string, { premiumRequests: number; sessionDurationMs: number }>
-  >({});
-
-  // Run dialog
-  const [runOpen, setRunOpen] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [credSets, setCredSets] = useState<CredentialSet[]>([]);
-  const [runForm, setRunForm] = useState({
-    projectId: "",
-    credentialSetId: "",
-    taskDescription: "",
-  });
 
   // Collapsible prompt templates
   const [expandedStages, setExpandedStages] = useState<Set<string>>(new Set());
@@ -298,38 +213,6 @@ export default function WorkflowDetailPage({
         }
         setTemplate(await r.json());
       }),
-      // Fetch all workflow data and filter runs client-side
-      fetch("/api/workflows")
-        .then((r) => r.json())
-        .then((data: unknown[]) => {
-          const filtered = (data as WorkflowRun[]).filter(
-            (item) =>
-              "workflowTemplateId" in item && item.workflowTemplateId === id,
-          );
-          setRuns(filtered);
-
-          // Fetch tasks to compute aggregate usage stats per run
-          if (filtered.length > 0) {
-            fetch("/api/tasks?fields=summary")
-              .then((r) => r.json())
-              .then((tasks: Array<{ workflowRunId?: string; usageStats?: { premiumRequests?: number; sessionDurationMs?: number } | null }>) => {
-                const runIds = new Set(filtered.map((r) => r.id));
-                const stats: Record<string, { premiumRequests: number; sessionDurationMs: number }> = {};
-                for (const task of tasks) {
-                  if (!task.workflowRunId || !runIds.has(task.workflowRunId)) continue;
-                  if (!task.usageStats) continue;
-                  if (!stats[task.workflowRunId]) {
-                    stats[task.workflowRunId] = { premiumRequests: 0, sessionDurationMs: 0 };
-                  }
-                  stats[task.workflowRunId].premiumRequests += task.usageStats.premiumRequests ?? 0;
-                  stats[task.workflowRunId].sessionDurationMs += task.usageStats.sessionDurationMs ?? 0;
-                }
-                setRunUsageStats(stats);
-              })
-              .catch(() => {});
-          }
-        })
-        .catch(() => setRuns([])),
     ]).finally(() => setLoading(false));
   }, [id]);
 
@@ -337,81 +220,7 @@ export default function WorkflowDetailPage({
     loadData();
   }, [loadData]);
 
-  /* ---- open run dialog → load projects & creds ---- */
-
-  const openRunDialog = () => {
-    setRunOpen(true);
-    Promise.all([
-      fetch("/api/projects")
-        .then((r) => r.json())
-        .then(setProjects),
-      fetch("/api/credentials")
-        .then((r) => r.json())
-        .then(setCredSets),
-    ]).catch(() => toast.error("Failed to load projects or credentials"));
-  };
-
-  /* ---- start run ---- */
-
-  const handleStartRun = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!runForm.projectId || !runForm.taskDescription.trim()) {
-      toast.error("Please select a project and describe the task");
-      return;
-    }
-    setStarting(true);
-    try {
-      const res = await fetch("/api/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "start_run",
-          workflowTemplateId: id,
-          projectId: runForm.projectId,
-          taskDescription: runForm.taskDescription,
-          credentialSetId: runForm.credentialSetId || undefined,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        toast.error(body?.error ?? "Failed to start workflow run");
-        return;
-      }
-      const result = await res.json();
-      toast.success("Workflow run started");
-      setRunOpen(false);
-      setRunForm({ projectId: "", credentialSetId: "", taskDescription: "" });
-      // Navigate to the session that was created for the first stage
-      if (result.taskId) {
-        router.push(`/`);
-      } else {
-        loadData();
-      }
-    } catch {
-      toast.error("Failed to start workflow run");
-    } finally {
-      setStarting(false);
-    }
-  };
-
   /* ---- delete template ---- */
-
-  const handleDeleteRun = async (runId: string) => {
-    if (!window.confirm("Delete this workflow run and all its tasks? This cannot be undone."))
-      return;
-    try {
-      const res = await fetch(`/api/workflows/runs/${runId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        toast.error(body?.error ?? "Failed to delete run");
-        return;
-      }
-      toast.success("Workflow run deleted");
-      setRuns((prev) => prev.filter((r) => r.id !== runId));
-    } catch {
-      toast.error("Failed to delete run");
-    }
-  };
 
   const handleDelete = async () => {
     if (!window.confirm("Delete this workflow template? This cannot be undone."))
@@ -482,10 +291,6 @@ export default function WorkflowDetailPage({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button onClick={openRunDialog}>
-            <Play className="mr-2 h-4 w-4" />
-            Run Workflow
-          </Button>
           <Button
             variant="destructive"
             size="icon"
@@ -706,74 +511,6 @@ export default function WorkflowDetailPage({
         </CardContent>
       </Card>
 
-      {/* Recent runs */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Runs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {runs.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              No runs yet. Click &quot;Run Workflow&quot; to start one.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {runs.map((run) => {
-                const cfg = runStatusConfig[run.status] ??
-                  runStatusConfig.pending;
-                const stats = runUsageStats[run.id];
-                return (
-                  <div
-                    key={run.id}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Badge className={cfg.className}>
-                        {cfg.icon}
-                        <span className="ml-1">{cfg.label}</span>
-                      </Badge>
-                      {run.currentStage && (
-                        <span className="text-sm text-muted-foreground">
-                          Stage: {run.currentStage}
-                        </span>
-                      )}
-                      {stats && stats.premiumRequests > 0 && (
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Zap className="h-3 w-3" />
-                          {stats.premiumRequests} premium
-                        </span>
-                      )}
-                      {stats && stats.sessionDurationMs > 0 && (
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          {formatDuration(stats.sessionDurationMs)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(run.createdAt).toLocaleString()}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteRun(run.id);
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Metadata */}
       <p className="text-xs text-muted-foreground">
         Created {new Date(template.createdAt).toLocaleString()}
@@ -781,89 +518,6 @@ export default function WorkflowDetailPage({
           ` · Updated ${new Date(template.updatedAt).toLocaleString()}`}
       </p>
 
-      {/* Run Workflow dialog */}
-      <Dialog open={runOpen} onOpenChange={setRunOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Run Workflow</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleStartRun} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Project *</Label>
-              <Select
-                value={runForm.projectId}
-                onValueChange={(v) =>
-                  setRunForm((f) => ({ ...f, projectId: v ?? "" }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a project…">
-                    {projects.find((p) => p.id === runForm.projectId)?.name}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Credential Set (optional)</Label>
-              <Select
-                value={runForm.credentialSetId}
-                onValueChange={(v) =>
-                  setRunForm((f) => ({ ...f, credentialSetId: v ?? "" }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="None">
-                    {credSets.find((c) => c.id === runForm.credentialSetId)
-                      ?.name ?? "None"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {credSets.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Task Description *</Label>
-              <Textarea
-                value={runForm.taskDescription}
-                onChange={(e) =>
-                  setRunForm((f) => ({ ...f, taskDescription: e.target.value }))
-                }
-                placeholder="Describe the feature or task to implement..."
-                className="min-h-[100px]"
-                required
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={starting}>
-              {starting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Starting…
-                </>
-              ) : (
-                <>
-                  <Play className="mr-2 h-4 w-4" />
-                  Start Run
-                </>
-              )}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
