@@ -47,6 +47,7 @@ export const credentialEntries = sqliteTable("credential_entries", {
   key: text("key").notNull(),
   value: text("value").notNull(), // encrypted
   type: text("type").notNull(), // env_var | file_mount | docker_login
+  mountPath: text("mount_path"), // file_mount: target path inside sandbox
   createdAt: text("created_at").notNull(),
 });
 
@@ -218,5 +219,17 @@ export const reviewComments = sqliteTable("review_comments", {
   lineNumber: integer("line_number"),
   side: text("side"), // left | right
   body: text("body").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+// ── Credential Audit Log ──────────────────────────────────────────
+
+export const credentialAuditLog = sqliteTable("credential_audit_log", {
+  id: text("id").primaryKey(),
+  action: text("action").notNull(), // create_set | delete_set | add_entry | delete_entry | access
+  credentialSetId: text("credential_set_id"),
+  credentialEntryId: text("credential_entry_id"),
+  taskId: text("task_id"),
+  details: text("details"), // JSON
   createdAt: text("created_at").notNull(),
 });

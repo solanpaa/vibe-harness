@@ -5,7 +5,7 @@ import { createWorktree, fastForwardMerge, commitAndMergeWorktree, removeWorktre
 import { CopilotJsonlParser } from "./jsonl-parser";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
 
@@ -229,7 +229,7 @@ export function startTask(options: StartTaskOptions) {
       // Clean up Docker sandbox for non-workflow (standalone) tasks
       if (!currentTask?.workflowRunId) {
         try {
-          execSync(`docker sandbox stop ${sandboxName}`, { stdio: "pipe" });
+          execFileSync("docker", ["sandbox", "stop", sandboxName], { stdio: "pipe" });
         } catch {
           // Best effort — sandbox may already be gone
         }
@@ -341,7 +341,7 @@ export function finalizeAndMerge(
     const shortId = originTaskId.slice(0, 8);
     const worktreePath = path.join(project.localPath, WORKTREE_DIR, shortId);
     try {
-      const ahead = execSync(`git rev-list --count ${targetBranch}..HEAD`, {
+      const ahead = execFileSync("git", ["rev-list", "--count", `${targetBranch}..HEAD`], {
         cwd: worktreePath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -405,7 +405,7 @@ export function finalizeAndMerge(
     }
     // Delete the task branch — no longer needed after merge
     try {
-      execSync(`git branch -D "${branch}"`, {
+      execFileSync("git", ["branch", "-D", branch], {
         cwd: project.localPath,
         stdio: "pipe",
       });

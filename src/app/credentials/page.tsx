@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, KeyRound, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, KeyRound, Trash2, ChevronDown, ChevronRight, FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 
 interface CredentialSet {
@@ -38,6 +38,7 @@ interface CredentialEntry {
   key: string;
   value: string;
   type: string;
+  mountPath: string | null;
   createdAt: string;
 }
 
@@ -59,6 +60,9 @@ export default function CredentialsPage() {
     key: "",
     value: "",
     type: "env_var" as string,
+    mountPath: "",
+    username: "",
+    password: "",
   });
 
   useEffect(() => {
@@ -134,19 +138,41 @@ export default function CredentialsPage() {
 
   async function handleAddEntry(e: React.FormEvent, setId: string) {
     e.preventDefault();
+    // Build the request body based on credential type
+    let body: Record<string, string>;
+    if (entryForm.type === "docker_login") {
+      body = {
+        key: entryForm.key,
+        value: JSON.stringify({ username: entryForm.username, password: entryForm.password }),
+        type: entryForm.type,
+      };
+    } else if (entryForm.type === "file_mount") {
+      body = {
+        key: entryForm.key,
+        value: entryForm.value,
+        type: entryForm.type,
+        mountPath: entryForm.mountPath,
+      };
+    } else {
+      body = {
+        key: entryForm.key,
+        value: entryForm.value,
+        type: entryForm.type,
+      };
+    }
     const res = await fetch(`/api/credentials/${setId}/entries`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entryForm),
+      body: JSON.stringify(body),
     });
     if (res.ok) {
       await loadEntries(setId);
-      setEntryForm({ key: "", value: "", type: "env_var" });
+      setEntryForm({ key: "", value: "", type: "env_var", mountPath: "", username: "", password: "" });
       setAddEntryOpen(null);
       toast.success("Entry added");
     } else {
-      const body = await res.json().catch(() => null);
-      toast.error(body?.error ?? "Failed to add entry");
+      const resBody = await res.json().catch(() => null);
+      toast.error(resBody?.error ?? "Failed to add entry");
     }
   }
 
@@ -164,6 +190,23 @@ export default function CredentialsPage() {
     } else {
       const body = await res.json().catch(() => null);
       toast.error(body?.error ?? "Failed to delete entry");
+    }
+  }
+
+  async function handleTestEntry(setId: string, entry: CredentialEntry) {
+    const res = await fetch(
+      `/api/credentials/${setId}/entries/${entry.id}/test`,
+      { method: "POST" },
+    );
+    if (res.ok) {
+      const result = await res.json();
+      if (result.valid) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    } else {
+      toast.error("Test failed");
     }
   }
 
@@ -289,6 +332,11 @@ export default function CredentialsPage() {
                                     setEntryForm((f) => ({
                                       ...f,
                                       type: v ?? "env_var",
+                                      key: "",
+                                      value: "",
+                                      mountPath: "",
+                                      username: "",
+                                      password: "",
                                     }))
                                   }
                                 >
@@ -310,41 +358,141 @@ export default function CredentialsPage() {
                                   </SelectContent>
                                 </Select>
                               </div>
-                              <div className="space-y-2">
-                                <Label>Key</Label>
-                                <Input
-                                  value={entryForm.key}
-                                  onChange={(e) =>
-                                    setEntryForm((f) => ({
-                                      ...f,
-                                      key: e.target.value,
-                                    }))
-                                  }
-                                  placeholder={
-                                    entryForm.type === "env_var"
-                                      ? "AZURE_CLIENT_ID"
-                                      : entryForm.type === "file_mount"
-                                        ? "/home/user/.ssh/id_rsa"
-                                        : "registry.example.com"
-                                  }
-                                  required
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Value</Label>
-                                <Input
-                                  type="password"
-                                  value={entryForm.value}
-                                  onChange={(e) =>
-                                    setEntryForm((f) => ({
-                                      ...f,
-                                      value: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="Secret value (will be encrypted)"
-                                  required
-                                />
-                              </div>
+
+                              {entryForm.type === "env_var" && (
+                                <>
+                                  <div className="space-y-2">
+                                    <Label>Variable Name</Label>
+                                    <Input
+                                      value={entryForm.key}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          key: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="AZURE_CLIENT_ID"
+                                      required
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Value</Label>
+                                    <Input
+                                      type="password"
+                                      value={entryForm.value}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          value: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="Secret value (will be encrypted)"
+                                      required
+                                    />
+                                  </div>
+                                </>
+                              )}
+
+                              {entryForm.type === "file_mount" && (
+                                <>
+                                  <div className="space-y-2">
+                                    <Label>Label</Label>
+                                    <Input
+                                      value={entryForm.key}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          key: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="SSH Key, Kubeconfig, etc."
+                                      required
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Mount Path</Label>
+                                    <Input
+                                      value={entryForm.mountPath}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          mountPath: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="/root/.ssh/id_rsa"
+                                      required
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Path where the file will be placed inside the sandbox
+                                    </p>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>File Content</Label>
+                                    <Textarea
+                                      value={entryForm.value}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          value: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="Paste file content here (will be encrypted)"
+                                      rows={5}
+                                      className="font-mono text-sm"
+                                      required
+                                    />
+                                  </div>
+                                </>
+                              )}
+
+                              {entryForm.type === "docker_login" && (
+                                <>
+                                  <div className="space-y-2">
+                                    <Label>Registry</Label>
+                                    <Input
+                                      value={entryForm.key}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          key: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="ghcr.io"
+                                      required
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Username</Label>
+                                    <Input
+                                      value={entryForm.username}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          username: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="username"
+                                      required
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Password / Token</Label>
+                                    <Input
+                                      type="password"
+                                      value={entryForm.password}
+                                      onChange={(e) =>
+                                        setEntryForm((f) => ({
+                                          ...f,
+                                          password: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="Access token or password"
+                                      required
+                                    />
+                                  </div>
+                                </>
+                              )}
+
                               <Button type="submit" className="w-full">
                                 Add Entry
                               </Button>
@@ -384,11 +532,26 @@ export default function CredentialsPage() {
                               <span className="font-mono text-sm">
                                 {entry.key}
                               </span>
+                              {entry.type === "file_mount" && entry.mountPath && (
+                                <span className="text-xs text-muted-foreground">
+                                  → {entry.mountPath}
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="text-xs text-muted-foreground">
                                 •••••••
                               </span>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() =>
+                                  handleTestEntry(credSet.id, entry)
+                                }
+                                title="Test credential"
+                              >
+                                <FlaskConical className="h-3 w-3" />
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon-xs"

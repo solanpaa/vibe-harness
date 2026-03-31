@@ -321,7 +321,7 @@ export async function transitionWorkflowRun(
         // After consolidation, changes are merged into the main working tree.
         // We diff the origin task's branch base against main's current HEAD.
         const db = getDb();
-        const { execSync } = await import("child_process");
+        const { execFileSync } = await import("child_process");
 
         const originTask = db
           .select()
@@ -345,7 +345,7 @@ export async function transitionWorkflowRun(
         const originBranch = `vibe-harness/task-${shortId}`;
         let diffText = "";
         try {
-          diffText = execSync(`git diff ${originBranch}..HEAD`, {
+          diffText = execFileSync("git", ["diff", `${originBranch}..HEAD`], {
             cwd: project.localPath,
             encoding: "utf-8",
             maxBuffer: 10 * 1024 * 1024,
@@ -584,7 +584,7 @@ export async function transitionWorkflowRun(
       },
       cleanupSandboxes: async () => {
         const db = getDb();
-        const { execSync } = await import("child_process");
+        const { execFileSync } = await import("child_process");
         const { removeWorktree } = await import("@/lib/services/worktree");
 
         // Collect task info for this workflow's tasks
@@ -606,8 +606,8 @@ export async function transitionWorkflowRun(
 
         for (const sandboxId of sandboxIds) {
           try {
-            execSync(`docker sandbox stop ${sandboxId}`, { stdio: "pipe", timeout: 15000 });
-            execSync(`docker sandbox rm ${sandboxId}`, { stdio: "pipe", timeout: 15000 });
+            execFileSync("docker", ["sandbox", "stop", sandboxId], { stdio: "pipe", timeout: 15000 });
+            execFileSync("docker", ["sandbox", "rm", sandboxId], { stdio: "pipe", timeout: 15000 });
             console.log(`[StateMachine] Cleaned up sandbox ${sandboxId}`);
           } catch {
             // Sandbox may already be stopped/removed
@@ -640,7 +640,7 @@ export async function transitionWorkflowRun(
             const shortId = taskId.slice(0, 8);
             const branch = `vibe-harness/task-${shortId}`;
             try {
-              execSync(`git branch -D "${branch}"`, {
+              execFileSync("git", ["branch", "-D", branch], {
                 cwd: project.localPath,
                 stdio: "pipe",
                 timeout: 10000,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { v4 as uuid } from "uuid";
 
 export async function GET(
   request: NextRequest,
@@ -40,6 +41,9 @@ export async function DELETE(
     );
   }
 
+  const credSet = db.select().from(schema.credentialSets)
+    .where(eq(schema.credentialSets.id, id)).get();
+
   // Cascade: delete entries first
   db.delete(schema.credentialEntries)
     .where(eq(schema.credentialEntries.credentialSetId, id))
@@ -47,5 +51,15 @@ export async function DELETE(
   db.delete(schema.credentialSets)
     .where(eq(schema.credentialSets.id, id))
     .run();
+
+  // Audit log
+  db.insert(schema.credentialAuditLog).values({
+    id: uuid(),
+    action: "delete_set",
+    credentialSetId: id,
+    details: JSON.stringify({ name: credSet?.name }),
+    createdAt: new Date().toISOString(),
+  }).run();
+
   return NextResponse.json({ ok: true });
 }

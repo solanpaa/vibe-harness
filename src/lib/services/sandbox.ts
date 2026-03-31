@@ -44,7 +44,7 @@ const activeSandboxes =
  *   --model <model>     Select model (e.g. claude-opus-4.6)
  *   --continue          Continue previous sandbox session
  */
-function buildSandboxCommand(options: SandboxOptions): {
+function buildSandboxCommand(options: SandboxOptions, taskId?: string): {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -53,11 +53,8 @@ function buildSandboxCommand(options: SandboxOptions): {
   const env = { ...process.env };
 
   if (options.isContinuation && options.sandboxName) {
-    // Continuing an existing sandbox: just pass the sandbox name directly.
-    // Cannot use --name, -t, agent, or workspace args.
     args.push(options.sandboxName);
   } else {
-    // New sandbox
     if (options.sandboxName) {
       args.push("--name", options.sandboxName);
     }
@@ -70,7 +67,6 @@ function buildSandboxCommand(options: SandboxOptions): {
     args.push(options.projectDir);
   }
 
-  // Agent args after -- separator
   const agentArgs: string[] = ["--yolo", "--output-format", "json"];
 
   if (options.prompt) {
@@ -93,7 +89,7 @@ function buildSandboxCommand(options: SandboxOptions): {
 
   // Inject credential vault env vars
   if (options.credentialSetId) {
-    const creds = buildSandboxCredentials(options.credentialSetId);
+    const creds = buildSandboxCredentials(options.credentialSetId, taskId);
     for (const [key, value] of Object.entries(creds.envVars)) {
       env[key] = value;
     }
@@ -106,7 +102,7 @@ export function launchSandbox(
   taskId: string,
   options: SandboxOptions
 ): SandboxInstance {
-  const { command, args, env } = buildSandboxCommand(options);
+  const { command, args, env } = buildSandboxCommand(options, taskId);
   const events = new EventEmitter();
   const output: string[] = [];
   const jsonlParser = new CopilotJsonlParser();

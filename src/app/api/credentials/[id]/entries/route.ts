@@ -25,6 +25,7 @@ export async function POST(
     key: body.key,
     value: body.value,
     type: body.type as CredentialEntryType,
+    mountPath: body.mountPath || null,
   });
   return NextResponse.json(entry, { status: 201 });
 }

@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -7,9 +9,43 @@ const SALT_LENGTH = 16;
 const KEY_LENGTH = 32;
 const ITERATIONS = 100000;
 
+let _cachedMasterKey: string | null = null;
+
 function getMasterKey(): string {
-  const key = process.env.VIBE_HARNESS_MASTER_KEY || "dev-master-key-change-in-production";
-  return key;
+  if (_cachedMasterKey) return _cachedMasterKey;
+
+  // 1. Check environment variable
+  if (process.env.VIBE_HARNESS_MASTER_KEY) {
+    _cachedMasterKey = process.env.VIBE_HARNESS_MASTER_KEY;
+    return _cachedMasterKey;
+  }
+
+  // 2. Check .env.local file
+  const envLocalPath = path.join(process.cwd(), ".env.local");
+  if (fs.existsSync(envLocalPath)) {
+    const content = fs.readFileSync(envLocalPath, "utf-8");
+    const match = content.match(/^VIBE_HARNESS_MASTER_KEY=(.+)$/m);
+    if (match?.[1]) {
+      _cachedMasterKey = match[1].trim();
+      process.env.VIBE_HARNESS_MASTER_KEY = _cachedMasterKey;
+      return _cachedMasterKey;
+    }
+  }
+
+  // 3. Auto-generate and persist to .env.local
+  const generated = crypto.randomBytes(32).toString("hex");
+  const envLine = `VIBE_HARNESS_MASTER_KEY=${generated}\n`;
+
+  if (fs.existsSync(envLocalPath)) {
+    fs.appendFileSync(envLocalPath, envLine);
+  } else {
+    fs.writeFileSync(envLocalPath, envLine);
+  }
+
+  console.log("[encryption] Auto-generated VIBE_HARNESS_MASTER_KEY and saved to .env.local");
+  process.env.VIBE_HARNESS_MASTER_KEY = generated;
+  _cachedMasterKey = generated;
+  return generated;
 }
 
 function deriveKey(passphrase: string, salt: Buffer): Buffer {

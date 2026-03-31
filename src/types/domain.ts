@@ -65,6 +65,7 @@ export const CredentialEntrySchema = z.object({
   key: z.string().min(1),
   value: z.string(), // encrypted at rest
   type: CredentialEntryType,
+  mountPath: z.string().optional().nullable(),
   createdAt: z.string().datetime(),
 });
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;

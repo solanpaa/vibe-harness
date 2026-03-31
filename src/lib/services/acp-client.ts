@@ -117,12 +117,19 @@ export function launchAcpSession(
     }
   }
 
-  // Inject credentials
+  // Inject credentials — track which keys came from the vault so we can
+  // pass them with -e flags to docker sandbox exec
+  const credentialEnvKeys: string[] = [];
+  let credentialFileMounts: Array<{ key: string; value: string; mountPath: string }> = [];
+  let credentialDockerLogins: Array<{ registry: string; username: string; password: string }> = [];
   if (options.credentialSetId) {
-    const creds = buildSandboxCredentials(options.credentialSetId);
+    const creds = buildSandboxCredentials(options.credentialSetId, taskId);
     for (const [key, value] of Object.entries(creds.envVars)) {
       env[key] = value;
+      credentialEnvKeys.push(key);
     }
+    credentialFileMounts = creds.fileMounts;
+    credentialDockerLogins = creds.dockerLogins;
   }
 
   const sandboxName = options.sandboxName || `vibe-${taskId.slice(0, 8)}`;
@@ -168,7 +175,7 @@ export function launchAcpSession(
 
   // Async bootstrap: create sandbox → configure network → spawn exec → initialize ACP.
   // Runs in the background; callers listen for events.
-  bootstrapAcpSession(session, options, env, sandboxName, messages, output, msgBuffer)
+  bootstrapAcpSession(session, options, env, sandboxName, messages, output, msgBuffer, credentialEnvKeys, credentialFileMounts, credentialDockerLogins)
     .catch((err) => {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error("[ACP] Bootstrap failed:", err);
@@ -205,6 +212,9 @@ async function bootstrapAcpSession(
   messages: AcpMessage[],
   output: string[],
   msgBuffer: { value: string },
+  credentialEnvKeys: string[],
+  credentialFileMounts: Array<{ key: string; value: string; mountPath: string }>,
+  credentialDockerLogins: Array<{ registry: string; username: string; password: string }>,
 ) {
   const events = session.events;
   const cleanEnv = { ...env };
@@ -279,6 +289,47 @@ async function bootstrapAcpSession(
 
   if (isAborted()) return;
 
+  // Step 2b: Inject file mount credentials into sandbox
+  for (const mount of credentialFileMounts) {
+    try {
+      // Ensure parent directory exists, then write file content via stdin
+      const dir = mount.mountPath.substring(0, mount.mountPath.lastIndexOf("/"));
+      if (dir) {
+        await execFileAsync(
+          "docker",
+          ["sandbox", "exec", sandboxName, "mkdir", "-p", dir],
+          { env: cleanEnv, timeout: 10_000 }
+        );
+      }
+      execSync(
+        `docker sandbox exec -i ${sandboxName} tee ${mount.mountPath}`,
+        { input: mount.value, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 }
+      );
+      // Set restrictive permissions for sensitive files
+      await execFileAsync(
+        "docker",
+        ["sandbox", "exec", sandboxName, "chmod", "600", mount.mountPath],
+        { env: cleanEnv, timeout: 10_000 }
+      );
+      console.log(`[ACP] Mounted file credential "${mount.key}" at ${mount.mountPath}`);
+    } catch (err) {
+      console.warn(`[ACP] Failed to mount file credential "${mount.key}":`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Step 2c: Inject docker login credentials into sandbox
+  for (const login of credentialDockerLogins) {
+    try {
+      execSync(
+        `docker sandbox exec -i ${sandboxName} docker login ${login.registry} -u ${login.username} --password-stdin`,
+        { input: login.password, env: cleanEnv, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 15_000 }
+      );
+      console.log(`[ACP] Docker login for registry "${login.registry}" completed`);
+    } catch (err) {
+      console.warn(`[ACP] Docker login for "${login.registry}" failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+
   // Step 3: Build exec args
   const execArgs = ["sandbox", "exec", "-i"];
   execArgs.push("-e", "NODE_OPTIONS=--max-old-space-size=3072");
@@ -287,6 +338,12 @@ async function bootstrapAcpSession(
   }
   execArgs.push("-e", `VIBE_TASK_ID=${session.id}`);
   execArgs.push("-e", "VIBE_HARNESS_URL=http://host.docker.internal:3000");
+  // Pass credential vault env vars into the sandbox
+  for (const key of credentialEnvKeys) {
+    if (env[key] !== undefined) {
+      execArgs.push("-e", `${key}=${env[key]}`);
+    }
+  }
   execArgs.push(sandboxName);
 
   const copilotArgs = [options.agentCommand, "--acp", "--stdio", "--yolo", "--autopilot"];
@@ -361,7 +418,15 @@ async function bootstrapAcpSession(
   if (isAborted()) return;
 
   // Step 4: Spawn the exec process
-  console.log(`[ACP] Exec: docker ${execArgs.join(" ")}`);
+  const sensitiveKeys = new Set(["GITHUB_TOKEN", "GH_TOKEN", ...credentialEnvKeys]);
+  const redactedArgs = execArgs.map((a) => {
+    const eqIdx = a.indexOf("=");
+    if (eqIdx > 0 && sensitiveKeys.has(a.slice(0, eqIdx))) {
+      return a.slice(0, eqIdx + 1) + "***";
+    }
+    return a;
+  });
+  console.log(`[ACP] Exec: docker ${redactedArgs.join(" ")}`);
   const spawnEnv = { ...env };
   delete spawnEnv.NODE_OPTIONS;
   const proc = spawn("docker", execArgs, {

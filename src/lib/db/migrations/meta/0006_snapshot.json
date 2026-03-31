@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "84f4ec38-72c8-4252-b2da-040048ffd3c3",
-  "prevId": "1eb1d4f8-9f1b-4464-9c29-75de82dc9f18",
+  "id": "1eb1d4f8-9f1b-4464-9c29-75de82dc9f18",
+  "prevId": "21d58fa6-26e7-4544-8425-5126d4ca228d",
   "tables": {
     "agent_definitions": {
       "name": "agent_definitions",
@@ -882,20 +882,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": 1
-        },
-        "branch": {
-          "name": "branch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "target_branch": {
-          "name": "target_branch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "output": {
           "name": "output",
