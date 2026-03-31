@@ -44,11 +44,11 @@ const activeSandboxes =
  *   --model <model>     Select model (e.g. claude-opus-4.6)
  *   --continue          Continue previous sandbox session
  */
-function buildSandboxCommand(options: SandboxOptions, taskId?: string): {
+async function buildSandboxCommand(options: SandboxOptions, taskId?: string): Promise<{
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
-} {
+}> {
   const args: string[] = ["sandbox", "run"];
   const env = { ...process.env };
 
@@ -89,7 +89,7 @@ function buildSandboxCommand(options: SandboxOptions, taskId?: string): {
 
   // Inject credential vault env vars
   if (options.credentialSetId) {
-    const creds = buildSandboxCredentials(options.credentialSetId, taskId);
+    const creds = await buildSandboxCredentials(options.credentialSetId, taskId);
     for (const [key, value] of Object.entries(creds.envVars)) {
       env[key] = value;
     }
@@ -98,11 +98,11 @@ function buildSandboxCommand(options: SandboxOptions, taskId?: string): {
   return { command: "docker", args, env };
 }
 
-export function launchSandbox(
+export async function launchSandbox(
   taskId: string,
   options: SandboxOptions
-): SandboxInstance {
-  const { command, args, env } = buildSandboxCommand(options, taskId);
+): Promise<SandboxInstance> {
+  const { command, args, env } = await buildSandboxCommand(options, taskId);
   const events = new EventEmitter();
   const output: string[] = [];
   const jsonlParser = new CopilotJsonlParser();

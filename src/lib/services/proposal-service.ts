@@ -10,18 +10,18 @@ const WORKTREE_DIR = ".vibe-harness-worktrees";
 /**
  * Create a task proposal from the split agent's MCP tool call.
  */
-export function createProposal(input: {
+export async function createProposal(input: {
   taskId: string;
   title: string;
   description: string;
   affectedFiles?: string[];
   dependsOn?: string[];
 }) {
-  const db = getDb();
+  const db = await getDb();
   const now = new Date().toISOString();
 
   // Get current max sortOrder for this task
-  const existing = db
+  const existing = await db
     .select()
     .from(schema.taskProposals)
     .where(eq(schema.taskProposals.taskId, input.taskId))
@@ -49,7 +49,7 @@ export function createProposal(input: {
     updatedAt: now,
   };
 
-  db.insert(schema.taskProposals).values(proposal).run();
+  await db.insert(schema.taskProposals).values(proposal).run();
 
   return {
     ...proposal,
@@ -61,9 +61,9 @@ export function createProposal(input: {
 /**
  * List all proposals for a given task.
  */
-export function listProposals(taskId: string) {
-  const db = getDb();
-  const rows = db
+export async function listProposals(taskId: string) {
+  const db = await getDb();
+  const rows = await db
     .select()
     .from(schema.taskProposals)
     .where(eq(schema.taskProposals.taskId, taskId))
@@ -80,19 +80,19 @@ export function listProposals(taskId: string) {
 /**
  * Delete a proposal by ID.
  */
-export function deleteProposal(proposalId: string): boolean {
-  const db = getDb();
-  const result = db
+export async function deleteProposal(proposalId: string): Promise<boolean> {
+  const db = await getDb();
+  const result = await db
     .delete(schema.taskProposals)
     .where(eq(schema.taskProposals.id, proposalId))
     .run();
-  return result.changes > 0;
+  return result.rowsAffected > 0;
 }
 
 /**
  * Update a proposal (for user edits in the review UI).
  */
-export function updateProposal(
+export async function updateProposal(
   proposalId: string,
   updates: {
     title?: string;
@@ -103,7 +103,7 @@ export function updateProposal(
     sortOrder?: number;
   }
 ) {
-  const db = getDb();
+  const db = await getDb();
   const now = new Date().toISOString();
 
   const setValues: Record<string, unknown> = { updatedAt: now };
@@ -117,12 +117,12 @@ export function updateProposal(
   if (updates.status !== undefined) setValues.status = updates.status;
   if (updates.sortOrder !== undefined) setValues.sortOrder = updates.sortOrder;
 
-  db.update(schema.taskProposals)
+  await db.update(schema.taskProposals)
     .set(setValues)
     .where(eq(schema.taskProposals.id, proposalId))
     .run();
 
-  return db
+  return await db
     .select()
     .from(schema.taskProposals)
     .where(eq(schema.taskProposals.id, proposalId))
@@ -134,11 +134,11 @@ export function updateProposal(
  * Looks up the workflow run for this task, finds the most recent review
  * with planMarkdown, and returns it.
  */
-export function getPlan(taskId: string): string | null {
-  const db = getDb();
+export async function getPlan(taskId: string): Promise<string | null> {
+  const db = await getDb();
 
   // Get the task to find its workflow run
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -147,7 +147,7 @@ export function getPlan(taskId: string): string | null {
   if (!task?.workflowRunId) return null;
 
   // Find the most recent review for this workflow run that has a plan
-  const review = db
+  const review = await db
     .select()
     .from(schema.reviews)
     .where(eq(schema.reviews.workflowRunId, task.workflowRunId))
@@ -158,7 +158,7 @@ export function getPlan(taskId: string): string | null {
   if (!review) return null;
 
   // Also get the task that produced the review for its lastAiMessage fallback
-  const reviewTask = db
+  const reviewTask = await db
     .select({ lastAiMessage: schema.tasks.lastAiMessage })
     .from(schema.tasks)
     .where(eq(schema.tasks.id, review.taskId))
@@ -177,13 +177,13 @@ export function getPlan(taskId: string): string | null {
  * Uses `git ls-files` for tracked files + `git ls-files --others --exclude-standard`
  * for untracked but not ignored files.
  */
-export function getProjectTree(
+export async function getProjectTree(
   taskId: string,
   options?: { maxDepth?: number; directory?: string }
-): string | null {
-  const db = getDb();
+): Promise<string | null> {
+  const db = await getDb();
 
-  const task = db
+  const task = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, taskId))
@@ -191,7 +191,7 @@ export function getProjectTree(
 
   if (!task) return null;
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, task.projectId))

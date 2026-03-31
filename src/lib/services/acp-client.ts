@@ -95,10 +95,10 @@ import { buildSandboxCredentials } from "./credential-vault";
  * For direct (no docker):
  *   copilot --acp --stdio
  */
-export function launchAcpSession(
+export async function launchAcpSession(
   taskId: string,
   options: AcpLaunchOptions
-): AcpSession {
+): Promise<AcpSession> {
   const events = new EventEmitter();
   const output: string[] = [];
   const messages: AcpMessage[] = [];
@@ -123,7 +123,7 @@ export function launchAcpSession(
   let credentialFileMounts: Array<{ key: string; value: string; mountPath: string }> = [];
   let credentialDockerLogins: Array<{ registry: string; username: string; password: string }> = [];
   if (options.credentialSetId) {
-    const creds = buildSandboxCredentials(options.credentialSetId, taskId);
+    const creds = await buildSandboxCredentials(options.credentialSetId, taskId);
     for (const [key, value] of Object.entries(creds.envVars)) {
       env[key] = value;
       credentialEnvKeys.push(key);

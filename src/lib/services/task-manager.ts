@@ -47,8 +47,8 @@ export interface StartTaskOptions {
 }
 
 /** Start a task by launching its sandbox, optionally in a git worktree */
-export function startTask(options: StartTaskOptions) {
-  const db = getDb();
+export async function startTask(options: StartTaskOptions) {
+  const db = await getDb();
   const useWorktree = options.useWorktree !== false;
 
   let workDir = options.projectDir;
@@ -100,7 +100,7 @@ export function startTask(options: StartTaskOptions) {
 
   // Launch ACP session — all tasks use ACP protocol for structured
   // communication and mid-execution intervention support
-  const session = launchAcpSession(options.taskId, {
+  const session = await launchAcpSession(options.taskId, {
     projectDir: workDir,
     extraWorkspaces,
     agentCommand: options.agentCommand,
@@ -120,7 +120,8 @@ export function startTask(options: StartTaskOptions) {
   session.events.on("ready", async () => {
     if (options.prompt) {
       await sendAcpPrompt(options.taskId, options.prompt);
-      db.insert(schema.taskMessages)
+      const db = await getDb();
+      await db.insert(schema.taskMessages)
         .values({
           id: crypto.randomUUID(),
           taskId: options.taskId,
@@ -134,9 +135,10 @@ export function startTask(options: StartTaskOptions) {
   });
 
   // Store assistant messages
-  session.events.on("message", (msg: AcpMessage) => {
+  session.events.on("message", async (msg: AcpMessage) => {
     if (msg.role === "assistant" && msg.content) {
-      db.insert(schema.taskMessages)
+      const db = await getDb();
+      await db.insert(schema.taskMessages)
         .values({
           id: crypto.randomUUID(),
           taskId: options.taskId,
@@ -166,7 +168,8 @@ export function startTask(options: StartTaskOptions) {
       const lastAiMessage = lastMsg?.content || null;
 
       // Store ACP session ID on workflow run so next stage can load it
-      const currentTask = db
+      const db = await getDb();
+      const currentTask = await db
         .select({
           workflowRunId: schema.tasks.workflowRunId,
           stageName: schema.tasks.stageName,
@@ -177,20 +180,20 @@ export function startTask(options: StartTaskOptions) {
         .get();
 
       if (currentTask?.workflowRunId && session.sessionId) {
-        db.update(schema.workflowRuns)
+        await db.update(schema.workflowRuns)
           .set({ acpSessionId: session.sessionId })
           .where(eq(schema.workflowRuns.id, currentTask.workflowRunId))
           .run();
       }
 
       // Check if this was a manual pause — if so, just save output and stop
-      const freshTask = db
+      const freshTask = await db
         .select({ status: schema.tasks.status })
         .from(schema.tasks)
         .where(eq(schema.tasks.id, options.taskId))
         .get();
       if (freshTask?.status === "paused") {
-        db.update(schema.tasks)
+        await db.update(schema.tasks)
           .set({ output, lastAiMessage })
           .where(eq(schema.tasks.id, options.taskId))
           .run();
@@ -275,20 +278,20 @@ export function getTaskAcpSession(taskId: string) {
 /**
  * Finalize a task on the host: commit changes, rebase, merge, and clean up.
  */
-export function finalizeAndMerge(
+export async function finalizeAndMerge(
   originTaskId: string,
   opts?: { workflowRunId?: string | null; targetBranch?: string | null }
-): { merged: boolean; branch: string; error?: string; mergeStrategy?: "fast-forward" | "no-ff" | "failed" } {
-  const db = getDb();
+): Promise<{ merged: boolean; branch: string; error?: string; mergeStrategy?: "fast-forward" | "no-ff" | "failed" }> {
+  const db = await getDb();
 
-  const originTask = db
+  const originTask = await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, originTaskId))
     .get();
   if (!originTask) return { merged: false, branch: "", error: "Origin task not found" };
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, originTask.projectId))

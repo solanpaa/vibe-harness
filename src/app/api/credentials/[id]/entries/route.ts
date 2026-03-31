@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const entries = getCredentialEntries(id);
+  const entries = await getCredentialEntries(id);
   return NextResponse.json(entries);
 }
 
@@ -20,7 +20,7 @@ export async function POST(
 ) {
   const { id } = await params;
   const body = await request.json();
-  const entry = addCredentialEntry({
+  const entry = await addCredentialEntry({
     credentialSetId: id,
     key: body.key,
     value: body.value,

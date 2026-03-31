@@ -3,6 +3,6 @@ import { getAuditLog } from "@/lib/services/credential-vault";
 
 export async function GET(request: NextRequest) {
   const credentialSetId = request.nextUrl.searchParams.get("credentialSetId");
-  const logs = getAuditLog(credentialSetId || undefined);
+  const logs = await getAuditLog(credentialSetId || undefined);
   return NextResponse.json(logs);
 }

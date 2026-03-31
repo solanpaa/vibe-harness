@@ -46,9 +46,9 @@ export async function transitionTask(
     machine: taskMachine,
     entityId: taskId,
     event,
-    readState: (id) => {
-      const db = getDb();
-      const task = db
+    readState: async (id) => {
+      const db = await getDb();
+      const task = await db
         .select()
         .from(schema.tasks)
         .where(eq(schema.tasks.id, id))
@@ -63,27 +63,27 @@ export async function transitionTask(
         } as unknown as Record<string, unknown>,
       };
     },
-    writeState: (id, status, expectedFromStatus) => {
-      const db = getDb();
+    writeState: async (id, status, expectedFromStatus) => {
+      const db = await getDb();
       // Optimistic lock: only update if status matches expected
-      const result = db
+      const result = await db
         .update(schema.tasks)
         .set({ status })
         .where(
           sql`${schema.tasks.id} = ${id} AND ${schema.tasks.status} = ${expectedFromStatus}`
         )
         .run();
-      if (result.changes === 0) {
+      if (result.rowsAffected === 0) {
         throw new Error(
           `Optimistic lock failed for task ${id}: expected status "${expectedFromStatus}"`
         );
       }
     },
     actionHandlers: {
-      saveOutput: (ctx, evt) => {
-        const db = getDb();
+      saveOutput: async (ctx, evt) => {
+        const db = await getDb();
         const e = evt as TaskEvent & { output?: string; lastAiMessage?: string | null; exitCode?: number; usageStats?: string | null };
-        db.update(schema.tasks)
+        await db.update(schema.tasks)
           .set({
             output: e.output ?? null,
             lastAiMessage: e.lastAiMessage ?? null,
@@ -93,18 +93,18 @@ export async function transitionTask(
           .where(eq(schema.tasks.id, taskId))
           .run();
       },
-      setCompletedAt: () => {
-        const db = getDb();
-        db.update(schema.tasks)
+      setCompletedAt: async () => {
+        const db = await getDb();
+        await db.update(schema.tasks)
           .set({ completedAt: new Date().toISOString() })
           .where(eq(schema.tasks.id, taskId))
           .run();
       },
-      setSandboxId: (_ctx, evt) => {
-        const db = getDb();
+      setSandboxId: async (_ctx, evt) => {
+        const db = await getDb();
         const e = evt as TaskEvent & { sandboxId?: string };
         if (e.sandboxId) {
-          db.update(schema.tasks)
+          await db.update(schema.tasks)
             .set({ sandboxId: e.sandboxId })
             .where(eq(schema.tasks.id, taskId))
             .run();
@@ -147,9 +147,9 @@ export async function transitionWorkflowRun(
     machine: workflowRunMachine,
     entityId: workflowRunId,
     event,
-    readState: (id) => {
-      const db = getDb();
-      const run = db
+    readState: async (id) => {
+      const db = await getDb();
+      const run = await db
         .select()
         .from(schema.workflowRuns)
         .where(eq(schema.workflowRuns.id, id))
@@ -162,11 +162,11 @@ export async function transitionWorkflowRun(
       const currentStageName = run.currentStage;
 
       if (currentStageName && currentStageName !== "finalize") {
-        const stageConfig = getStageConfig(id, currentStageName);
+        const stageConfig = await getStageConfig(id, currentStageName);
         autoAdvance = stageConfig?.autoAdvance === true;
 
         // Determine if this is the last stage
-        const template = db
+        const template = await db
           .select()
           .from(schema.workflowTemplates)
           .where(eq(schema.workflowTemplates.id, run.workflowTemplateId))
@@ -191,7 +191,7 @@ export async function transitionWorkflowRun(
       //   child workflow_runs.parallelGroupId → parallel_groups.id
       let allChildrenDone = false;
       if (run.status === "running_parallel") {
-        const groups = db
+        const groups = await db
           .select({ id: schema.parallelGroups.id })
           .from(schema.parallelGroups)
           .where(eq(schema.parallelGroups.sourceWorkflowRunId, id))
@@ -199,16 +199,16 @@ export async function transitionWorkflowRun(
 
         if (groups.length > 0) {
           const groupIds = groups.map((g) => g.id);
-          const children = db
+          const children = (await db
             .select({ status: schema.workflowRuns.status })
             .from(schema.workflowRuns)
-            .all()
+            .all())
             .filter((r) => r.status !== undefined && groupIds.includes((r as any).parallelGroupId));
 
           // Use a raw query to find children by parallelGroupId
           const allChildren: { status: string }[] = [];
           for (const gid of groupIds) {
-            const kids = db
+            const kids = await db
               .select({ status: schema.workflowRuns.status })
               .from(schema.workflowRuns)
               .where(eq(schema.workflowRuns.parallelGroupId, gid))
@@ -224,11 +224,11 @@ export async function transitionWorkflowRun(
       }
 
       // Find current (non-terminal) task for this workflow run — single query
-      const currentTask = db
+      const currentTask = (await db
         .select({ id: schema.tasks.id, status: schema.tasks.status })
         .from(schema.tasks)
         .where(eq(schema.tasks.workflowRunId, id))
-        .all()
+        .all())
         .filter((t) =>
           t.status !== "completed" && t.status !== "failed" && t.status !== "cancelled"
         )
@@ -251,16 +251,16 @@ export async function transitionWorkflowRun(
         } as unknown as Record<string, unknown>,
       };
     },
-    writeState: (id, status, expectedFromStatus) => {
-      const db = getDb();
-      const result = db
+    writeState: async (id, status, expectedFromStatus) => {
+      const db = await getDb();
+      const result = await db
         .update(schema.workflowRuns)
         .set({ status })
         .where(
           sql`${schema.workflowRuns.id} = ${id} AND ${schema.workflowRuns.status} = ${expectedFromStatus}`
         )
         .run();
-      if (result.changes === 0) {
+      if (result.rowsAffected === 0) {
         throw new Error(
           `Optimistic lock failed for workflow run ${id}: expected status "${expectedFromStatus}"`
         );
@@ -271,9 +271,9 @@ export async function transitionWorkflowRun(
         // Stage is set by advanceToNextStage/launchNextStageTask or by the route
         // via a follow-up DB update. No standalone work needed here.
       },
-      setCompletedAt: () => {
-        const db = getDb();
-        db.update(schema.workflowRuns)
+      setCompletedAt: async () => {
+        const db = await getDb();
+        await db.update(schema.workflowRuns)
           .set({ completedAt: new Date().toISOString() })
           .where(eq(schema.workflowRuns.id, workflowRunId))
           .run();
@@ -289,20 +289,20 @@ export async function transitionWorkflowRun(
           }
         }
       },
-      createMergeConflictReview: () => {
+      createMergeConflictReview: async () => {
         // Create a review record indicating a merge conflict needs resolution
-        const db = getDb();
-        const currentTask = db
+        const db = await getDb();
+        const currentTask = (await db
           .select()
           .from(schema.tasks)
           .where(eq(schema.tasks.workflowRunId, workflowRunId))
-          .all()
+          .all())
           .filter((t) => t.status === "completed")
           .pop();
 
         if (currentTask) {
           const reviewId = uuid();
-          db.insert(schema.reviews)
+          await db.insert(schema.reviews)
             .values({
               id: reviewId,
               workflowRunId,
@@ -320,20 +320,20 @@ export async function transitionWorkflowRun(
         // Create a review showing ALL changes from the parallel children.
         // After consolidation, changes are merged into the main working tree.
         // We diff the origin task's branch base against main's current HEAD.
-        const db = getDb();
+        const db = await getDb();
         const { execFileSync } = await import("child_process");
 
-        const originTask = db
+        const originTask = (await db
           .select()
           .from(schema.tasks)
           .where(eq(schema.tasks.workflowRunId, workflowRunId))
-          .all()
+          .all())
           .filter((t) => !t.originTaskId)
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 
         if (!originTask) return;
 
-        const project = db
+        const project = await db
           .select()
           .from(schema.projects)
           .where(eq(schema.projects.id, originTask.projectId))
@@ -372,14 +372,14 @@ export async function transitionWorkflowRun(
         }
 
         // Count existing reviews for round number
-        const existingReviews = db
+        const existingReviews = await db
           .select()
           .from(schema.reviews)
           .where(eq(schema.reviews.workflowRunId, workflowRunId))
           .all();
 
         const reviewId = uuid();
-        db.insert(schema.reviews)
+        await db.insert(schema.reviews)
           .values({
             id: reviewId,
             workflowRunId,
@@ -392,21 +392,21 @@ export async function transitionWorkflowRun(
           })
           .run();
       },
-      setReviewApproved: (_ctx, evt) => {
+      setReviewApproved: async (_ctx, evt) => {
         const e = evt as WorkflowRunEvent & { reviewId?: string };
         if (e.reviewId) {
-          const db = getDb();
-          db.update(schema.reviews)
+          const db = await getDb();
+          await db.update(schema.reviews)
             .set({ status: "approved" })
             .where(eq(schema.reviews.id, e.reviewId))
             .run();
         }
       },
-      setReviewChangesRequested: (_ctx, evt) => {
+      setReviewChangesRequested: async (_ctx, evt) => {
         const e = evt as WorkflowRunEvent & { reviewId?: string };
         if (e.reviewId) {
-          const db = getDb();
-          db.update(schema.reviews)
+          const db = await getDb();
+          await db.update(schema.reviews)
             .set({ status: "changes_requested" })
             .where(eq(schema.reviews.id, e.reviewId))
             .run();
@@ -466,29 +466,29 @@ export async function transitionWorkflowRun(
       launchChildWorkflows: () => {
         // Handled by createParallelGroup (launchProposals does both)
       },
-      setParallelGroupCompleted: () => {
-        const db = getDb();
-        const groups = db
+      setParallelGroupCompleted: async () => {
+        const db = await getDb();
+        const groups = await db
           .select({ id: schema.parallelGroups.id })
           .from(schema.parallelGroups)
           .where(eq(schema.parallelGroups.sourceWorkflowRunId, workflowRunId))
           .all();
         for (const g of groups) {
-          db.update(schema.parallelGroups)
+          await db.update(schema.parallelGroups)
             .set({ status: "completed", completedAt: new Date().toISOString() })
             .where(eq(schema.parallelGroups.id, g.id))
             .run();
         }
       },
-      setParallelGroupFailed: () => {
-        const db = getDb();
-        const groups = db
+      setParallelGroupFailed: async () => {
+        const db = await getDb();
+        const groups = await db
           .select({ id: schema.parallelGroups.id })
           .from(schema.parallelGroups)
           .where(eq(schema.parallelGroups.sourceWorkflowRunId, workflowRunId))
           .all();
         for (const g of groups) {
-          db.update(schema.parallelGroups)
+          await db.update(schema.parallelGroups)
             .set({ status: "failed" })
             .where(eq(schema.parallelGroups.id, g.id))
             .run();
@@ -514,24 +514,24 @@ export async function transitionWorkflowRun(
           await transitionTask(c.currentTaskId, { type: "RESUME" });
 
           // Restart the agent in the existing sandbox
-          const db = getDb();
-          const task = db.select().from(schema.tasks).where(eq(schema.tasks.id, c.currentTaskId)).get();
+          const db = await getDb();
+          const task = await db.select().from(schema.tasks).where(eq(schema.tasks.id, c.currentTaskId)).get();
           if (!task) return;
 
-          const project = db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get();
+          const project = await db.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).get();
           if (!project) return;
 
-          const agent = db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, task.agentDefinitionId)).get();
+          const agent = await db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, task.agentDefinitionId)).get();
           if (!agent) return;
 
           let loadSessionId: string | null = null;
           if (task.workflowRunId) {
-            const run = db.select({ acpSessionId: schema.workflowRuns.acpSessionId })
+            const run = await db.select({ acpSessionId: schema.workflowRuns.acpSessionId })
               .from(schema.workflowRuns).where(eq(schema.workflowRuns.id, task.workflowRunId)).get();
             loadSessionId = run?.acpSessionId || null;
           }
 
-          startTask({
+          await startTask({
             taskId: c.currentTaskId,
             projectDir: project.localPath,
             agentCommand: agent.commandTemplate || "copilot",
@@ -559,14 +559,14 @@ export async function transitionWorkflowRun(
         }
       },
       cancelChildWorkflows: async () => {
-        const db = getDb();
-        const groups = db
+        const db = await getDb();
+        const groups = await db
           .select({ id: schema.parallelGroups.id })
           .from(schema.parallelGroups)
           .where(eq(schema.parallelGroups.sourceWorkflowRunId, workflowRunId))
           .all();
         for (const g of groups) {
-          const childRuns = db
+          const childRuns = await db
             .select({ id: schema.workflowRuns.id, status: schema.workflowRuns.status })
             .from(schema.workflowRuns)
             .where(eq(schema.workflowRuns.parallelGroupId, g.id))
@@ -583,12 +583,12 @@ export async function transitionWorkflowRun(
         }
       },
       cleanupSandboxes: async () => {
-        const db = getDb();
+        const db = await getDb();
         const { execFileSync } = await import("child_process");
         const { removeWorktree } = await import("@/lib/services/worktree");
 
         // Collect task info for this workflow's tasks
-        const tasks = db
+        const tasks = await db
           .select({
             id: schema.tasks.id,
             sandboxId: schema.tasks.sandboxId,
@@ -618,7 +618,7 @@ export async function transitionWorkflowRun(
         // Worktrees are keyed by origin task ID (shared across a chain).
         const projectId = tasks[0]?.projectId;
         const project = projectId
-          ? db.select({ localPath: schema.projects.localPath })
+          ? await db.select({ localPath: schema.projects.localPath })
               .from(schema.projects).where(eq(schema.projects.id, projectId)).get()
           : null;
 
@@ -684,10 +684,10 @@ export async function transitionWorkflowRun(
  * are done, automatically consolidate and advance the parent workflow.
  */
 async function checkAutoConsolidate(childWorkflowRunId: string) {
-  const db = getDb();
+  const db = await getDb();
 
   // Is this child part of a parallel group?
-  const childRun = db
+  const childRun = await db
     .select({ parallelGroupId: schema.workflowRuns.parallelGroupId })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, childWorkflowRunId))
@@ -695,7 +695,7 @@ async function checkAutoConsolidate(childWorkflowRunId: string) {
 
   if (!childRun?.parallelGroupId) return;
 
-  const group = db
+  const group = await db
     .select()
     .from(schema.parallelGroups)
     .where(eq(schema.parallelGroups.id, childRun.parallelGroupId))
@@ -704,7 +704,7 @@ async function checkAutoConsolidate(childWorkflowRunId: string) {
   if (!group) return;
 
   // Check if ALL siblings are in terminal state
-  const siblings = db
+  const siblings = await db
     .select({ status: schema.workflowRuns.status })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.parallelGroupId, group.id))
@@ -721,7 +721,7 @@ async function checkAutoConsolidate(childWorkflowRunId: string) {
 
   // Perform git consolidation
   const { consolidateParallelGroup } = await import("@/lib/services/parallel-launcher");
-  const mergeResult = consolidateParallelGroup(group.id);
+  const mergeResult = await consolidateParallelGroup(group.id);
 
   // Transition the parent workflow
   if (mergeResult.success) {
@@ -733,19 +733,19 @@ async function checkAutoConsolidate(childWorkflowRunId: string) {
   }
 }
 async function launchNextStageForWorkflow(workflowRunId: string) {
-  const db = getDb();
+  const db = await getDb();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .get();
   if (!run || !run.currentStage) return;
 
-  const nextStage = getNextStage(workflowRunId, run.currentStage);
+  const nextStage = await getNextStage(workflowRunId, run.currentStage);
   if (!nextStage) return;
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, run.projectId))
@@ -753,19 +753,19 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
   if (!project) return;
 
   // Find the origin task for --continue
-  const firstTask = db
+  const firstTask = (await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.workflowRunId, workflowRunId))
-    .all()
+    .all())
     .filter((t) => !t.originTaskId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   if (!firstTask) return;
 
   const agent = nextStage.agentDefinitionId
-    ? db.select().from(schema.agentDefinitions)
+    ? await db.select().from(schema.agentDefinitions)
         .where(eq(schema.agentDefinitions.id, nextStage.agentDefinitionId)).get()
-    : db.select().from(schema.agentDefinitions)
+    : await db.select().from(schema.agentDefinitions)
         .where(eq(schema.agentDefinitions.id, firstTask.agentDefinitionId)).get();
   if (!agent) return;
 
@@ -773,7 +773,7 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
   const isFreshSession = nextStage.freshSession === true;
   let previousPlan: string | null = null;
   if (isFreshSession) {
-    const latestReview = db
+    const latestReview = await db
       .select()
       .from(schema.reviews)
       .where(eq(schema.reviews.workflowRunId, workflowRunId))
@@ -781,7 +781,7 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
       .limit(1)
       .get();
     const reviewTask = latestReview
-      ? db.select({ lastAiMessage: schema.tasks.lastAiMessage })
+      ? await db.select({ lastAiMessage: schema.tasks.lastAiMessage })
           .from(schema.tasks).where(eq(schema.tasks.id, latestReview.taskId)).get()
       : null;
     previousPlan = latestReview?.planMarkdown || latestReview?.aiSummary
@@ -795,8 +795,8 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
   );
 
   const taskId = uuid();
-  db.transaction((tx) => {
-    tx.insert(schema.tasks)
+  await db.batch([
+    db.insert(schema.tasks)
       .values({
         id: taskId,
         projectId: run.projectId,
@@ -815,21 +815,19 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
         output: null,
         createdAt: new Date().toISOString(),
         completedAt: null,
-      })
-      .run();
+      }),
 
-    tx.update(schema.workflowRuns)
+    db.update(schema.workflowRuns)
       .set({ currentStage: nextStage.name })
-      .where(eq(schema.workflowRuns.id, workflowRunId))
-      .run();
-  });
+      .where(eq(schema.workflowRuns.id, workflowRunId)),
+  ]);
 
   // Provision and launch
   await transitionTask(taskId, { type: "PROVISION" });
 
-  Promise.resolve().then(() => {
+  Promise.resolve().then(async () => {
     try {
-      startTask({
+      await startTask({
         taskId,
         projectDir: project.localPath,
         agentCommand: agent.commandTemplate || "copilot",
@@ -857,16 +855,16 @@ async function launchNextStageForWorkflow(workflowRunId: string) {
  * the work into proposals for parallel execution.
  */
 async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: string) {
-  const db = getDb();
+  const db = await getDb();
 
-  const run = db
+  const run = await db
     .select()
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .get();
   if (!run) return;
 
-  const project = db
+  const project = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.id, run.projectId))
@@ -874,16 +872,16 @@ async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: stri
   if (!project) return;
 
   // Find the first (origin) task for sandbox/worktree reuse
-  const firstTask = db
+  const firstTask = (await db
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.workflowRunId, workflowRunId))
-    .all()
+    .all())
     .filter((t) => !t.originTaskId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   if (!firstTask) return;
 
-  const agent = db
+  const agent = await db
     .select()
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, firstTask.agentDefinitionId))
@@ -893,7 +891,7 @@ async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: stri
   // Get plan context from the review if available
   let planContext: string | null = null;
   if (reviewId) {
-    const review = db
+    const review = await db
       .select()
       .from(schema.reviews)
       .where(eq(schema.reviews.id, reviewId))
@@ -913,7 +911,7 @@ async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: stri
 
   // Create the split task
   const splitTaskId = uuid();
-  db.insert(schema.tasks)
+  await db.insert(schema.tasks)
     .values({
       id: splitTaskId,
       projectId: run.projectId,
@@ -936,7 +934,7 @@ async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: stri
     .run();
 
   // Update workflow stage
-  db.update(schema.workflowRuns)
+  await db.update(schema.workflowRuns)
     .set({ currentStage: "split" })
     .where(eq(schema.workflowRuns.id, workflowRunId))
     .run();
@@ -944,9 +942,9 @@ async function launchSplitTaskForWorkflow(workflowRunId: string, reviewId?: stri
   // Provision and launch
   await transitionTask(splitTaskId, { type: "PROVISION" });
 
-  Promise.resolve().then(() => {
+  Promise.resolve().then(async () => {
     try {
-      startTask({
+      await startTask({
         taskId: splitTaskId,
         projectDir: project.localPath,
         agentCommand: agent.commandTemplate || "copilot",
