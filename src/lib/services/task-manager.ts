@@ -98,6 +98,16 @@ export async function startTask(options: StartTaskOptions) {
     }
   }
 
+  // Re-read task status: if cancelled during provisioning, bail out
+  const freshStatus = await db
+    .select({ status: schema.tasks.status })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, options.taskId))
+    .get();
+  if (freshStatus?.status === "cancelled") {
+    return;
+  }
+
   // Launch ACP session — all tasks use ACP protocol for structured
   // communication and mid-execution intervention support
   const session = await launchAcpSession(options.taskId, {
@@ -199,6 +209,24 @@ export async function startTask(options: StartTaskOptions) {
           .run();
         return;
       }
+      if (freshTask?.status === "cancelled") {
+        await db.update(schema.tasks)
+          .set({ output, lastAiMessage })
+          .where(eq(schema.tasks.id, options.taskId))
+          .run();
+        // Clean up sandbox and worktree for standalone tasks (workflow cleanup is handled by workflow state machine)
+        if (!currentTask?.workflowRunId) {
+          try {
+            execFileSync("docker", ["sandbox", "stop", sandboxName], { stdio: "pipe" });
+          } catch {
+            // Best effort — sandbox may already be gone
+          }
+          if (useWorktree) {
+            try { removeWorktree(options.projectDir, options.taskId); } catch {}
+          }
+        }
+        return;
+      }
 
       // Parse stdout/stderr for usage stats (result JSONL event with usage data)
       const jsonlParser = new CopilotJsonlParser();
@@ -229,12 +257,15 @@ export async function startTask(options: StartTaskOptions) {
           usageStats,
         });
       }
-      // Clean up Docker sandbox for non-workflow (standalone) tasks
+      // Clean up Docker sandbox and worktree for non-workflow (standalone) tasks
       if (!currentTask?.workflowRunId) {
         try {
           execFileSync("docker", ["sandbox", "stop", sandboxName], { stdio: "pipe" });
         } catch {
           // Best effort — sandbox may already be gone
+        }
+        if (code !== 0 && useWorktree) {
+          try { removeWorktree(options.projectDir, options.taskId); } catch {}
         }
       }
     } catch (err) {

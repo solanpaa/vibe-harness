@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { eq, and, notInArray } from "drizzle-orm";
 import { transitionTask, transitionWorkflowRun } from "@/lib/state-machine";
 import { startTask, stopTask } from "@/lib/services/task-manager";
+import { removeWorktree } from "@/lib/services/worktree";
 
 export async function GET(
   request: NextRequest,
@@ -281,15 +282,46 @@ export async function DELETE(
 
   // Stop running/provisioning tasks before deletion
   const task = await db
-    .select({ status: schema.tasks.status })
+    .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id))
     .get();
-  if (task?.status === "running" || task?.status === "provisioning") {
+  if (!task) {
+    return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+  if (task.status === "running" || task.status === "provisioning") {
     try {
       await stopTask(id);
     } catch {
       // Best effort
+    }
+  }
+
+  // Clean up worktree if applicable
+  if (task.useWorktree === 1) {
+    const worktreeTaskId = task.originTaskId || id;
+    const terminalStatuses = ["completed", "failed", "cancelled"];
+    // Check no other active tasks share this worktree
+    const activeSiblings = await db
+      .select({ id: schema.tasks.id })
+      .from(schema.tasks)
+      .where(
+        and(
+          eq(schema.tasks.originTaskId, worktreeTaskId),
+          notInArray(schema.tasks.status, terminalStatuses)
+        )
+      )
+      .all();
+    const otherActive = activeSiblings.filter((t) => t.id !== id);
+    if (otherActive.length === 0) {
+      const project = await db
+        .select({ localPath: schema.projects.localPath })
+        .from(schema.projects)
+        .where(eq(schema.projects.id, task.projectId))
+        .get();
+      if (project) {
+        try { removeWorktree(project.localPath, worktreeTaskId); } catch {}
+      }
     }
   }
 
