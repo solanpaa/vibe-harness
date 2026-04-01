@@ -161,6 +161,7 @@ if (!existsSync(nextDir)) {
       env: {
         ...process.env,
         DATABASE_URL: dbPath,
+        TURBOPACK_ROOT: WRAPPER_ROOT,
         // Ensure node can resolve modules from both package and wrapper
         NODE_PATH: [
           path.join(PROJECT_ROOT, "node_modules"),
