@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { execFileSync } from "child_process";
 import { cancelAcpOperation, getAcpSession } from "@/lib/services/acp-client";
 import { transitionTask, transitionWorkflowRun } from "@/lib/state-machine";
 
@@ -39,6 +40,15 @@ export async function POST(
         // Best effort — workflow may already be in a terminal state
       }
     }
+    // Clean up sandbox if one was assigned during provisioning
+    if (!task.workflowRunId && task.sandboxId) {
+      try {
+        execFileSync("docker", ["sandbox", "stop", task.sandboxId], {
+          stdio: "pipe",
+          timeout: 15000,
+        });
+      } catch { /* best effort */ }
+    }
     return NextResponse.json({ success: true });
   }
 
@@ -57,6 +67,18 @@ export async function POST(
       await transitionWorkflowRun(task.workflowRunId, { type: "CANCEL" });
     } catch {
       // Best effort — workflow may already be in a terminal state
+    }
+  }
+
+  // Clean up sandbox directly — don't rely on close handler timing
+  if (!task.workflowRunId && task.sandboxId) {
+    try {
+      execFileSync("docker", ["sandbox", "stop", task.sandboxId], {
+        stdio: "pipe",
+        timeout: 15000,
+      });
+    } catch {
+      // Best effort — sandbox may already be stopped
     }
   }
 
