@@ -45,3 +45,5 @@ next-env.d.ts
 
 # Vibe Harness worktrees
 .vibe-harness-worktrees/
+vb-demo/
+..bfg-report/
