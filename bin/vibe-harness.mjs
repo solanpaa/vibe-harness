@@ -220,7 +220,10 @@ if (!existsSync(nextDir)) {
         for (const f of filesToCopy) {
           const source = path.join(PROJECT_ROOT, f);
           const dest = path.join(BUILD_DIR, f);
-          if (existsSync(source) && !existsSync(dest)) {
+          if (existsSync(dest)) {
+            rmSync(dest, { recursive: true, force: true });
+          }
+          if (existsSync(source)) {
             cpSync(source, dest, { recursive: true });
             createdItems.push(dest);
           }
