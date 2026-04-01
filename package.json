@@ -5,6 +5,18 @@
   "bin": {
     "vibe-harness": "./bin/vibe-harness.mjs"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "docker/",
+    "next.config.ts",
+    "tsconfig.json",
+    "postcss.config.mjs",
+    "components.json",
+    "drizzle.config.ts",
+    "eslint.config.mjs"
+  ],
   "engines": {
     "node": ">=24"
   },

@@ -19,7 +19,7 @@ Vibe Harness wraps GitHub Copilot CLI in a web-based orchestration layer that ad
 npx github:solanpaa/vibe-harness
 ```
 
-This checks prerequisites, installs dependencies, builds the app on first run, and opens the UI at [http://localhost:3000](http://localhost:3000).
+This installs the package, checks prerequisites, builds the Next.js app on first run, and opens the UI at [http://localhost:3000](http://localhost:3000).
 
 ### Options
 
@@ -53,6 +53,8 @@ All checked automatically on startup:
 - **GitHub CLI** (`gh`) — installed and authenticated
 - **GitHub Copilot CLI** (`copilot`) — installed via `gh extension install github/gh-copilot`
 
+> **Note:** macOS and Linux only. Windows is not currently supported.
+
 ## How It Works
 
 ### Projects
@@ -77,7 +79,9 @@ Stages with `reviewRequired` pause for human approval. Approve to advance, or re
 
 ### Reviews
 
-When a task completes, you can create a review to inspect the diff, add inline comments, and approve or request changes. Approving a standalone task merges the worktree branch to main. Approving a workflow stage advances to the next stage.
+When a task completes, a review is automatically created with the git diff and an AI-generated summary.
+
+You can then inspect the diff, add inline comments, and approve or request changes. Approving a standalone task merges the worktree branch to main. Approving a workflow stage advances to the next stage.
 
 ### Keyboard Shortcuts
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, cpSync, rmSync, renameSync } from "fs";
+import { execSync, execFileSync, spawn } from "child_process";
+import { existsSync, mkdirSync, cpSync, rmSync, renameSync, writeFileSync, readFileSync, statSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -82,7 +82,7 @@ const checks = [
     name: "git",
     test: () => {
       try {
-        execSync("git --version", { stdio: "pipe" });
+        execFileSync("git", ["--version"], { stdio: "pipe" });
       } catch {
         throw new Error("Install git: https://git-scm.com/downloads");
       }
@@ -92,7 +92,7 @@ const checks = [
     name: "Docker",
     test: () => {
       try {
-        execSync("docker info", { stdio: "pipe", timeout: 5000 });
+        execFileSync("docker", ["info"], { stdio: "pipe", timeout: 5000 });
       } catch {
         throw new Error("Docker not running. Install: https://docs.docker.com/get-docker/");
       }
@@ -102,7 +102,7 @@ const checks = [
     name: "GitHub CLI (gh)",
     test: () => {
       try {
-        execSync("gh auth status", { stdio: "pipe", timeout: 5000 });
+        execFileSync("gh", ["auth", "status"], { stdio: "pipe", timeout: 5000 });
       } catch {
         throw new Error("Install & authenticate gh: https://cli.github.com/");
       }
@@ -112,7 +112,7 @@ const checks = [
     name: "Copilot CLI",
     test: () => {
       try {
-        execSync("which copilot", { stdio: "pipe", timeout: 5000 });
+        execFileSync("which", ["copilot"], { stdio: "pipe", timeout: 5000 });
       } catch {
         throw new Error("Install Copilot CLI: https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line");
       }
@@ -156,56 +156,110 @@ if (!existsSync(nextDir)) {
   const nextBin = findNextBin();
   const isInsideNodeModules = PROJECT_ROOT !== WRAPPER_ROOT;
 
-  try {
-    if (isInsideNodeModules) {
-      // When installed via npx, source is inside node_modules/ which Turbopack
-      // refuses to compile. Copy project files to the wrapper root so Next.js
-      // sees a normal project structure, then move .next/ back after build.
-      const filesToCopy = [
-        "src", "public", "next.config.ts", "tsconfig.json",
-        "postcss.config.mjs", "components.json",
-      ];
-      const createdItems = [];
-      for (const f of filesToCopy) {
-        const source = path.join(PROJECT_ROOT, f);
-        const dest = path.join(WRAPPER_ROOT, f);
-        if (existsSync(source) && !existsSync(dest)) {
-          cpSync(source, dest, { recursive: true });
-          createdItems.push(dest);
-        }
-      }
+  // --- Build lock: prevent concurrent builds from corrupting .next/ ---
+  const lockFile = path.join(dataDir, ".build.lock");
+  const LOCK_STALE_MS = 10 * 60 * 1000; // 10 minutes
+  const LOCK_POLL_MS = 2000;             // poll every 2s
+  const LOCK_WAIT_MS = 5 * 60 * 1000;   // wait up to 5 minutes
 
-      try {
+  if (existsSync(lockFile)) {
+    let stale = false;
+    try {
+      const lockAge = Date.now() - statSync(lockFile).mtimeMs;
+      const lockContent = readFileSync(lockFile, "utf-8").trim();
+      const lockTs = Number(lockContent);
+      const age = Number.isFinite(lockTs) ? Date.now() - lockTs : lockAge;
+      stale = age > LOCK_STALE_MS;
+    } catch {
+      stale = true;
+    }
+
+    if (stale) {
+      try { unlinkSync(lockFile); } catch { /* ignore */ }
+    } else {
+      console.log("⏳ Another build is in progress, waiting...");
+      const waitStart = Date.now();
+      while (existsSync(lockFile) && Date.now() - waitStart < LOCK_WAIT_MS) {
+        execSync(`sleep 2`, { stdio: "pipe" });
+      }
+      if (existsSync(lockFile)) {
+        console.error("❌ Timed out waiting for another build to finish.");
+        process.exit(1);
+      }
+      // Other build finished — check if .next/ now exists
+      if (existsSync(nextDir)) {
+        console.log("✅ Build completed by another process.\n");
+      }
+    }
+  }
+
+  // Re-check: the other process may have produced .next/ while we waited
+  if (!existsSync(nextDir)) {
+    writeFileSync(lockFile, Date.now().toString());
+    try {
+      if (isInsideNodeModules) {
+        // Build in a dedicated cache dir under dataDir so we never write to
+        // shared system directories (e.g. /usr/local/lib for global installs).
+        const BUILD_DIR = path.join(dataDir, ".build-cache");
+        if (!existsSync(BUILD_DIR)) mkdirSync(BUILD_DIR, { recursive: true });
+
+        const filesToCopy = [
+          "src", "public", "next.config.ts", "tsconfig.json",
+          "postcss.config.mjs", "components.json",
+        ];
+        const createdItems = [];
+
+        // Copy node_modules from wrapper root so Next.js can resolve deps
+        const wrapperNm = path.join(WRAPPER_ROOT, "node_modules");
+        const buildNm = path.join(BUILD_DIR, "node_modules");
+        if (existsSync(wrapperNm) && !existsSync(buildNm)) {
+          cpSync(wrapperNm, buildNm, { recursive: true });
+          createdItems.push(buildNm);
+        }
+
+        for (const f of filesToCopy) {
+          const source = path.join(PROJECT_ROOT, f);
+          const dest = path.join(BUILD_DIR, f);
+          if (existsSync(source) && !existsSync(dest)) {
+            cpSync(source, dest, { recursive: true });
+            createdItems.push(dest);
+          }
+        }
+
+        try {
+          execSync(`node "${nextBin}" build`, {
+            cwd: BUILD_DIR,
+            stdio: "inherit",
+            env: { ...process.env, DATABASE_URL: dbPath },
+          });
+
+          // Move .next from build dir to package dir
+          const builtNext = path.join(BUILD_DIR, ".next");
+          if (existsSync(builtNext)) {
+            renameSync(builtNext, nextDir);
+          }
+        } finally {
+          // Clean up copied files
+          for (const item of createdItems) {
+            try { rmSync(item, { recursive: true, force: true }); } catch { /* ignore */ }
+          }
+        }
+      } else {
+        // Normal dev/local install — build directly
         execSync(`node "${nextBin}" build`, {
-          cwd: WRAPPER_ROOT,
+          cwd: PROJECT_ROOT,
           stdio: "inherit",
           env: { ...process.env, DATABASE_URL: dbPath },
         });
-
-        // Move .next from wrapper root to package dir
-        const builtNext = path.join(WRAPPER_ROOT, ".next");
-        if (existsSync(builtNext)) {
-          renameSync(builtNext, nextDir);
-        }
-      } finally {
-        // Clean up copied files
-        for (const item of createdItems) {
-          try { rmSync(item, { recursive: true, force: true }); } catch { /* ignore */ }
-        }
       }
-    } else {
-      // Normal dev/local install — build directly
-      execSync(`node "${nextBin}" build`, {
-        cwd: PROJECT_ROOT,
-        stdio: "inherit",
-        env: { ...process.env, DATABASE_URL: dbPath },
-      });
-    }
 
-    console.log("\n✅ Build complete!\n");
-  } catch (e) {
-    console.error("\n❌ Build failed. Check errors above.");
-    process.exit(1);
+      console.log("\n✅ Build complete!\n");
+    } catch (e) {
+      console.error("\n❌ Build failed. Check errors above.");
+      process.exit(1);
+    } finally {
+      try { unlinkSync(lockFile); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -213,7 +267,7 @@ if (!existsSync(nextDir)) {
 // Docker sandbox image check
 // ---------------------------------------------------------------------------
 try {
-  const images = execSync("docker images -q vibe-harness/copilot:latest", {
+  const images = execFileSync("docker", ["images", "-q", "vibe-harness/copilot:latest"], {
     stdio: "pipe",
     timeout: 5000,
   }).toString().trim();
