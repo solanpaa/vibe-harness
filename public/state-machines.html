@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vibe Harness — 2 State Machines</title>
+<style>
+:root{--bg:#0d1117;--sf:#161b22;--bd:#30363d;--tx:#e6edf3;--tm:#8b949e;--ac:#58a6ff;--gn:#4ade80;--rd:#f85149;--or:#fb923c;--pr:#a78bfa;--pk:#f778ba;--tl:#7ee787}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--tx);padding:24px;min-height:100vh}
+h1{font-size:24px;margin-bottom:8px}
+.sub{color:var(--tm);margin-bottom:24px;font-size:14px}
+.tabs{display:flex;gap:4px;margin-bottom:24px;border-bottom:1px solid var(--bd)}
+.tab{padding:8px 16px;cursor:pointer;color:var(--tm);border:1px solid transparent;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;font-size:14px;background:none;transition:all .15s}
+.tab:hover{color:var(--tx)}
+.tab.active{color:var(--tx);border-color:var(--bd) var(--bd) var(--bg);border-bottom:2px solid var(--ac);background:var(--sf)}
+.panel{display:none}.panel.active{display:block}
+svg{width:100%;max-width:1100px;display:block;margin:0 auto 24px}
+.note{max-width:1100px;margin:0 auto 16px;padding:12px 16px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;font-size:13px;color:var(--tm);line-height:1.6}
+.tc{max-width:1100px;margin:0 auto}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px}
+th{text-align:left;padding:8px 12px;border-bottom:2px solid var(--bd);color:var(--tm);font-weight:600}
+td{padding:5px 12px;border-bottom:1px solid var(--bd)}
+td code{background:var(--sf);border:1px solid var(--bd);padding:1px 6px;border-radius:4px;font-size:12px;font-family:'SF Mono',monospace}
+.sb{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.sp{background:#1f2937;color:#9ca3af}.sv{background:#1e293b;color:#60a5fa}.sr{background:#14532d;color:#4ade80}
+.su{background:#422006;color:#fb923c}.sc{background:#052e16;color:#22c55e}.sf{background:#450a0a;color:#ef4444}
+.sx{background:#1c1917;color:#a8a29e}.sa{background:#312e81;color:#a78bfa}.ss{background:#4a1d6a;color:#d8b4fe}
+.sg{background:#0e4429;color:#7ee787}.sz{background:#1e3a5f;color:#93c5fd}.sq{background:#451a03;color:#f59e0b}
+.ev{color:var(--ac);font-weight:600}.ac{color:var(--or);font-size:11px}
+.cs{max-width:1100px;margin:24px auto 0}
+.cs h3{font-size:16px;margin-bottom:12px;color:var(--ac)}
+.cf{background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:16px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.8;white-space:pre-wrap;color:var(--tm)}
+.mt{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-right:4px}
+.tt{background:#1e3a5f;color:#93c5fd}.tw{background:#14532d;color:#4ade80}
+</style>
+</head>
+<body>
+<h1>Vibe Harness — 2 State Machines</h1>
+<p class="sub">Task (agent process) + Workflow Run (orchestrator). Reviews, proposals, parallel groups = data records managed by workflow actions.</p>
+
+<div class="tabs">
+<button class="tab active" onclick="show('task')">Task</button>
+<button class="tab" onclick="show('wf')">Workflow Run</button>
+<button class="tab" onclick="show('flows')">End-to-End Flows</button>
+</div>
+
+<!-- ====== TASK ====== -->
+<div id="tab-task" class="panel active">
+<svg viewBox="0 0 850 420" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8b949e"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#4ade80"/></marker>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f85149"/></marker>
+<marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fb923c"/></marker>
+<marker id="ax" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#a8a29e"/></marker>
+</defs>
+<!-- States -->
+<rect x="80" y="30" width="120" height="40" rx="8" fill="#374151" stroke="#6b7280" stroke-width="2"/>
+<text x="140" y="50" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">pending</text>
+<rect x="65" y="130" width="150" height="40" rx="8" fill="#1e293b" stroke="#60a5fa" stroke-width="2"/>
+<text x="140" y="150" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">provisioning</text>
+<rect x="80" y="240" width="120" height="40" rx="8" fill="#14532d" stroke="#4ade80" stroke-width="2"/>
+<text x="140" y="260" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">running</text>
+<rect x="80" y="350" width="120" height="40" rx="8" fill="#422006" stroke="#fb923c" stroke-width="2"/>
+<text x="140" y="370" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">paused</text>
+<rect x="420" y="240" width="140" height="40" rx="8" fill="#052e16" stroke="#22c55e" stroke-width="2"/>
+<text x="490" y="260" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">completed</text>
+<rect x="620" y="80" width="110" height="40" rx="8" fill="#450a0a" stroke="#ef4444" stroke-width="2"/>
+<text x="675" y="100" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">failed</text>
+<rect x="620" y="350" width="120" height="40" rx="8" fill="#1c1917" stroke="#78716c" stroke-width="2"/>
+<text x="680" y="370" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#a8a29e">cancelled</text>
+<!-- Transitions -->
+<line x1="140" y1="70" x2="140" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="152" y="100" font-size="11" fill="#8b949e" font-family="sans-serif">PROVISION</text>
+<line x1="140" y1="170" x2="140" y2="238" stroke="#8b949e" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="152" y="206" font-size="11" fill="#8b949e" font-family="sans-serif">START</text>
+<line x1="200" y1="260" x2="418" y2="260" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ag)"/>
+<text x="285" y="252" font-size="11" fill="#4ade80" font-family="sans-serif">COMPLETE</text>
+<text x="285" y="276" font-size="10" fill="#d29922" font-family="sans-serif">→ notifyWorkflow</text>
+<line x1="110" y1="280" x2="110" y2="348" stroke="#fb923c" stroke-width="1.5" marker-end="url(#ao)"/>
+<text x="55" y="316" font-size="11" fill="#fb923c" font-family="sans-serif">PAUSE</text>
+<line x1="170" y1="350" x2="170" y2="282" stroke="#4ade80" stroke-width="1.5" marker-end="url(#ag)"/>
+<text x="178" y="316" font-size="11" fill="#4ade80" font-family="sans-serif">RESUME</text>
+<path d="M200 248 Q430 170 618 100" fill="none" stroke="#f85149" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="400" y="168" font-size="11" fill="#f85149" font-family="sans-serif">FAIL</text>
+<line x1="215" y1="140" x2="618" y2="105" stroke="#f85149" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ar)"/>
+<path d="M200 45 Q430 25 618 88" fill="none" stroke="#f85149" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ar)"/>
+<!-- CANCEL arrows -->
+<path d="M200 50 Q500 50 618 355" fill="none" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#ax)"/>
+<path d="M215 150 Q500 200 618 365" fill="none" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#ax)"/>
+<path d="M200 270 Q450 340 618 370" fill="none" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#ax)"/>
+<path d="M200 375 L618 375" fill="none" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#ax)"/>
+<text x="440" y="400" font-size="10" fill="#a8a29e" font-family="sans-serif">CANCEL (any active → cancelled)</text>
+</svg>
+
+<div class="note">
+<strong>Task = agent process lifecycle.</strong> 7 states, 12 transitions.<br>
+• <code>cancelled</code> = user-initiated abort (distinct from <code>failed</code> = error)<br>
+• CANCEL available from any non-terminal state<br>
+• Pause synchronization: Workflow PAUSE cascades to Task PAUSE and vice versa
+</div>
+
+<div class="tc"><table>
+<thead><tr><th>#</th><th>From</th><th>Event</th><th>To</th><th>Actions</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><span class="sb sp">pending</span></td><td class="ev">PROVISION</td><td><span class="sb sv">provisioning</span></td><td>—</td></tr>
+<tr><td>2</td><td><span class="sb sp">pending</span></td><td class="ev">FAIL</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>3</td><td><span class="sb sp">pending</span></td><td class="ev">CANCEL</td><td><span class="sb sx">cancelled</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>4</td><td><span class="sb sv">provisioning</span></td><td class="ev">START</td><td><span class="sb sr">running</span></td><td class="ac">setSandboxId</td></tr>
+<tr><td>5</td><td><span class="sb sv">provisioning</span></td><td class="ev">FAIL</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>6</td><td><span class="sb sv">provisioning</span></td><td class="ev">CANCEL</td><td><span class="sb sx">cancelled</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>7</td><td><span class="sb sr">running</span></td><td class="ev">COMPLETE</td><td><span class="sb sc">completed</span></td><td class="ac">saveOutput, setCompletedAt, notifyWorkflow</td></tr>
+<tr><td>8</td><td><span class="sb sr">running</span></td><td class="ev">PAUSE</td><td><span class="sb su">paused</span></td><td>—</td></tr>
+<tr><td>9</td><td><span class="sb sr">running</span></td><td class="ev">FAIL</td><td><span class="sb sf">failed</span></td><td class="ac">saveOutput, setCompletedAt, notifyWorkflow</td></tr>
+<tr><td>10</td><td><span class="sb sr">running</span></td><td class="ev">CANCEL</td><td><span class="sb sx">cancelled</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>11</td><td><span class="sb su">paused</span></td><td class="ev">RESUME</td><td><span class="sb sr">running</span></td><td>—</td></tr>
+<tr><td>12</td><td><span class="sb su">paused</span></td><td class="ev">CANCEL</td><td><span class="sb sx">cancelled</span></td><td class="ac">setCompletedAt</td></tr>
+</tbody></table></div>
+</div>
+
+<!-- ====== WORKFLOW RUN ====== -->
+<div id="tab-wf" class="panel">
+<svg viewBox="0 0 1080 600" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8b949e"/></marker>
+<marker id="bg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#4ade80"/></marker>
+<marker id="br" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f85149"/></marker>
+<marker id="bp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#a78bfa"/></marker>
+<marker id="bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#d8b4fe"/></marker>
+<marker id="bb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#60a5fa"/></marker>
+<marker id="bt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7ee787"/></marker>
+<marker id="bpk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f778ba"/></marker>
+</defs>
+<!-- States -->
+<rect x="35" y="40" width="120" height="40" rx="8" fill="#374151" stroke="#6b7280" stroke-width="2"/>
+<text x="95" y="60" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">pending</text>
+<rect x="35" y="190" width="120" height="40" rx="8" fill="#14532d" stroke="#4ade80" stroke-width="2"/>
+<text x="95" y="210" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">running</text>
+<rect x="35" y="500" width="120" height="40" rx="8" fill="#422006" stroke="#fb923c" stroke-width="2"/>
+<text x="95" y="520" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">paused</text>
+<rect x="320" y="110" width="180" height="40" rx="8" fill="#312e81" stroke="#a78bfa" stroke-width="2"/>
+<text x="410" y="130" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">awaiting_review</text>
+<rect x="310" y="300" width="210" height="40" rx="8" fill="#4a1d6a" stroke="#d8b4fe" stroke-width="2"/>
+<text x="415" y="320" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="12" fill="#e6edf3">awaiting_split_review</text>
+<rect x="630" y="300" width="170" height="40" rx="8" fill="#0e4429" stroke="#7ee787" stroke-width="2"/>
+<text x="715" y="320" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">running_parallel</text>
+<rect x="680" y="110" width="130" height="40" rx="8" fill="#1e3a5f" stroke="#60a5fa" stroke-width="2"/>
+<text x="745" y="130" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">finalizing</text>
+<rect x="890" y="200" width="130" height="40" rx="8" fill="#052e16" stroke="#22c55e" stroke-width="2"/>
+<text x="955" y="220" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">completed</text>
+<rect x="890" y="420" width="110" height="40" rx="8" fill="#450a0a" stroke="#ef4444" stroke-width="2"/>
+<text x="945" y="440" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#e6edf3">failed</text>
+<rect x="890" y="500" width="120" height="40" rx="8" fill="#1c1917" stroke="#78716c" stroke-width="2"/>
+<text x="950" y="520" text-anchor="middle" dominant-baseline="central" font-family="SF Mono,monospace" font-size="13" fill="#a8a29e">cancelled</text>
+
+<!-- pending → running -->
+<line x1="95" y1="80" x2="95" y2="188" stroke="#8b949e" stroke-width="1.5" marker-end="url(#b)"/>
+<text x="105" y="138" font-size="11" fill="#8b949e">START</text>
+<!-- running → awaiting_review (default) -->
+<path d="M155 200 L318 135" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#bp)"/>
+<text x="192" y="152" font-size="11" fill="#a78bfa">TASK_COMPLETED</text>
+<!-- running → awaiting_split_review [isSplitStage] -->
+<path d="M155 218 L308 312" fill="none" stroke="#d8b4fe" stroke-width="1.5" marker-end="url(#bk)"/>
+<text x="165" y="290" font-size="11" fill="#d8b4fe">TASK_COMPLETED</text>
+<text x="165" y="304" font-size="10" fill="#d29922" font-family="SF Mono,monospace">[isSplitStage]</text>
+<!-- running → running self [isAutoAdvance] -->
+<path d="M55 230 C5 250 5 280 55 268" fill="none" stroke="#4ade80" stroke-width="1.5" marker-end="url(#bg)"/>
+<text x="20" y="300" font-size="10" fill="#4ade80">TASK_COMPLETED</text>
+<text x="20" y="314" font-size="10" fill="#d29922" font-family="SF Mono,monospace">[isAutoAdvance]</text>
+<!-- awaiting_review → running: APPROVE (default) -->
+<path d="M320 148 Q230 190 157 205" fill="none" stroke="#4ade80" stroke-width="1.5" marker-end="url(#bg)"/>
+<text x="200" y="190" font-size="11" fill="#4ade80">APPROVE</text>
+<!-- awaiting_review → finalizing: APPROVE [isLastStage] -->
+<line x1="500" y1="130" x2="678" y2="130" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#bb)"/>
+<text x="548" y="122" font-size="11" fill="#60a5fa">APPROVE [isLastStage]</text>
+<!-- awaiting_review → running: REQUEST_CHANGES -->
+<path d="M320 140 Q210 160 157 198" fill="none" stroke="#fb923c" stroke-width="1.5" marker-end="url(#b)"/>
+<text x="182" y="165" font-size="11" fill="#fb923c">REQUEST_CHANGES</text>
+<!-- awaiting_review → running: SPLIT -->
+<path d="M320 115 Q200 80 155 188" fill="none" stroke="#f778ba" stroke-width="1.5" marker-end="url(#bpk)"/>
+<text x="188" y="90" font-size="11" fill="#f778ba">SPLIT</text>
+<!-- awaiting_split_review → running_parallel -->
+<line x1="520" y1="318" x2="628" y2="318" stroke="#7ee787" stroke-width="1.5" marker-end="url(#bt)"/>
+<text x="535" y="308" font-size="11" fill="#7ee787">LAUNCH_PROPOSALS</text>
+<!-- awaiting_split_review → running: REQUEST_CHANGES -->
+<path d="M310 310 Q200 280 157 225" fill="none" stroke="#fb923c" stroke-width="1.2" marker-end="url(#b)"/>
+<text x="180" y="260" font-size="10" fill="#fb923c">REQUEST_CHANGES</text>
+<!-- running_parallel → completed -->
+<path d="M800 308 Q860 260 888 225" fill="none" stroke="#22c55e" stroke-width="1.5" marker-end="url(#bg)"/>
+<text x="820" y="260" font-size="11" fill="#22c55e">CONSOLIDATE</text>
+<text x="820" y="275" font-size="10" fill="#d29922" font-family="SF Mono,monospace">[allChildrenDone]</text>
+<!-- finalizing → completed -->
+<path d="M810 135 Q870 175 888 198" fill="none" stroke="#22c55e" stroke-width="1.5" marker-end="url(#bg)"/>
+<text x="840" y="172" font-size="11" fill="#22c55e">FINALIZE</text>
+<!-- finalizing → awaiting_review: MERGE_CONFLICT -->
+<path d="M700 150 Q580 180 500 148" fill="none" stroke="#fb923c" stroke-width="1.5" marker-end="url(#b)"/>
+<text x="565" y="172" font-size="11" fill="#fb923c">MERGE_CONFLICT</text>
+<!-- running → paused -->
+<line x1="65" y1="230" x2="65" y2="498" stroke="#fb923c" stroke-width="1.5" marker-end="url(#b)"/>
+<text x="18" y="380" font-size="11" fill="#fb923c">PAUSE</text>
+<!-- paused → running -->
+<line x1="125" y1="500" x2="125" y2="232" stroke="#4ade80" stroke-width="1.5" marker-end="url(#bg)"/>
+<text x="133" y="380" font-size="11" fill="#4ade80">RESUME</text>
+<!-- FAIL (dashed from active states) -->
+<path d="M155 225 Q550 470 888 440" fill="none" stroke="#f85149" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#br)"/>
+<text x="530" y="448" font-size="10" fill="#f85149">FAIL / TASK_FAILED (from active states)</text>
+<!-- CANCEL (dashed) -->
+<text x="700" y="555" font-size="10" fill="#a8a29e">CANCEL (from any active state → cancelled)</text>
+<path d="M155 215 Q550 540 888 518" fill="none" stroke="#a8a29e" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#b)"/>
+</svg>
+
+<div class="note">
+<strong>Workflow Run = central orchestrator.</strong> 10 states, 30 transitions.<br><br>
+<strong>TASK_COMPLETED</strong> decision point (guards top-to-bottom):<br>
+&nbsp;&nbsp;1. <code>[isSplitStage]</code> → awaiting_split_review<br>
+&nbsp;&nbsp;2. <code>[isAutoAdvance]</code> → stay running (advance stage)<br>
+&nbsp;&nbsp;3. <em>(default)</em> → awaiting_review + create review<br><br>
+<strong>Unified APPROVE</strong>: single event, guard <code>[isLastStage]</code> decides → finalizing vs → running (next stage)<br>
+<strong>Merge conflict recovery</strong>: finalizing → MERGE_CONFLICT → awaiting_review (user resolves, then re-approves)<br>
+<strong>Pause race</strong>: <code>paused</code> also handles TASK_COMPLETED/TASK_FAILED (task finished mid-pause)<br>
+<strong>Stale event protection</strong>: TASK_COMPLETED carries taskId, validated against context.currentTaskId<br>
+<strong>Data records</strong> updated as side effects: Review status, Proposal status, Parallel Group status
+</div>
+
+<div class="tc"><table>
+<thead><tr><th>#</th><th>From</th><th>Event</th><th>Guard</th><th>To</th><th>Actions</th></tr></thead>
+<tbody>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Startup</td></tr>
+<tr><td>1</td><td><span class="sb sp">pending</span></td><td class="ev">START</td><td>—</td><td><span class="sb sr">running</span></td><td class="ac">setCurrentStage</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Task completion (running)</td></tr>
+<tr><td>2</td><td><span class="sb sr">running</span></td><td class="ev">TASK_COMPLETED</td><td><code>isSplitStage</code></td><td><span class="sb ss">awaiting_split_review</span></td><td>—</td></tr>
+<tr><td>3</td><td><span class="sb sr">running</span></td><td class="ev">TASK_COMPLETED</td><td><code>isAutoAdvance</code></td><td><span class="sb sr">running</span></td><td class="ac">advanceToNextStage</td></tr>
+<tr><td>4</td><td><span class="sb sr">running</span></td><td class="ev">TASK_COMPLETED</td><td><em>(default)</em></td><td><span class="sb sa">awaiting_review</span></td><td class="ac">createReview</td></tr>
+<tr><td>5</td><td><span class="sb sr">running</span></td><td class="ev">TASK_FAILED</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Task completion (paused — race condition)</td></tr>
+<tr><td>6</td><td><span class="sb su">paused</span></td><td class="ev">TASK_COMPLETED</td><td><code>isSplitStage</code></td><td><span class="sb ss">awaiting_split_review</span></td><td>—</td></tr>
+<tr><td>7</td><td><span class="sb su">paused</span></td><td class="ev">TASK_COMPLETED</td><td><code>isAutoAdvance</code></td><td><span class="sb sr">running</span></td><td class="ac">advanceToNextStage</td></tr>
+<tr><td>8</td><td><span class="sb su">paused</span></td><td class="ev">TASK_COMPLETED</td><td><em>(default)</em></td><td><span class="sb sa">awaiting_review</span></td><td class="ac">createReview</td></tr>
+<tr><td>9</td><td><span class="sb su">paused</span></td><td class="ev">TASK_FAILED</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Review decisions</td></tr>
+<tr><td>10</td><td><span class="sb sa">awaiting_review</span></td><td class="ev">APPROVE</td><td><code>isLastStage</code></td><td><span class="sb sz">finalizing</span></td><td class="ac">setReviewApproved</td></tr>
+<tr><td>11</td><td><span class="sb sa">awaiting_review</span></td><td class="ev">APPROVE</td><td><em>(default)</em></td><td><span class="sb sr">running</span></td><td class="ac">setReviewApproved, launchNextStageTask</td></tr>
+<tr><td>12</td><td><span class="sb sa">awaiting_review</span></td><td class="ev">REQUEST_CHANGES</td><td>—</td><td><span class="sb sr">running</span></td><td class="ac">setReviewChangesRequested, spawnRerunTask</td></tr>
+<tr><td>13</td><td><span class="sb sa">awaiting_review</span></td><td class="ev">SPLIT</td><td>—</td><td><span class="sb sr">running</span></td><td class="ac">setReviewApproved, launchSplitTask</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Split → parallel</td></tr>
+<tr><td>14</td><td><span class="sb ss">awaiting_split_review</span></td><td class="ev">LAUNCH_PROPOSALS</td><td>—</td><td><span class="sb sg">running_parallel</span></td><td class="ac">createParallelGroup, launchChildWorkflows</td></tr>
+<tr><td>15</td><td><span class="sb ss">awaiting_split_review</span></td><td class="ev">REQUEST_CHANGES</td><td>—</td><td><span class="sb sr">running</span></td><td class="ac">rerunSplitStage</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Parallel completion</td></tr>
+<tr><td>16</td><td><span class="sb sg">running_parallel</span></td><td class="ev">CONSOLIDATE</td><td><code>allChildrenDone</code></td><td><span class="sb sc">completed</span></td><td class="ac">setParallelGroupCompleted, setCompletedAt</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Finalization</td></tr>
+<tr><td>17</td><td><span class="sb sz">finalizing</span></td><td class="ev">FINALIZE</td><td>—</td><td><span class="sb sc">completed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>18</td><td><span class="sb sz">finalizing</span></td><td class="ev">MERGE_CONFLICT</td><td>—</td><td><span class="sb sa">awaiting_review</span></td><td class="ac">createMergeConflictReview</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Pause / Resume</td></tr>
+<tr><td>19</td><td><span class="sb sr">running</span></td><td class="ev">PAUSE</td><td>—</td><td><span class="sb su">paused</span></td><td class="ac">pauseCurrentTask</td></tr>
+<tr><td>20</td><td><span class="sb su">paused</span></td><td class="ev">RESUME</td><td>—</td><td><span class="sb sr">running</span></td><td class="ac">resumeCurrentTask</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Cancel</td></tr>
+<tr><td>21</td><td><span class="sb sr">running</span></td><td class="ev">CANCEL</td><td>—</td><td><span class="sb sx">cancelled</span></td><td class="ac">cancelCurrentTask</td></tr>
+<tr><td>22</td><td><span class="sb su">paused</span></td><td class="ev">CANCEL</td><td>—</td><td><span class="sb sx">cancelled</span></td><td>—</td></tr>
+<tr><td>23</td><td><span class="sb sa">awaiting_review</span></td><td class="ev">CANCEL</td><td>—</td><td><span class="sb sx">cancelled</span></td><td>—</td></tr>
+<tr><td>24</td><td><span class="sb ss">awaiting_split_review</span></td><td class="ev">CANCEL</td><td>—</td><td><span class="sb sx">cancelled</span></td><td>—</td></tr>
+<tr><td>25</td><td><span class="sb sg">running_parallel</span></td><td class="ev">CANCEL</td><td>—</td><td><span class="sb sx">cancelled</span></td><td class="ac">cancelChildWorkflows</td></tr>
+<tr><td colspan="6" style="color:#58a6ff;font-weight:600;border-bottom:2px solid #30363d">Fail (internal errors)</td></tr>
+<tr><td>26</td><td><span class="sb sr">running</span></td><td class="ev">FAIL</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>27</td><td><span class="sb su">paused</span></td><td class="ev">FAIL</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>28</td><td><span class="sb sz">finalizing</span></td><td class="ev">FAIL</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+<tr><td>29</td><td><span class="sb sg">running_parallel</span></td><td class="ev">FAIL</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setParallelGroupFailed, setCompletedAt</td></tr>
+<tr><td>30</td><td><span class="sb ss">awaiting_split_review</span></td><td class="ev">FAIL</td><td>—</td><td><span class="sb sf">failed</span></td><td class="ac">setCompletedAt</td></tr>
+</tbody></table></div>
+</div>
+
+<!-- ====== END-TO-END FLOWS ====== -->
+<div id="tab-flows" class="panel">
+<div class="note">Only 2 machines: <strong>Task</strong> and <strong>Workflow Run</strong>. Reviews, proposals, parallel groups = data records updated by workflow actions.</div>
+
+<div class="cs">
+<h3>1. Simple task (1-stage workflow)</h3>
+<div class="cf"><span class="mt tt">TASK</span> pending → provisioning → running → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>  (review created)
+  ↳ User approves
+<span class="mt tw">WORKFLOW</span> APPROVE [isLastStage] → <strong>finalizing</strong>  (review → "approved")
+<span class="mt tw">WORKFLOW</span> FINALIZE → <strong>completed</strong> ✓</div>
+
+<h3>2. Multi-stage workflow (plan → implement → review → fix)</h3>
+<div class="cf"><span class="mt tt">TASK</span> plan → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>  (plan review)
+<span class="mt tw">WORKFLOW</span> APPROVE → <strong>running</strong>  (stage: "implement")
+<span class="mt tt">TASK</span> implement → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED [isAutoAdvance] → <strong>running</strong>  (stage: "review")
+<span class="mt tt">TASK</span> review → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED [isAutoAdvance] → <strong>running</strong>  (stage: "fix")
+<span class="mt tt">TASK</span> fix → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>  (fix review)
+<span class="mt tw">WORKFLOW</span> APPROVE [isLastStage] → <strong>finalizing</strong> → FINALIZE → <strong>completed</strong> ✓</div>
+
+<h3>3. Request changes (rerun cycle)</h3>
+<div class="cf"><span class="mt tt">TASK</span> COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>
+<span class="mt tw">WORKFLOW</span> REQUEST_CHANGES → <strong>running</strong>  (review → "changes_requested", rerun task spawned)
+<span class="mt tt">TASK</span> rerun → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>  (round 2)
+  ↳ Cycle repeats until APPROVE</div>
+
+<h3>4. Merge conflict recovery</h3>
+<div class="cf"><span class="mt tw">WORKFLOW</span> APPROVE [isLastStage] → <strong>finalizing</strong>
+  ↳ finalizeAndMerge() hits git conflict
+<span class="mt tw">WORKFLOW</span> MERGE_CONFLICT → <strong>awaiting_review</strong>  (conflict review created)
+  ↳ User resolves and approves
+<span class="mt tw">WORKFLOW</span> APPROVE [isLastStage] → <strong>finalizing</strong> → FINALIZE → <strong>completed</strong> ✓
+  ↳ OR user sends back to agent
+<span class="mt tw">WORKFLOW</span> REQUEST_CHANGES → <strong>running</strong>  (agent fixes conflicts)</div>
+
+<h3>5. Split → parallel → consolidate</h3>
+<div class="cf"><span class="mt tt">TASK</span> plan → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED → <strong>awaiting_review</strong>
+<span class="mt tw">WORKFLOW</span> SPLIT → <strong>running</strong>  (review → "approved", stage: "split")
+<span class="mt tt">TASK</span> split agent → creates proposals → COMPLETE → completed
+<span class="mt tw">WORKFLOW</span> TASK_COMPLETED [isSplitStage] → <strong>awaiting_split_review</strong>
+  ↳ User reviews proposals (can REQUEST_CHANGES to re-run split)
+<span class="mt tw">WORKFLOW</span> LAUNCH_PROPOSALS → <strong>running_parallel</strong>
+  ↳ Parallel group created, child workflows launched
+  ↳ Children run independently (each = Task + Workflow pair)
+  ↳ All children done
+<span class="mt tw">WORKFLOW</span> CONSOLIDATE [allChildrenDone] → <strong>completed</strong> ✓</div>
+
+<h3>6. Pause / Resume</h3>
+<div class="cf"><span class="mt tw">WORKFLOW</span> PAUSE → <strong>paused</strong>  (action: pauseCurrentTask)
+<span class="mt tt">TASK</span> PAUSE → <strong>paused</strong>  (agent stopped)
+  ... later ...
+<span class="mt tw">WORKFLOW</span> RESUME → <strong>running</strong>  (action: resumeCurrentTask)
+<span class="mt tt">TASK</span> RESUME → <strong>running</strong>  (agent restarted)</div>
+
+<h3>7. Cancellation</h3>
+<div class="cf"><span class="mt tw">WORKFLOW</span> CANCEL → <strong>cancelled</strong>  (action: cancelCurrentTask / cancelChildWorkflows)
+<span class="mt tt">TASK</span> CANCEL → <strong>cancelled</strong>  (agent terminated, sandbox cleaned up)
+  ↳ Distinct from FAIL — user-initiated abort, not an error</div>
+
+<h3>8. Task failure</h3>
+<div class="cf"><span class="mt tt">TASK</span> FAIL → <strong>failed</strong>  (non-zero exit / crash)
+<span class="mt tw">WORKFLOW</span> TASK_FAILED → <strong>failed</strong> ✗</div>
+</div>
+</div>
+
+<script>
+function show(n){
+document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+document.getElementById('tab-'+n).classList.add('active');
+event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

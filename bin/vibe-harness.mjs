@@ -30,7 +30,7 @@ if (getFlag("help") || getFlag("h")) {
   vibe-harness — AI coding agent orchestrator
 
   Usage:
-    npx github:jannesolanpaa/vibe-harness [options]
+    npx github:solanpaa/vibe-harness [options]
 
   Options:
     --port <number>    Port to run on (default: 3000)
