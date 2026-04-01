@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import fs from "fs";
+import { execFileSync } from "child_process";
 
 export async function GET() {
   const db = await getDb();
@@ -22,6 +23,32 @@ export async function POST(request: NextRequest) {
   if (!fs.existsSync(body.localPath)) {
     return NextResponse.json(
       { error: `Directory does not exist: ${body.localPath}` },
+      { status: 400 }
+    );
+  }
+
+  if (!fs.statSync(body.localPath).isDirectory()) {
+    return NextResponse.json(
+      { error: "Path is not a git repository" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const result = execFileSync(
+      "git",
+      ["-C", body.localPath, "rev-parse", "--is-inside-work-tree"],
+      { stdio: "pipe" }
+    );
+    if (result.toString().trim() !== "true") {
+      return NextResponse.json(
+        { error: "Path is not a git repository" },
+        { status: 400 }
+      );
+    }
+  } catch {
+    return NextResponse.json(
+      { error: "Path is not a git repository" },
       { status: 400 }
     );
   }

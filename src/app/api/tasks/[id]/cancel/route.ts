@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { cancelAcpOperation, getAcpSession } from "@/lib/services/acp-client";
+import { transitionTask, transitionWorkflowRun } from "@/lib/state-machine";
 
 export async function POST(
   request: NextRequest,
@@ -20,19 +21,25 @@ export async function POST(
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  if (task.status !== "running") {
+  if (task.status !== "running" && task.status !== "provisioning") {
     return NextResponse.json(
-      { error: "Task is not running" },
+      { error: "Task is not running or provisioning" },
       { status: 400 }
     );
   }
 
   const session = getAcpSession(id);
   if (!session) {
-    return NextResponse.json(
-      { error: "No ACP session found. Cancel is only supported for ACP tasks. Use stop to kill the task." },
-      { status: 400 }
-    );
+    // No ACP session yet (e.g. still provisioning) — transition state directly
+    await transitionTask(id, { type: "CANCEL" });
+    if (task.workflowRunId) {
+      try {
+        await transitionWorkflowRun(task.workflowRunId, { type: "CANCEL" });
+      } catch {
+        // Best effort — workflow may already be in a terminal state
+      }
+    }
+    return NextResponse.json({ success: true });
   }
 
   const cancelled = cancelAcpOperation(id);
@@ -41,6 +48,16 @@ export async function POST(
       { error: "Failed to cancel operation" },
       { status: 500 }
     );
+  }
+
+  // Transition the task state machine so it moves to cancelled
+  await transitionTask(id, { type: "CANCEL" });
+  if (task.workflowRunId) {
+    try {
+      await transitionWorkflowRun(task.workflowRunId, { type: "CANCEL" });
+    } catch {
+      // Best effort — workflow may already be in a terminal state
+    }
   }
 
   return NextResponse.json({ success: true });

@@ -6,6 +6,8 @@ import {
   getPlan,
   getProjectTree,
 } from "@/lib/services/proposal-service";
+import { getDb, schema } from "@/lib/db";
+import { eq } from "drizzle-orm";
 
 /**
  * MCP tool execution endpoint.
@@ -30,6 +32,26 @@ export async function POST(request: NextRequest) {
           isError: true,
         },
         { status: 400 }
+      );
+    }
+
+    // Validate that the taskId references an existing task
+    const db = await getDb();
+    const task = await db
+      .select({ id: schema.tasks.id })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, resolvedTaskId))
+      .get();
+
+    if (!task) {
+      return NextResponse.json(
+        {
+          content: [
+            { type: "text", text: "Error: Task not found" },
+          ],
+          isError: true,
+        },
+        { status: 404 }
       );
     }
 
@@ -150,7 +172,7 @@ export async function POST(request: NextRequest) {
         content: [
           {
             type: "text",
-            text: `Internal error: ${(error as Error).message}`,
+            text: "Internal error processing tool call",
           },
         ],
         isError: true,
