@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, renameSync } from "fs";
+import { existsSync, mkdirSync, cpSync, rmSync, renameSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -159,19 +159,19 @@ if (!existsSync(nextDir)) {
   try {
     if (isInsideNodeModules) {
       // When installed via npx, source is inside node_modules/ which Turbopack
-      // refuses to compile. Symlink project files to the wrapper root so Next.js
+      // refuses to compile. Copy project files to the wrapper root so Next.js
       // sees a normal project structure, then move .next/ back after build.
-      const filesToLink = [
+      const filesToCopy = [
         "src", "public", "next.config.ts", "tsconfig.json",
-        "postcss.config.mjs", "components.json", "tailwind.config.ts",
+        "postcss.config.mjs", "components.json",
       ];
-      const createdLinks = [];
-      for (const f of filesToLink) {
-        const target = path.join(PROJECT_ROOT, f);
-        const link = path.join(WRAPPER_ROOT, f);
-        if (existsSync(target) && !existsSync(link)) {
-          symlinkSync(target, link);
-          createdLinks.push(link);
+      const createdItems = [];
+      for (const f of filesToCopy) {
+        const source = path.join(PROJECT_ROOT, f);
+        const dest = path.join(WRAPPER_ROOT, f);
+        if (existsSync(source) && !existsSync(dest)) {
+          cpSync(source, dest, { recursive: true });
+          createdItems.push(dest);
         }
       }
 
@@ -188,9 +188,9 @@ if (!existsSync(nextDir)) {
           renameSync(builtNext, nextDir);
         }
       } finally {
-        // Clean up symlinks
-        for (const link of createdLinks) {
-          try { unlinkSync(link); } catch { /* ignore */ }
+        // Clean up copied files
+        for (const item of createdItems) {
+          try { rmSync(item, { recursive: true, force: true }); } catch { /* ignore */ }
         }
       }
     } else {
