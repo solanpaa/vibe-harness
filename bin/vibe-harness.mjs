@@ -10,6 +10,28 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 
+// When installed via npx, the package lands inside a wrapper's node_modules/.
+// Detect the wrapper root so we can find sibling packages like `next`.
+function findWrapperRoot() {
+  // PROJECT_ROOT is e.g. ~/.npm/_npx/.../node_modules/vibe-harness
+  // Wrapper root is e.g. ~/.npm/_npx/.../
+  const nmIndex = PROJECT_ROOT.lastIndexOf(path.sep + "node_modules" + path.sep);
+  if (nmIndex !== -1) {
+    return PROJECT_ROOT.substring(0, nmIndex);
+  }
+  return PROJECT_ROOT;
+}
+const WRAPPER_ROOT = findWrapperRoot();
+
+// Resolve the next binary — could be in PROJECT_ROOT/node_modules or WRAPPER_ROOT/node_modules
+function findNextBin() {
+  const local = path.join(PROJECT_ROOT, "node_modules", "next", "dist", "bin", "next");
+  if (existsSync(local)) return local;
+  const wrapper = path.join(WRAPPER_ROOT, "node_modules", "next", "dist", "bin", "next");
+  if (existsSync(wrapper)) return wrapper;
+  return "next"; // fallback to PATH
+}
+
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
@@ -132,10 +154,19 @@ const nextDir = path.join(PROJECT_ROOT, ".next");
 if (!existsSync(nextDir)) {
   console.log("\n🔨 First run detected — building Vibe Harness (this takes ~30s)...\n");
   try {
-    execSync("npm run build", {
+    const nextBin = findNextBin();
+    execSync(`node "${nextBin}" build`, {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
-      env: { ...process.env, DATABASE_URL: dbPath },
+      env: {
+        ...process.env,
+        DATABASE_URL: dbPath,
+        // Ensure node can resolve modules from both package and wrapper
+        NODE_PATH: [
+          path.join(PROJECT_ROOT, "node_modules"),
+          path.join(WRAPPER_ROOT, "node_modules"),
+        ].join(path.delimiter),
+      },
     });
     console.log("\n✅ Build complete!\n");
   } catch (e) {
@@ -173,7 +204,7 @@ try {
 // ---------------------------------------------------------------------------
 console.log(`\n🚀 Starting Vibe Harness on http://localhost:${port}\n`);
 
-const server = spawn("node", [path.join(PROJECT_ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", port], {
+const server = spawn("node", [findNextBin(), "start", "-p", port], {
   cwd: PROJECT_ROOT,
   stdio: "inherit",
   env: { ...process.env, DATABASE_URL: dbPath, PORT: port },
