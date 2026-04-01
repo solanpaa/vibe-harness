@@ -44,19 +44,19 @@
     "uuid": "^13.0.0",
     "xstate": "^5.28.0",
     "zod": "^4.3.6",
-    "zustand": "^5.0.11"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "zustand": "^5.0.11",
+    "typescript": "^5.9.3",
+    "@types/node": "^20.19.37",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/uuid": "^10.0.0",
-    "drizzle-kit": "^0.31.9",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4",
-    "typescript": "^5",
+    "drizzle-kit": "^0.31.9"
+  },
+  "devDependencies": {
     "vitest": "^4.1.0"
   },
   "license": "MIT"
