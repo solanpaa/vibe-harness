@@ -16,7 +16,7 @@ Vibe Harness wraps GitHub Copilot CLI in a web-based orchestration layer that ad
 ## Quick Start
 
 ```bash
-npx github:jannesolanpaa/vibe-harness
+npx github:solanpaa/vibe-harness
 ```
 
 This checks prerequisites, installs dependencies, builds the app on first run, and opens the UI at [http://localhost:3000](http://localhost:3000).
@@ -24,23 +24,23 @@ This checks prerequisites, installs dependencies, builds the app on first run, a
 ### Options
 
 ```bash
-npx github:jannesolanpaa/vibe-harness --port 4000          # Custom port
-npx github:jannesolanpaa/vibe-harness --no-open             # Don't open browser
-npx github:jannesolanpaa/vibe-harness --data-dir ~/my-data  # Custom data directory
+npx github:solanpaa/vibe-harness --port 4000          # Custom port
+npx github:solanpaa/vibe-harness --no-open             # Don't open browser
+npx github:solanpaa/vibe-harness --data-dir ~/my-data  # Custom data directory
 ```
 
 ### Global Install
 
 ```bash
-npm install -g github:jannesolanpaa/vibe-harness
+npm install -g github:solanpaa/vibe-harness
 vibe-harness
 ```
 
 ### Pin a Version
 
 ```bash
-npx github:jannesolanpaa/vibe-harness#v0.2.0   # Tagged release
-npx github:jannesolanpaa/vibe-harness#main      # Latest main
+npx github:solanpaa/vibe-harness#v0.2.0   # Tagged release
+npx github:solanpaa/vibe-harness#main      # Latest main
 ```
 
 ## Prerequisites
