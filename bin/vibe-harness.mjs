@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, renameSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -153,22 +153,55 @@ const dbPath = `file:${path.join(dataDir, "vibe-harness.db")}`;
 const nextDir = path.join(PROJECT_ROOT, ".next");
 if (!existsSync(nextDir)) {
   console.log("\n🔨 First run detected — building Vibe Harness (this takes ~30s)...\n");
+  const nextBin = findNextBin();
+  const isInsideNodeModules = PROJECT_ROOT !== WRAPPER_ROOT;
+
   try {
-    const nextBin = findNextBin();
-    execSync(`node "${nextBin}" build`, {
-      cwd: PROJECT_ROOT,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        DATABASE_URL: dbPath,
-        TURBOPACK_ROOT: WRAPPER_ROOT,
-        // Ensure node can resolve modules from both package and wrapper
-        NODE_PATH: [
-          path.join(PROJECT_ROOT, "node_modules"),
-          path.join(WRAPPER_ROOT, "node_modules"),
-        ].join(path.delimiter),
-      },
-    });
+    if (isInsideNodeModules) {
+      // When installed via npx, source is inside node_modules/ which Turbopack
+      // refuses to compile. Symlink project files to the wrapper root so Next.js
+      // sees a normal project structure, then move .next/ back after build.
+      const filesToLink = [
+        "src", "public", "next.config.ts", "tsconfig.json",
+        "postcss.config.mjs", "components.json", "tailwind.config.ts",
+      ];
+      const createdLinks = [];
+      for (const f of filesToLink) {
+        const target = path.join(PROJECT_ROOT, f);
+        const link = path.join(WRAPPER_ROOT, f);
+        if (existsSync(target) && !existsSync(link)) {
+          symlinkSync(target, link);
+          createdLinks.push(link);
+        }
+      }
+
+      try {
+        execSync(`node "${nextBin}" build`, {
+          cwd: WRAPPER_ROOT,
+          stdio: "inherit",
+          env: { ...process.env, DATABASE_URL: dbPath },
+        });
+
+        // Move .next from wrapper root to package dir
+        const builtNext = path.join(WRAPPER_ROOT, ".next");
+        if (existsSync(builtNext)) {
+          renameSync(builtNext, nextDir);
+        }
+      } finally {
+        // Clean up symlinks
+        for (const link of createdLinks) {
+          try { unlinkSync(link); } catch { /* ignore */ }
+        }
+      }
+    } else {
+      // Normal dev/local install — build directly
+      execSync(`node "${nextBin}" build`, {
+        cwd: PROJECT_ROOT,
+        stdio: "inherit",
+        env: { ...process.env, DATABASE_URL: dbPath },
+      });
+    }
+
     console.log("\n✅ Build complete!\n");
   } catch (e) {
     console.error("\n❌ Build failed. Check errors above.");
