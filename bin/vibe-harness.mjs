@@ -201,36 +201,31 @@ if (!existsSync(nextDir)) {
         // Build in a dedicated cache dir under dataDir so we never write to
         // shared system directories (e.g. /usr/local/lib for global installs).
         const BUILD_DIR = path.join(dataDir, ".build-cache");
-        if (!existsSync(BUILD_DIR)) mkdirSync(BUILD_DIR, { recursive: true });
+        // Always start with a clean build dir to avoid stale artifacts
+        if (existsSync(BUILD_DIR)) rmSync(BUILD_DIR, { recursive: true, force: true });
+        mkdirSync(BUILD_DIR, { recursive: true });
 
         const filesToCopy = [
           "src", "public", "next.config.ts", "tsconfig.json",
           "postcss.config.mjs", "components.json",
         ];
-        const createdItems = [];
 
         // Copy node_modules from wrapper root so Next.js can resolve deps
         const wrapperNm = path.join(WRAPPER_ROOT, "node_modules");
         const buildNm = path.join(BUILD_DIR, "node_modules");
-        if (existsSync(wrapperNm) && !existsSync(buildNm)) {
-          cpSync(wrapperNm, buildNm, { recursive: true });
-          createdItems.push(buildNm);
-        }
+        cpSync(wrapperNm, buildNm, { recursive: true });
 
         for (const f of filesToCopy) {
           const source = path.join(PROJECT_ROOT, f);
           const dest = path.join(BUILD_DIR, f);
-          if (existsSync(dest)) {
-            rmSync(dest, { recursive: true, force: true });
-          }
           if (existsSync(source)) {
             cpSync(source, dest, { recursive: true });
-            createdItems.push(dest);
           }
         }
 
         try {
-          execSync(`node "${nextBin}" build`, {
+          const buildNextBin = path.join(BUILD_DIR, "node_modules", "next", "dist", "bin", "next");
+          execSync(`node "${buildNextBin}" build`, {
             cwd: BUILD_DIR,
             stdio: "inherit",
             env: { ...process.env, DATABASE_URL: dbPath },
@@ -242,10 +237,8 @@ if (!existsSync(nextDir)) {
             renameSync(builtNext, nextDir);
           }
         } finally {
-          // Clean up copied files
-          for (const item of createdItems) {
-            try { rmSync(item, { recursive: true, force: true }); } catch { /* ignore */ }
-          }
+          // Clean up build dir
+          try { rmSync(BUILD_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
         }
       } else {
         // Normal dev/local install — build directly
