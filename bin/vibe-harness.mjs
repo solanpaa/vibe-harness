@@ -230,7 +230,7 @@ if (!existsSync(nextDir)) {
           execSync(`node "${nextBin}" build`, {
             cwd: BUILD_DIR,
             stdio: "inherit",
-            env: { ...process.env, DATABASE_URL: dbPath },
+            env: { ...process.env, DATABASE_URL: dbPath, TURBOPACK_ROOT: BUILD_DIR },
           });
 
           // Move .next from build dir to package dir
