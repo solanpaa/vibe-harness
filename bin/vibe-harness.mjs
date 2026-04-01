@@ -158,7 +158,7 @@ if (!existsSync(nextDir)) {
 
   // --- Build lock: prevent concurrent builds from corrupting .next/ ---
   const lockFile = path.join(dataDir, ".build.lock");
-  const LOCK_STALE_MS = 10 * 60 * 1000; // 10 minutes
+  const LOCK_STALE_MS = 2 * 60 * 1000;  // 2 minutes
   const LOCK_POLL_MS = 2000;             // poll every 2s
   const LOCK_WAIT_MS = 5 * 60 * 1000;   // wait up to 5 minutes
 
@@ -255,6 +255,7 @@ if (!existsSync(nextDir)) {
 
       console.log("\n✅ Build complete!\n");
     } catch (e) {
+      try { unlinkSync(lockFile); } catch { /* ignore */ }
       console.error("\n❌ Build failed. Check errors above.");
       process.exit(1);
     } finally {
