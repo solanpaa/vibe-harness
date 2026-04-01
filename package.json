@@ -6,7 +6,7 @@
     "vibe-harness": "./bin/vibe-harness.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "next dev",

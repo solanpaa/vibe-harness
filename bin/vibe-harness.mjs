@@ -50,10 +50,10 @@ const dataDir = getOption("data-dir", path.join(homedir(), ".vibe-harness"));
 // ---------------------------------------------------------------------------
 const checks = [
   {
-    name: "Node.js >= 20",
+    name: "Node.js >= 24",
     test: () => {
       const major = parseInt(process.versions.node.split(".")[0], 10);
-      if (major < 20) throw new Error(`Found Node.js ${process.versions.node}, need >= 20`);
+      if (major < 24) throw new Error(`Found Node.js ${process.versions.node}, need >= 24`);
     },
   },
   {

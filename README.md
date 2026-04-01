@@ -47,7 +47,7 @@ npx github:solanpaa/vibe-harness#main      # Latest main
 
 All checked automatically on startup:
 
-- **Node.js >= 20**
+- **Node.js >= 24**
 - **Docker Desktop** — running
 - **git**
 - **GitHub CLI** (`gh`) — installed and authenticated
