@@ -150,8 +150,11 @@ const dbPath = `file:${path.join(dataDir, "vibe-harness.db")}`;
 // ---------------------------------------------------------------------------
 // First-run build
 // ---------------------------------------------------------------------------
+const buildCacheDir = path.join(dataDir, ".build-cache");
 const nextDir = path.join(PROJECT_ROOT, ".next");
-if (!existsSync(nextDir)) {
+const buildCacheNextDir = path.join(buildCacheDir, ".next");
+const hasBuild = existsSync(nextDir) || existsSync(buildCacheNextDir);
+if (!hasBuild) {
   console.log("\n🔨 First run detected — building Vibe Harness (this takes ~30s)...\n");
   const nextBin = findNextBin();
   const isInsideNodeModules = PROJECT_ROOT !== WRAPPER_ROOT;
@@ -194,7 +197,7 @@ if (!existsSync(nextDir)) {
   }
 
   // Re-check: the other process may have produced .next/ while we waited
-  if (!existsSync(nextDir)) {
+  if (!existsSync(nextDir) && !existsSync(buildCacheNextDir)) {
     writeFileSync(lockFile, Date.now().toString());
     try {
       if (isInsideNodeModules) {
@@ -223,23 +226,13 @@ if (!existsSync(nextDir)) {
           }
         }
 
-        try {
-          const buildNextBin = path.join(BUILD_DIR, "node_modules", "next", "dist", "bin", "next");
-          execSync(`node "${buildNextBin}" build`, {
-            cwd: BUILD_DIR,
-            stdio: "inherit",
-            env: { ...process.env, DATABASE_URL: dbPath },
-          });
-
-          // Move .next from build dir to package dir
-          const builtNext = path.join(BUILD_DIR, ".next");
-          if (existsSync(builtNext)) {
-            renameSync(builtNext, nextDir);
-          }
-        } finally {
-          // Clean up build dir
-          try { rmSync(BUILD_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
-        }
+        const buildNextBin = path.join(BUILD_DIR, "node_modules", "next", "dist", "bin", "next");
+        execSync(`node "${buildNextBin}" build`, {
+          cwd: BUILD_DIR,
+          stdio: "inherit",
+          env: { ...process.env, DATABASE_URL: dbPath },
+        });
+        // Keep build dir — .next references node_modules at runtime
       } else {
         // Normal dev/local install — build directly
         execSync(`node "${nextBin}" build`, {
@@ -289,8 +282,13 @@ try {
 // ---------------------------------------------------------------------------
 console.log(`\n🚀 Starting Vibe Harness on http://localhost:${port}\n`);
 
-const server = spawn("node", [findNextBin(), "start", "-p", port], {
-  cwd: PROJECT_ROOT,
+// Determine the server root — use build cache if that's where .next lives
+const serverRoot = existsSync(buildCacheNextDir) ? buildCacheDir : PROJECT_ROOT;
+const serverNextBin = path.join(serverRoot, "node_modules", "next", "dist", "bin", "next");
+const effectiveNextBin = existsSync(serverNextBin) ? serverNextBin : findNextBin();
+
+const server = spawn("node", [effectiveNextBin, "start", "-p", port, "-H", "127.0.0.1"], {
+  cwd: serverRoot,
   stdio: "inherit",
   env: { ...process.env, DATABASE_URL: dbPath, PORT: port },
 });
