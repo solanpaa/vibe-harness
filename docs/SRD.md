@@ -56,25 +56,37 @@ A desktop-native AI agent orchestrator that:
 | FR-A4 | Agent definitions include a capability declaration: supports_continue (boolean), supports_intervention (boolean), supports_streaming (boolean), output_format (jsonl/acp/text) | Must |
 | FR-A5 | System validates that required agent capabilities are present before starting a workflow (e.g., `supports_continue` required for multi-stage workflows) | Should |
 
-### 2.3 Task Execution
+### 2.3 Conceptual Model
 
-| ID | Requirement | Priority |
-|----|------------|----------|
-| FR-T1 | User can create a task by specifying: project, agent, prompt, credential set (optional, inherits project default), and optional settings (model, worktree toggle, base branch, target branch) | Must |
-| FR-T2 | User can start a task, which provisions a Docker sandbox and launches the agent | Must |
-| FR-T3 | Each task runs in an isolated Docker sandbox (via `docker sandbox run`) | Must |
-| FR-T4 | Each task optionally runs in a git worktree for branch isolation. Worktree branch named `vibe-harness/task-<shortId>` created from the specified base branch (default: HEAD) | Must |
-| FR-T5 | User can observe real-time streaming output from the agent while it runs (via WebSocket, rendered with < 100ms perceived latency) | Must |
-| FR-T6 | User can send mid-execution messages (interventions) to a running agent via ACP stdin | Must |
-| FR-T7 | ~~User can pause a running task~~ | **DROPPED** — Docker sandbox pause/unpause is unreliable with AI agents. Use cancel (FR-T8) instead |
-| FR-T8 | User can cancel a running task (kills sandbox process, marks task failed with reason "cancelled") | Must |
-| FR-T9 | User can view task history: prompt, output, status, exit code, usage stats (tokens, duration, cost, model) | Must |
-| FR-T10 | System generates a diff of all changes when a task completes. Diff base is the merge-base between the task branch and the target branch | Must |
-| FR-T11 | Standalone tasks (no workflow) auto-create a review on completion | Must |
-| FR-T12 | User can view conversation history (user/assistant/system messages) for a task | Must |
-| FR-T13 | On task completion (success or failure): worktree is preserved until review approval; on approval, worktree is cleaned up after merge; on cancellation, worktree is cleaned up immediately | Must |
-| FR-T14 | On task completion (success or failure): Docker sandbox container is stopped. On daemon restart, orphaned containers discovered via `docker sandbox ls` are stopped and associated tasks marked failed with reason "daemon_restart" | Must |
-| FR-T15 | Credential set selection: task uses explicitly specified credential set, or project's default credential set, or no credentials (in that priority order) | Must |
+```
+Workflow Run (user-facing — the only execution unit users interact with)
+  ├── Docker sandbox (shared across all stages, lives for entire run)
+  ├── Git worktree (shared across all stages, LLM-generated branch name)
+  ├── ACP session (continuous by default; reset when stage has freshSession: true)
+  │
+  ├── Stage 1: "plan"
+  │     ├── agent executes (prompt sent into conversation)
+  │     ├── agent completes → diff snapshot → review gate
+  │     ├── user requests changes → comments injected into conversation
+  │     ├── agent executes again (round 2, same conversation)
+  │     ├── agent completes → new diff snapshot → review gate (round 2)
+  │     └── user approves → advance to next stage
+  │
+  ├── Stage 2: "implement"
+  │     ├── stage prompt injected into conversation (--continue, agent has plan context)
+  │     ├── agent executes → diff snapshot → review gate
+  │     └── user approves → advance
+  │
+  └── Finalize: commit → rebase → merge → cleanup
+```
+
+**Key principles:**
+1. **Users run workflow runs, never standalone tasks.** A "quick one-shot" is a workflow with a single auto-generated stage.
+2. **Stages are execution phases, not separate entities.** There is no "Task" concept — stages ARE the execution. Messages accumulate in one continuous agent conversation.
+3. **Reviews are snapshots.** Each time the agent completes within a stage, a review is created (diff + summary). Requesting changes feeds comments back into the same conversation. The agent continues from where it left off.
+4. **One sandbox, one worktree per workflow run.** All stages share the same environment. Only split children get their own.
+5. **`freshSession: true` resets the conversation** within the same sandbox/worktree. Previous plan context is injected as markdown into the fresh prompt.
+6. **Split children are independent workflow runs** with their own sandbox, worktree (branched off parent's worktree), and fresh ACP session. They receive the proposal description as their prompt, NOT a continuation of the parent conversation.
 
 ### 2.4 Workflow Orchestration
 
@@ -82,55 +94,60 @@ A desktop-native AI agent orchestrator that:
 |----|------------|----------|
 | FR-W1 | User can create workflow templates defining a sequence of stages | Must |
 | FR-W2 | Each stage has: name, type (`standard`/`split`), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean) | Must |
-| FR-W3 | User can start a workflow run against a project with a task description, credential set (optional), base branch (optional, default: HEAD), and target branch (optional, default: base branch) | Must |
-| FR-W4 | System executes stages sequentially, creating a task per stage | Must |
-| FR-W5 | Standard stages with `reviewRequired: true` pause for human review before advancing | Must |
+| FR-W3 | User can start a workflow run against a project with a task description, credential set (optional), base branch (optional, default: HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
+| FR-W4 | System executes stages sequentially. For each stage, the prompt is injected into the agent conversation (or a fresh conversation if `freshSession: true`). All stages share the same sandbox and worktree | Must |
+| FR-W5 | Standard stages with `reviewRequired: true` pause for human review after agent completes | Must |
 | FR-W6 | Standard stages with `autoAdvance: true` proceed to next stage without human review | Must |
-| FR-W7 | Consecutive stages share Copilot CLI ACP session context (agent remembers previous stages via `--continue`) unless `freshSession: true`. Session continuation is agent-specific; future agent types may not support it | Must |
-| FR-W8 | System builds combined prompts: task description + stage instructions + (for `freshSession` stages) previous plan context injected as markdown | Must |
-| FR-W9 | Workflow orchestration state is durable at suspension points (review gates, proposal gates, sleep). In-flight tasks (agent actively executing) are NOT recoverable on daemon crash — they are marked failed with reason "daemon_restart" | Must |
-| FR-W10 | User can cancel a running workflow (cancels current task, marks workflow cancelled) | Must |
-| FR-W11 | System provides pre-built workflow templates (e.g., plan → implement → review → commit) | Should |
+| FR-W7 | By default, stages continue the ACP session (`--continue`). With `freshSession: true`, a new ACP session is started within the same sandbox/worktree, and previous plan context is injected as markdown in the prompt | Must |
+| FR-W8 | System builds stage prompts: task description + stage instructions + (for `freshSession` stages) previous plan context | Must |
+| FR-W9 | Workflow orchestration state is durable at suspension points (review gates, proposal gates). In-flight agent execution is NOT recoverable on daemon crash — the stage is marked failed with reason "daemon_restart" | Must |
+| FR-W10 | User can cancel a running workflow. Sends ACP stop to agent; if no response within timeout (30s), force-kills sandbox. Marks workflow cancelled | Must |
+| FR-W11 | System provides pre-built workflow templates: (a) "Quick Run" — single auto-advance stage, (b) "Plan & Implement" — plan → implement → commit, (c) "Full Review" — plan → implement → review → fix → commit | Must |
 | FR-W12 | User can list, edit, and delete workflow templates (add/remove/reorder stages) | Must |
-| FR-W13 | System auto-generates a title for workflow runs from the task description | Should |
-| FR-W14 | When a task fails mid-workflow: workflow pauses in a "stage_failed" state. User can retry the failed stage, skip it (advance to next), or cancel the workflow | Must |
-| FR-W15 | System notifies user (via GUI) when a workflow stage completes, fails, or requires review | Must |
-| FR-W16 | User can view workflow execution history: stages completed, current stage, time per stage | Must |
+| FR-W13 | System auto-generates a title for workflow runs from the task description (LLM-based) | Should |
+| FR-W14 | When agent execution fails mid-stage: workflow pauses in "stage_failed" state. User can retry (re-send stage prompt into conversation), skip (advance to next stage), or cancel the workflow | Must |
+| FR-W15 | System notifies user (via GUI) when a stage completes, fails, or requires review | Must |
+| FR-W16 | User can view workflow execution history: stages completed, current stage, time per stage, full conversation log | Must |
+| FR-W17 | Sandbox lifecycle: Docker sandbox created at workflow start, reused across all stages, stopped when workflow reaches a terminal state. On daemon restart, orphaned sandboxes are stopped | Must |
+| FR-W18 | Worktree lifecycle: git worktree created at workflow start with LLM-generated branch name from task description (fallback: `vibe-harness/run-<shortId>`). Reused across all stages. Cleaned up after final merge on approval. On cancellation/failure, preserved for user inspection | Must |
+| FR-W19 | The workflow run captures the **complete agent session**: all tool calls (with arguments and results), reasoning/thought content, assistant messages, user interventions, system messages, and usage stats. Messages accumulate across stages in one continuous log (reset on `freshSession` stages) | Must |
+| FR-W20 | User can observe real-time streaming agent output via WebSocket (< 100ms perceived latency) | Must |
+| FR-W21 | User can send mid-execution messages (interventions) to the running agent via ACP stdin at any point during any stage | Must |
+| FR-W22 | Credential set selection: workflow run's explicit credential set, or project's default, or none (in that priority order) | Must |
 
-### 2.5 Split Execution (Parallel Workflows)
+### 2.6 Split Execution (Parallel Workflows)
 
 | ID | Requirement | Priority |
 |----|------------|----------|
-| FR-S1 | A "split" stage runs an agent that generates proposals (sub-tasks) | Must |
-| FR-S2 | Each proposal has: title, description, affected files. Dependencies between proposals are metadata-only (not enforced at runtime) | Must |
+| FR-S1 | A "split" stage runs an agent that generates proposals (sub-tasks). Each proposal describes an independent unit of work | Must |
+| FR-S2 | Each proposal has: title, description, affected files, optional workflow template override. Dependencies between proposals are metadata-only (not enforced at runtime) | Must |
 | FR-S3 | User can review, edit, add, and delete proposals before launching | Must |
-| FR-S4 | User can select which proposals to launch as parallel child workflows | Must |
-| FR-S5 | Each approved proposal launches as an independent child workflow run in its own worktree, created on launch and named `vibe-harness/split-<shortId>` | Must |
-| FR-S6 | System tracks parallel group: counts completed, failed, cancelled, and pending children | Must |
-| FR-S7 | Consolidation begins when all children reach a terminal state (completed, failed, or cancelled). Only completed children are included in the merge | Must |
-| FR-S8 | Consolidation merges child branches sequentially into a consolidation branch using `--no-ff`. Merge order follows proposal sort order | Must |
-| FR-S9 | On merge conflict during consolidation: system aborts the merge, marks the conflicting child, and presents the conflict to the user. User can: (a) resolve externally and retry consolidation, (b) exclude the conflicting child and re-consolidate, or (c) cancel consolidation | Must |
-| FR-S10 | User reviews the consolidated result (combined diff from all merged children) before final merge to target branch | Must |
-| FR-S11 | If any children failed: user is notified and can choose to consolidate completed children only, retry failed children, or cancel the parallel group | Must |
-| FR-S12 | Child worktrees are cleaned up after successful consolidation merge. Failed/cancelled child worktrees are preserved until user explicitly deletes them or the parallel group is deleted | Must |
+| FR-S4 | User can select which proposals to launch as parallel child workflow runs | Must |
+| FR-S5 | Each approved proposal launches as an independent **child workflow run** with its own Docker sandbox and git worktree. The child worktree is branched off the **parent workflow's worktree** (not HEAD), named with LLM-generated branch name from proposal title. Fallback: `vibe-harness/split-<shortId>` | Must |
+| FR-S6 | Child workflow runs can have their own multi-stage pipeline (from a specified template or a default single-stage template) | Must |
+| FR-S7 | System tracks parallel group: counts completed, failed, cancelled, and pending children | Must |
+| FR-S8 | Consolidation begins when all children reach a terminal state (completed, failed, or cancelled). Only completed children are included in the merge | Must |
+| FR-S9 | Consolidation merges child branches sequentially into a consolidation branch using `--no-ff`. Merge order follows proposal sort order | Must |
+| FR-S10 | On merge conflict during consolidation: system aborts the merge, marks the conflicting child, and presents the conflict to the user. User can: (a) resolve externally and retry consolidation, (b) exclude the conflicting child and re-consolidate, or (c) cancel consolidation | Must |
+| FR-S11 | User reviews the consolidated result (combined diff from all merged children) before final merge to target branch | Must |
+| FR-S12 | If any children failed: user is notified and can choose to consolidate completed children only, retry failed children, or cancel the parallel group | Must |
+| FR-S13 | Child worktrees and sandboxes are cleaned up after successful consolidation merge. Failed/cancelled child worktrees are preserved until user explicitly deletes them | Must |
 
 ### 2.6 Human Review
 
 | ID | Requirement | Priority |
 |----|------------|----------|
-| FR-R1 | Reviews are auto-created when a task completes a reviewable stage | Must |
-| FR-R2 | Review shows: git diff (from merge-base to HEAD of task branch), AI-generated summary of changes, agent's plan.md (if captured from sandbox) | Must |
+| FR-R1 | Reviews are auto-created when the agent completes execution within a reviewable stage. A review is a diff snapshot at that point in time | Must |
+| FR-R2 | Review shows: git diff (from merge-base to current worktree HEAD), AI-generated summary of changes, agent's plan.md (if captured from sandbox) | Must |
 | FR-R3 | User can view the diff with a file tree navigator | Must |
 | FR-R4 | User can add inline comments on specific lines of the diff | Should |
 | FR-R5 | User can add general (non-file-specific) comments on a review | Must |
 | FR-R6 | User can approve a review, which advances the workflow to the next stage | Must |
-| FR-R7 | User can request changes, which triggers a rerun of the same stage with bundled comment feedback (general + file-specific comments formatted as markdown) | Must |
-| FR-R8 | Reruns use Copilot CLI `--continue` flag for ACP session continuity (agent remembers previous attempt + receives review comments as new prompt) | Must |
-| FR-R9 | Review tracks round number (round 1, 2, 3... for reruns). New review created per rerun | Must |
-| FR-R10 | User can navigate between review rounds for the same stage | Should |
-| FR-R11 | **Final approval git operations** (last stage or standalone task): (a) commit all uncommitted changes in worktree with auto-generated message, (b) rebase worktree branch onto target branch, (c) if rebase conflicts: abort rebase, present conflict to user, user must resolve externally and re-approve, (d) fast-forward merge into target branch, (e) clean up worktree and delete task branch | Must |
-| FR-R12 | Consolidation reviews show combined diff from all successfully merged child branches | Must |
-| FR-R13 | Standalone task approval: same git operations as FR-R11 (commit, rebase, merge to target branch). Target branch defaults to the branch that was checked out when the task was created | Must |
+| FR-R7 | User can request changes: comments (general + inline) are bundled as markdown and injected into the agent conversation as a new user message. The agent continues in the same session — no new task or process created | Must |
+| FR-R8 | After request-changes, the agent executes again within the same stage. On completion, a new review is created (next round). Round number increments | Must |
+| FR-R9 | User can navigate between review rounds for the same stage | Should |
+| FR-R10 | **Final approval git operations** (last stage of workflow): (a) commit all uncommitted changes in worktree, (b) rebase worktree branch onto target branch, (c) if rebase conflicts: abort rebase, present to user, user resolves externally and re-approves, (d) fast-forward merge into target branch, (e) clean up worktree, sandbox, and delete worktree branch | Must |
+| FR-R11 | Consolidation reviews show combined diff from all successfully merged child branches | Must |
 
 ### 2.7 Credential Management
 
@@ -149,9 +166,9 @@ A desktop-native AI agent orchestrator that:
 
 | ID | Requirement | Priority |
 |----|------------|----------|
-| FR-D1 | User can see workspace summary: active tasks, pending reviews, active workflows | Must |
-| FR-D2 | User can see recent task history | Must |
-| FR-D3 | User can filter/search tasks by status, project, or text | Should |
+| FR-D1 | User can see workspace summary: running workflows, pending reviews, recent activity | Must |
+| FR-D2 | User can see recent workflow run history | Must |
+| FR-D3 | User can filter/search workflow runs by status, project, or text | Should |
 
 ---
 
@@ -228,12 +245,12 @@ A desktop-native AI agent orchestrator that:
 ### 4.1 In Scope (MVP)
 
 - Projects, agent definitions, credential management
-- Standalone task execution with streaming + review
-- Sequential workflow orchestration with review gates
-- Split execution (proposals → parallel child workflows → consolidation merge)
+- Workflow orchestration with stages, review gates, and continuous agent conversation
+- Split execution (proposals → parallel child workflow runs → consolidation merge)
 - Tauri GUI with workspace, diff viewer, workflow editor
 - Background daemon with REST API + WebSocket streaming
 - Durable workflows (survive restart at hook points)
+- Quick one-shot runs (single-stage workflow — no "standalone task" concept)
 
 ### 4.2 Explicitly Out of Scope
 
@@ -279,85 +296,82 @@ A desktop-native AI agent orchestrator that:
 
 ## 5. Use Cases
 
-### UC-1: Run a Standalone Task
+### UC-1: Quick One-Shot Run
 **Actor:** Developer
-**Precondition:** Project registered, agent definition exists, Docker running
+**Precondition:** Project registered, Docker running
 **Flow:**
-1. User opens GUI, clicks "New Task"
-2. Selects project, agent, enters prompt, optionally selects credential set and target branch
-3. Clicks "Create" → task appears in feed (status: pending)
-4. Clicks "Start" → sandbox provisions (worktree created, Docker sandbox launched)
-5. User observes streaming markdown output in real-time via WebSocket
-6. Agent completes → system generates diff (merge-base to HEAD of task branch), auto-creates review
-7. User reviews diff in file tree + unified diff viewer, adds comments
-8. User approves → system commits, rebases onto target branch, fast-forward merges, cleans up worktree
+1. User opens GUI, clicks "New Run"
+2. Selects project, enters prompt (e.g., "Fix the login bug"), optionally selects credential set and target branch
+3. Clicks "Run" → system uses "Quick Run" template (single auto-advance stage)
+4. Sandbox + worktree created (LLM-generated branch name), agent starts executing
+5. User observes streaming output in real-time
+6. Agent completes → diff generated, review created
+7. User reviews diff, adds comments, approves
+8. System commits, rebases, merges to target branch, cleans up sandbox + worktree
 **Error flows:**
-- 4a. Sandbox provisioning fails → task marked failed, user sees error message
-- 6a. Agent fails (non-zero exit) → task marked failed, review still created with partial diff
-- 8a. Rebase conflict → system aborts rebase, presents conflict to user, user resolves externally and re-approves
+- 4a. Sandbox provisioning fails → workflow marked failed, user sees error
+- 6a. Agent fails → stage_failed state, user can retry or cancel
+- 8a. Rebase conflict → user resolves externally, re-approves
 
-### UC-2: Run a Multi-Stage Workflow
+### UC-2: Multi-Stage Workflow
 **Actor:** Developer
-**Precondition:** Workflow template exists, project registered
 **Flow:**
-1. User starts workflow run: selects template, project, enters task description
-2. Stage 1 ("plan"): system creates task, launches agent with combined prompt → agent plans → review gate
-3. User reviews plan in markdown, approves
-4. Stage 2 ("implement"): system creates task with `--continue` (same ACP session), agent implements → review gate
-5. User reviews code diff, requests changes with inline comments
-6. System bundles comments, creates rerun task (round 2) with `--continue` and comment feedback
-7. User reviews round 2 diff, approves
-8. Stage 3 ("commit"): system creates task with `autoAdvance`, agent finalizes → auto-advance (no review)
-9. System performs final git operations: commit, rebase, merge to target branch, cleanup
+1. User starts workflow run: selects "Full Review" template, project, enters task description
+2. Stage 1 ("plan"): prompt injected into conversation → agent plans → review gate
+3. User reviews plan, approves
+4. Stage 2 ("implement"): stage prompt injected into same conversation (`--continue`) → agent implements → review gate
+5. User reviews code diff, requests changes with comments
+6. Comments injected into conversation as user message → agent continues in same session → new review (round 2)
+7. User approves round 2
+8. Stage 3 ("commit"): auto-advance, agent finalizes
+9. System performs final git operations: commit, rebase, merge, cleanup
 **Error flows:**
-- 2a. Task fails → workflow enters "stage_failed" state. User can retry, skip, or cancel
-- 9a. Rebase conflict → system presents conflict, user resolves and re-triggers finalization
+- 2a. Agent fails → workflow pauses (stage_failed). User retries, skips, or cancels
+- 9a. Rebase conflict → user resolves externally, re-triggers finalization
 
 ### UC-3: Split Execution
 **Actor:** Developer
 **Flow:**
-1. Workflow reaches "split" stage → agent generates proposals (sub-tasks)
+1. Workflow reaches "split" stage → agent generates proposals
 2. User reviews proposals: edits descriptions, removes one, approves 3 of 4
-3. System creates ParallelGroup, launches 3 child workflows (each in own worktree)
-4. User monitors all 3 in the task feed (each runs independently)
+3. System creates ParallelGroup, launches 3 child workflow runs (each with own sandbox + worktree branched off parent's worktree)
+4. User monitors all 3 in the workflow feed (each runs its own stages independently)
 5. 2 complete successfully, 1 fails
-6. User is notified. Chooses to consolidate the 2 successful children
-7. System merges 2 child branches sequentially into consolidation branch
-8. User reviews consolidated changes (combined diff) → approves
-9. System merges to target branch, cleans up worktrees
+6. User chooses to consolidate the 2 successful children
+7. System merges 2 child branches into consolidation branch
+8. User reviews consolidated changes → approves
+9. System merges to target branch, cleans up child sandboxes + worktrees
 **Error flows:**
-- 7a. Merge conflict between child branches → system aborts, shows conflicting child. User can exclude it and retry, or resolve externally
+- 7a. Merge conflict → system aborts, shows conflicting child. User excludes or resolves externally
 
 ### UC-4: Mid-Execution Intervention
 **Actor:** Developer
 **Flow:**
-1. Task is running, user observes agent going in wrong direction in streaming output
-2. User types message in intervention input: "Stop, focus on the auth module first"
-3. System sends message via ACP stdin to running agent
+1. Workflow is running, user observes agent going in wrong direction
+2. User types message: "Stop, focus on the auth module first"
+3. System sends message via ACP stdin to the running agent
 4. Agent receives message, adjusts course (visible in streaming output)
-5. Task continues with corrected approach
+5. Execution continues with corrected approach
 
 ### UC-5: Daemon Restart Recovery
 **Actor:** System (automatic)
-**Trigger:** Daemon process starts after a crash or manual restart
 **Flow:**
-1. Daemon starts → reads PID file, detects it's a fresh start (not a running daemon)
+1. Daemon starts → checks PID file, detects fresh start
 2. Enumerates Docker sandboxes via `docker sandbox ls --filter name=vibe-*`
-3. For each sandbox found: checks DB for matching task in "running"/"provisioning" state
-4. Orphaned sandboxes (no matching task) → stopped and removed
-5. Tasks in "running"/"provisioning" with no live sandbox → marked failed (reason: "daemon_restart")
-6. Checks workflow state files (`.workflow-data/`) → hook-suspended workflows are intact
-7. User opens GUI → sees failed tasks with clear "daemon_restart" reason. Workflow-level state is preserved — user can restart failed stages or approve pending reviews
+3. Orphaned sandboxes (no matching running workflow) → stopped
+4. Workflows with active stages but no live sandbox → stage marked failed (reason: "daemon_restart")
+5. Workflow hook state intact (`.workflow-data/`) → user can still approve pending reviews or retry failed stages
+6. User opens GUI → sees failed stages with clear reason, can retry or cancel
 
-### UC-6: First Launch / Prerequisites Check
+### UC-6: First Launch
 **Actor:** New user
 **Flow:**
 1. User downloads `.dmg`, installs, launches app
 2. Tauri starts daemon sidecar
 3. Daemon runs prerequisite checks: Docker, `docker sandbox`, Git, GitHub auth
-4. Missing prerequisite → GUI shows guided setup page with instructions per item
-5. All prerequisites met → GUI shows empty workspace with "Add Project" prompt
-6. User adds first project, creates first task
+4. Missing prerequisite → guided setup page
+5. All met → empty workspace with "Add Project" prompt
+6. User adds first project, starts first workflow run
 
 ---
 
