@@ -16,7 +16,7 @@ Vibe Harness v1 exists as a working Next.js browser application but has fundamen
 
 A desktop-native AI agent orchestrator that:
 - Installs with a single app download (GUI) or a single command (CLI)
-- Provides native multi-window experience for concurrent diff review, output monitoring, and task management
+- Provides native multi-window experience for concurrent diff review, output monitoring, and workflow management
 - Runs a background daemon for durable workflow orchestration
 - Uses proper durable workflows that survive restarts
 
@@ -94,42 +94,42 @@ Workflow Run (user-facing — the only execution unit users interact with)
 |----|------------|----------|
 | FR-W1 | User can create workflow templates defining a sequence of stages | Must |
 | FR-W2 | Each stage has: name, type (`standard`/`split`), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean) | Must |
-| FR-W3 | User can start a workflow run against a project with a task description, credential set (optional), base branch (optional, default: HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
+| FR-W3 | User can start a workflow run against a project with a run description, credential set (optional), base branch (optional, default: current checked-out branch — must be an actual branch ref, not detached HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
 | FR-W4 | System executes stages sequentially. For each stage, the prompt is injected into the agent conversation (or a fresh conversation if `freshSession: true`). All stages share the same sandbox and worktree | Must |
 | FR-W5 | Standard stages with `reviewRequired: true` pause for human review after agent completes | Must |
 | FR-W6 | Standard stages with `autoAdvance: true` proceed to next stage without human review | Must |
-| FR-W7 | By default, stages continue the ACP session (`--continue`). With `freshSession: true`, a new ACP session is started within the same sandbox/worktree, and previous plan context is injected as markdown in the prompt | Must |
-| FR-W8 | System builds stage prompts: task description + stage instructions + (for `freshSession` stages) previous plan context | Must |
+| FR-W7 | By default, stages continue the ACP session (`--continue`). With `freshSession: true`, a new ACP session is started within the same sandbox/worktree. Context from prior stages is injected into the fresh prompt (see FR-W8) | Must |
+| FR-W8 | System builds stage prompts: run description + stage instructions. For `freshSession` stages, the system also injects context from prior stages: (a) the agent's final assistant message from each completed stage, (b) plan.md content if captured from the sandbox, (c) the latest approved review summary. This replaces the lost conversation context | Must |
 | FR-W9 | Workflow orchestration state is durable at suspension points (review gates, proposal gates). In-flight agent execution is NOT recoverable on daemon crash — the stage is marked failed with reason "daemon_restart" | Must |
-| FR-W10 | User can cancel a running workflow. Sends ACP stop to agent; if no response within timeout (30s), force-kills sandbox. Marks workflow cancelled | Must |
+| FR-W10 | User can cancel a running workflow. Sends ACP stop to agent; if no response within timeout (30s), force-kills sandbox. Worktree state preserved as-is (no final diff snapshot). Marks workflow cancelled. If workflow has active split children, cancellation cascades to all running children | Must |
 | FR-W11 | System provides pre-built workflow templates: (a) "Quick Run" — single auto-advance stage, (b) "Plan & Implement" — plan → implement → commit, (c) "Full Review" — plan → implement → review → fix → commit | Must |
 | FR-W12 | User can list, edit, and delete workflow templates (add/remove/reorder stages) | Must |
-| FR-W13 | System auto-generates a title for workflow runs from the task description (LLM-based) | Should |
-| FR-W14 | When agent execution fails mid-stage: workflow pauses in "stage_failed" state. User can retry (re-send stage prompt into conversation), skip (advance to next stage), or cancel the workflow | Must |
+| FR-W13 | System auto-generates a title for workflow runs from the run description (LLM-based) | Should |
+| FR-W14 | When agent execution fails mid-stage: workflow pauses in "stage_failed" state. User can: (a) **retry** — system sends a failure-aware message into the conversation: "The previous attempt failed with: {error}. Please retry: {stage prompt}" (not a duplicate prompt), (b) **skip** — advance to next stage (previous result = null), or (c) **cancel** — cancel the workflow. If the conversation itself is corrupted, user should cancel and start a new workflow run | Must |
 | FR-W15 | System notifies user (via GUI) when a stage completes, fails, or requires review | Must |
 | FR-W16 | User can view workflow execution history: stages completed, current stage, time per stage, full conversation log | Must |
 | FR-W17 | Sandbox lifecycle: Docker sandbox created at workflow start, reused across all stages, stopped when workflow reaches a terminal state. On daemon restart, orphaned sandboxes are stopped | Must |
-| FR-W18 | Worktree lifecycle: git worktree created at workflow start with LLM-generated branch name from task description (fallback: `vibe-harness/run-<shortId>`). Reused across all stages. Cleaned up after final merge on approval. On cancellation/failure, preserved for user inspection | Must |
-| FR-W19 | The workflow run captures the **complete agent session**: all tool calls (with arguments and results), reasoning/thought content, assistant messages, user interventions, system messages, and usage stats. Messages accumulate across stages in one continuous log (reset on `freshSession` stages) | Must |
+| FR-W18 | Worktree lifecycle: git worktree created at workflow start with LLM-generated branch name from run description (fallback: `vibe-harness/run-<shortId>`). Generated names are sanitized to valid git ref format and deduplicated with a numeric suffix if the branch already exists. Reused across all stages. Cleaned up after final merge on approval. On cancellation/failure, preserved for user inspection | Must |
+| FR-W19 | The workflow run captures the **complete agent session log**: all tool calls (with arguments and results), reasoning/thought content, assistant messages, user interventions, system messages, and usage stats. The log is workflow-scoped and **never discarded** — a `freshSession` stage starts a new ACP session but prior messages are retained in the log with a session boundary marker. This ensures full audit trail even across session resets | Must |
 | FR-W20 | User can observe real-time streaming agent output via WebSocket (< 100ms perceived latency) | Must |
 | FR-W21 | User can send mid-execution messages (interventions) to the running agent via ACP stdin at any point during any stage | Must |
 | FR-W22 | Credential set selection: workflow run's explicit credential set, or project's default, or none (in that priority order) | Must |
 
-### 2.6 Split Execution (Parallel Workflows)
+### 2.5 Split Execution (Parallel Workflows)
 
 | ID | Requirement | Priority |
 |----|------------|----------|
 | FR-S1 | A "split" stage runs an agent that generates proposals (sub-tasks). Each proposal describes an independent unit of work | Must |
-| FR-S2 | Each proposal has: title, description, affected files, optional workflow template override. Dependencies between proposals are metadata-only (not enforced at runtime) | Must |
+| FR-S2 | Each proposal has: title, description, affected files, optional workflow template override. Dependencies between proposals are metadata-only (displayed to user during review for manual sequencing decisions, not enforced at runtime) | Must |
 | FR-S3 | User can review, edit, add, and delete proposals before launching | Must |
 | FR-S4 | User can select which proposals to launch as parallel child workflow runs | Must |
-| FR-S5 | Each approved proposal launches as an independent **child workflow run** with its own Docker sandbox and git worktree. The child worktree is branched off the **parent workflow's worktree** (not HEAD), named with LLM-generated branch name from proposal title. Fallback: `vibe-harness/split-<shortId>` | Must |
+| FR-S5 | Each approved proposal launches as an independent **child workflow run** with its own Docker sandbox and git worktree. The child worktree is branched off the **parent workflow's worktree** (not HEAD), named with LLM-generated branch name from proposal title (sanitized, deduplicated). Fallback: `vibe-harness/split-<shortId>` | Must |
 | FR-S6 | Child workflow runs can have their own multi-stage pipeline (from a specified template or a default single-stage template) | Must |
-| FR-S7 | System tracks parallel group: counts completed, failed, cancelled, and pending children | Must |
+| FR-S7 | Parent workflow enters `waiting_for_children` state during split execution. System tracks parallel group: counts completed, failed, cancelled, and pending children. Cancelling the parent cascades cancellation to all running children | Must |
 | FR-S8 | Consolidation begins when all children reach a terminal state (completed, failed, or cancelled). Only completed children are included in the merge | Must |
-| FR-S9 | Consolidation merges child branches sequentially into a consolidation branch using `--no-ff`. Merge order follows proposal sort order | Must |
+| FR-S9 | Consolidation merges child branches sequentially into a consolidation branch (created from parent worktree HEAD) using `--no-ff`. Merge order follows proposal sort order | Must |
 | FR-S10 | On merge conflict during consolidation: system aborts the merge, marks the conflicting child, and presents the conflict to the user. User can: (a) resolve externally and retry consolidation, (b) exclude the conflicting child and re-consolidate, or (c) cancel consolidation | Must |
-| FR-S11 | User reviews the consolidated result (combined diff from all merged children) before final merge to target branch | Must |
+| FR-S11 | After successful consolidation review and approval: the parent worktree is fast-forwarded to the consolidation branch. Subsequent stages in the parent workflow continue on this updated worktree. The parent's ACP session does NOT continue from children — a `freshSession` is started for any post-split stage, with the consolidation summary as context | Must |
 | FR-S12 | If any children failed: user is notified and can choose to consolidate completed children only, retry failed children, or cancel the parallel group | Must |
 | FR-S13 | Child worktrees and sandboxes are cleaned up after successful consolidation merge. Failed/cancelled child worktrees are preserved until user explicitly deletes them | Must |
 
@@ -143,7 +143,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | FR-R4 | User can add inline comments on specific lines of the diff | Should |
 | FR-R5 | User can add general (non-file-specific) comments on a review | Must |
 | FR-R6 | User can approve a review, which advances the workflow to the next stage | Must |
-| FR-R7 | User can request changes: comments (general + inline) are bundled as markdown and injected into the agent conversation as a new user message. The agent continues in the same session — no new task or process created | Must |
+| FR-R7 | User can request changes: comments (general + inline) are bundled as markdown and injected into the agent conversation as a new user message. The agent continues in the same session — no new process created | Must |
 | FR-R8 | After request-changes, the agent executes again within the same stage. On completion, a new review is created (next round). Round number increments | Must |
 | FR-R9 | User can navigate between review rounds for the same stage | Should |
 | FR-R10 | **Final approval git operations** (last stage of workflow): (a) commit all uncommitted changes in worktree, (b) rebase worktree branch onto target branch, (c) if rebase conflicts: abort rebase, present to user, user resolves externally and re-approves, (d) fast-forward merge into target branch, (e) clean up worktree, sandbox, and delete worktree branch | Must |
@@ -156,8 +156,8 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | FR-C1 | User can create named credential sets | Must |
 | FR-C2 | Credential entries support types: environment variable, file mount, Docker login | Must |
 | FR-C3 | Credential values are encrypted at rest using AES-256. Encryption key stored in macOS Keychain or Linux libsecret. Fallback: key stored in `~/.vibe-harness/encryption.key` with 0600 permissions | Must |
-| FR-C4 | Credentials are injected into Docker sandboxes at task start: env vars via `-e`, file mounts via stdin pipe to `tee`, Docker logins via `docker login --password-stdin` | Must |
-| FR-C5 | System maintains an audit log of credential access (create, delete, access-by-task) | Should |
+| FR-C4 | Credentials are injected into Docker sandboxes at workflow run start: env vars via `-e`, file mounts via stdin pipe to `tee`, Docker logins via `docker login --password-stdin` | Must |
+| FR-C5 | System maintains an audit log of credential access (create, delete, access-by-workflow-run) | Should |
 | FR-C6 | Credential sets can be scoped to a project or global. Project-scoped sets are only visible when that project is selected | Should |
 | FR-C7 | Credential values are never returned to the GUI in plaintext. API returns masked values (`***`) | Must |
 | FR-C8 | Credentials are not logged or included in streaming output. Daemon logs must not contain decrypted credential values | Must |
@@ -182,7 +182,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | NFR-I2 | Developer users: installable from source with minimal setup (< 3 commands) | Must |
 | NFR-I3 | Daemon starts automatically when GUI launches (Tauri sidecar) | Must |
 | NFR-I4 | System checks for prerequisites on first launch: Docker installed and running, `docker sandbox` available, Git installed, GitHub auth configured. Displays actionable guidance for any missing prerequisite | Must |
-| NFR-I5 | Docker sandbox image is auto-built on first task if not present (or user is prompted to build it) | Should |
+| NFR-I5 | Docker sandbox image is auto-built on first workflow run if not present (or user is prompted to build it) | Should |
 
 ### 3.2 Performance
 
@@ -202,7 +202,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | NFR-R3 | On daemon restart: enumerate running Docker sandboxes via `docker sandbox ls`, reconcile with DB state. Orphaned sandboxes are stopped. Tasks in "running"/"provisioning" state with no live sandbox are marked failed | Must |
 | NFR-R4 | Database operations use WAL mode for concurrent read/write safety | Must |
 | NFR-R5 | Approve/reject operations are idempotent (re-approving an approved review is a no-op) | Must |
-| NFR-R6 | Task start operations are idempotent (re-starting a running task returns current status) | Should |
+| NFR-R6 | Workflow run start operations are idempotent (re-starting a running workflow returns current status) | Should |
 | NFR-R7 | Data retention: workflow state files (`.workflow-data/`), agent output, and diff snapshots are retained for 30 days by default. Configurable. Orphaned worktrees older than 7 days are flagged for cleanup | Should |
 
 ### 3.4 Security
@@ -222,13 +222,13 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | ID | Requirement | Priority |
 |----|------------|----------|
 | NFR-U1 | GUI supports native multi-window (open multiple tasks/reviews in separate OS windows) | Must |
-| NFR-U2 | Keyboard shortcuts for common actions (new task, navigate list, command palette) | Should |
+| NFR-U2 | Keyboard shortcuts for common actions (new run, navigate list, command palette) | Should |
 | NFR-U3 | Command palette (⌘K) for quick navigation across tasks, projects, workflows | Should |
 | NFR-U4 | Streaming markdown output renders correctly during streaming — handles incomplete syntax (unclosed bold, partial code blocks, unterminated links) via Streamdown | Must |
 | NFR-U5 | Diff viewer supports unified view (side-by-side is deferred) | Must |
 | NFR-U6 | GUI shows clear status when daemon is unreachable (crashed/not started) with auto-reconnect. Streaming output replays missed events on WebSocket reconnection using last-seen event ID | Must |
 | NFR-U7 | GUI discovers daemon via port file (`~/.vibe-harness/daemon.port`). On Tauri launch, if no daemon found, starts sidecar automatically | Must |
-| NFR-U8 | GUI restores last-viewed task/workflow on restart | Should |
+| NFR-U8 | GUI restores last-viewed workflow run on restart | Should |
 
 ### 3.6 Observability
 
@@ -278,7 +278,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 
 1. `use workflow` SDK is in beta (4.2.0-beta.67) — API may change
 2. Nitro build system required for workflow directive compilation
-3. Docker sandbox images must be pre-built before first task execution
+3. Docker sandbox images must be pre-built before first workflow run execution
 4. SQLite single-writer constraint (WAL mode mitigates but doesn't eliminate)
 5. MVP supports Copilot CLI only — agent abstraction designed for extensibility but only one implementation
 
@@ -316,7 +316,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 ### UC-2: Multi-Stage Workflow
 **Actor:** Developer
 **Flow:**
-1. User starts workflow run: selects "Full Review" template, project, enters task description
+1. User starts workflow run: selects "Full Review" template, project, enters run description
 2. Stage 1 ("plan"): prompt injected into conversation → agent plans → review gate
 3. User reviews plan, approves
 4. Stage 2 ("implement"): stage prompt injected into same conversation (`--continue`) → agent implements → review gate
