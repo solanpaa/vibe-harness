@@ -41,6 +41,7 @@ export const agentDefinitions = sqliteTable('agent_definitions', {
   type: text('type').notNull(),                     // 'copilot_cli' (MVP)
   commandTemplate: text('command_template').notNull(),
   dockerImage: text('docker_image'),
+  dockerfile: text('dockerfile'),                   // Custom Dockerfile content for building image
   description: text('description'),
   supportsStreaming: integer('supports_streaming', { mode: 'boolean' }).notNull().default(true),
   supportsContinue: integer('supports_continue', { mode: 'boolean' }).notNull().default(true),

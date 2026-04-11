@@ -43,6 +43,7 @@ export interface AgentDefinition {
   type: AgentType;
   commandTemplate: string;
   dockerImage: string | null;
+  dockerfile: string | null;
   description: string | null;
   supportsStreaming: boolean;
   supportsContinue: boolean;

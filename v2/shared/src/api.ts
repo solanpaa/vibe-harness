@@ -63,6 +63,7 @@ export interface CreateAgentDefinitionRequest {
   type: string;
   commandTemplate: string;
   dockerImage?: string;
+  dockerfile?: string;
   description?: string;
   supportsStreaming?: boolean;
   supportsContinue?: boolean;
@@ -74,6 +75,7 @@ export interface UpdateAgentDefinitionRequest {
   name?: string;
   commandTemplate?: string;
   dockerImage?: string;
+  dockerfile?: string;
   description?: string;
   supportsStreaming?: boolean;
   supportsContinue?: boolean;

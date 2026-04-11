@@ -239,6 +239,61 @@ export class DaemonClient {
     return this.fetch<void>(`/api/agents/${id}`, { method: "DELETE" });
   }
 
+  async buildAgentImage(
+    id: string,
+    onOutput: (text: string) => void,
+    onDone: (success: boolean) => void,
+  ): Promise<void> {
+    const token = await getAuthToken();
+    const res = await fetch(`${this.baseUrl}/api/agents/${id}/build`, {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token.trim()}` } : {}),
+      },
+    });
+
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      onDone(false);
+      return;
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value);
+      for (const line of text.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.output) onOutput(data.output);
+          if (data.done) {
+            onDone(data.success);
+            return;
+          }
+        } catch {
+          // ignore malformed SSE lines
+        }
+      }
+    }
+    onDone(false);
+  }
+
+  async getAgentImageStatus(
+    id: string,
+  ): Promise<{
+    exists: boolean;
+    image: string | null;
+    imageId?: string;
+    created?: string;
+    sizeMB?: number;
+  }> {
+    return this.fetch(`/api/agents/${id}/image-status`);
+  }
+
   // ── Workflow Templates ────────────────────────────────────────────
 
   async listWorkflowTemplates(): Promise<WorkflowTemplateListResponse> {

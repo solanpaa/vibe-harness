@@ -4,6 +4,14 @@ import type {
   AgentDefinition,
   CreateAgentDefinitionRequest,
 } from "@vibe-harness/shared";
+import {
+  Terminal,
+  TerminalHeader,
+  TerminalTitle,
+  TerminalContent,
+  TerminalClearButton,
+  TerminalActions,
+} from "@/components/ai-elements/terminal";
 
 // ── Add Agent Form ──────────────────────────────────────────────────
 
@@ -128,76 +136,250 @@ function AddAgentForm({
   );
 }
 
-// ── Agent Row ───────────────────────────────────────────────────────
+// ── Agent Row (expandable with Dockerfile editor + build) ───────────
+
+interface ImageStatus {
+  exists: boolean;
+  image: string | null;
+  imageId?: string;
+  created?: string;
+  sizeMB?: number;
+}
 
 function AgentRow({
   agent,
   onDelete,
+  onUpdated,
+  isExpanded,
+  onToggle,
 }: {
   agent: AgentDefinition;
   onDelete: (id: string) => void;
+  onUpdated: () => void;
+  isExpanded: boolean;
+  onToggle: () => void;
 }) {
+  const { client } = useDaemonStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Editable fields (for expanded view)
+  const [editDockerImage, setEditDockerImage] = useState(agent.dockerImage ?? "");
+  const [editDockerfile, setEditDockerfile] = useState(agent.dockerfile ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Image status
+  const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
+
+  // Build state
+  const [buildOutput, setBuildOutput] = useState("");
+  const [isBuilding, setIsBuilding] = useState(false);
+
+  // Reset edit fields when agent changes
+  useEffect(() => {
+    setEditDockerImage(agent.dockerImage ?? "");
+    setEditDockerfile(agent.dockerfile ?? "");
+  }, [agent.dockerImage, agent.dockerfile]);
+
+  // Load image status when expanded
+  useEffect(() => {
+    if (!isExpanded || !client) return;
+    setLoadingStatus(true);
+    client.getAgentImageStatus(agent.id)
+      .then(setImageStatus)
+      .catch(() => setImageStatus(null))
+      .finally(() => setLoadingStatus(false));
+  }, [isExpanded, client, agent.id]);
+
+  const handleSaveDocker = async () => {
+    if (!client) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await client.updateAgent(agent.id, {
+        dockerImage: editDockerImage.trim() || undefined,
+        dockerfile: editDockerfile.trim() || undefined,
+      });
+      onUpdated();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBuild = async () => {
+    if (!client) return;
+    setIsBuilding(true);
+    setBuildOutput("");
+    await client.buildAgentImage(
+      agent.id,
+      (text) => setBuildOutput((prev) => prev + text),
+      (success) => {
+        setIsBuilding(false);
+        if (success) {
+          // Refresh image status
+          client.getAgentImageStatus(agent.id)
+            .then(setImageStatus)
+            .catch(() => {});
+        }
+      },
+    );
+  };
+
+  const hasDirtyDocker =
+    (editDockerImage.trim() || "") !== (agent.dockerImage ?? "") ||
+    (editDockerfile.trim() || "") !== (agent.dockerfile ?? "");
+
   return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-3 hover:bg-accent/50 transition-colors">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{agent.name}</span>
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-            {agent.type}
-          </span>
-          {agent.isBuiltIn && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-              Built-in
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      {/* Collapsed header row */}
+      <div
+        className="px-4 py-3 flex items-center gap-3 hover:bg-accent/50 transition-colors cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">{agent.name}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+              {agent.type}
             </span>
+            {agent.isBuiltIn && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                Built-in
+              </span>
+            )}
+          </div>
+          {agent.description && (
+            <div className="text-xs text-muted-foreground mt-0.5">{agent.description}</div>
+          )}
+          <div className="font-mono text-xs text-muted-foreground mt-0.5">
+            {agent.commandTemplate}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {agent.supportsStreaming && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">streaming</span>
+          )}
+          {agent.supportsContinue && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">continue</span>
+          )}
+          {agent.supportsIntervention && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">intervention</span>
+          )}
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{agent.outputFormat}</span>
+        </div>
+
+        {!agent.isBuiltIn && (
+          <div onClick={(e) => e.stopPropagation()}>
+            {confirmDelete ? (
+              <div className="flex gap-1">
+                <button
+                  onClick={() => onDelete(agent.id)}
+                  className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        )}
+
+        <span className="text-muted-foreground text-xs">{isExpanded ? "▲" : "▼"}</span>
+      </div>
+
+      {/* Expanded detail view */}
+      {isExpanded && (
+        <div className="border-t border-border px-4 py-4 space-y-4">
+          {/* Docker Image Name */}
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="block text-xs text-muted-foreground">Docker Image</label>
+              {loadingStatus ? (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">checking…</span>
+              ) : imageStatus?.exists ? (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-green-950/50 text-green-400">
+                  ✓ Available ({imageStatus.sizeMB}MB)
+                </span>
+              ) : agent.dockerImage ? (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                  Not built
+                </span>
+              ) : null}
+            </div>
+            <input
+              type="text"
+              value={editDockerImage}
+              onChange={(e) => setEditDockerImage(e.target.value)}
+              placeholder="my-agent:latest"
+              className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
+            />
+          </div>
+
+          {/* Dockerfile Editor */}
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Dockerfile</label>
+            <textarea
+              value={editDockerfile}
+              onChange={(e) => setEditDockerfile(e.target.value)}
+              placeholder={"FROM ubuntu:22.04\nRUN apt-get update && apt-get install -y ..."}
+              rows={12}
+              className="w-full bg-background border border-border rounded px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono leading-relaxed resize-y"
+              spellCheck={false}
+            />
+          </div>
+
+          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSaveDocker}
+              disabled={saving || !hasDirtyDocker}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={handleBuild}
+              disabled={isBuilding || !agent.dockerfile || !agent.dockerImage}
+              className="px-3 py-1.5 text-sm bg-green-700 text-white rounded-md hover:bg-green-600 disabled:opacity-50 transition-colors"
+            >
+              {isBuilding ? "Building…" : "Build Image"}
+            </button>
+            {hasDirtyDocker && !saving && (
+              <span className="text-xs text-muted-foreground">Unsaved changes — save before building</span>
+            )}
+          </div>
+
+          {/* Build output terminal */}
+          {(buildOutput || isBuilding) && (
+            <Terminal output={buildOutput} isStreaming={isBuilding} onClear={() => setBuildOutput("")}>
+              <TerminalHeader>
+                <TerminalTitle>Docker Build</TerminalTitle>
+                <TerminalActions>
+                  <TerminalClearButton />
+                </TerminalActions>
+              </TerminalHeader>
+              <TerminalContent />
+            </Terminal>
           )}
         </div>
-        {agent.description && (
-          <div className="text-xs text-muted-foreground mt-0.5">{agent.description}</div>
-        )}
-        <div className="font-mono text-xs text-muted-foreground mt-0.5">
-          {agent.commandTemplate}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {agent.supportsStreaming && (
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">streaming</span>
-        )}
-        {agent.supportsContinue && (
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">continue</span>
-        )}
-        {agent.supportsIntervention && (
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">intervention</span>
-        )}
-        <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{agent.outputFormat}</span>
-      </div>
-
-      {!agent.isBuiltIn && (
-        confirmDelete ? (
-          <div className="flex gap-1">
-            <button
-              onClick={() => onDelete(agent.id)}
-              className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
-            >
-              Confirm
-            </button>
-            <button
-              onClick={() => setConfirmDelete(false)}
-              className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-          >
-            Delete
-          </button>
-        )
       )}
     </div>
   );
@@ -211,6 +393,7 @@ export function Settings() {
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
 
   const loadAgents = useCallback(async () => {
     if (!client) return;
@@ -293,7 +476,14 @@ export function Settings() {
           ) : (
             <>
               {agents.map((a) => (
-                <AgentRow key={a.id} agent={a} onDelete={handleDelete} />
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  onDelete={handleDelete}
+                  onUpdated={loadAgents}
+                  isExpanded={expandedAgentId === a.id}
+                  onToggle={() => setExpandedAgentId(expandedAgentId === a.id ? null : a.id)}
+                />
               ))}
               {!showAddForm && (
                 <button

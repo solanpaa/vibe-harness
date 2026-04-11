@@ -12,6 +12,28 @@ const COPILOT_CLI_AGENT = {
   type: 'copilot_cli',
   commandTemplate: 'copilot',
   dockerImage: 'vibe-harness/copilot:latest',
+  dockerfile: `# Custom sandbox template for vibe-harness
+# Extends the official Copilot CLI sandbox with development tools.
+#
+# Build: docker build -t vibe-harness/copilot:latest -f Dockerfile .
+
+FROM docker/sandbox-templates:copilot
+
+USER root
+
+# Node.js via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_25.x | bash - \\
+    && apt-get install -y --no-install-recommends nodejs \\
+    && npm install -g pnpm typescript tsx \\
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+USER agent
+
+# uv + Python
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN $HOME/.local/bin/uv python install 3.14
+RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+`,
   description: 'GitHub Copilot CLI — built-in default agent',
   supportsStreaming: true,
   supportsContinue: true,
