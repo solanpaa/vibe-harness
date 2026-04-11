@@ -47,6 +47,8 @@ export interface ExecuteStageOutput {
 export interface ExecuteStageDeps {
   sessionManager: SessionManager;
   reviewService: ReviewService;
+  acpClient?: any;
+  streamingService?: any;
 }
 
 function resolveGlobalDeps(): ExecuteStageDeps {
@@ -60,7 +62,8 @@ function resolveGlobalDeps(): ExecuteStageDeps {
 export async function executeStage(
   input: ExecuteStageInput,
 ): Promise<ExecuteStageOutput> {
-  const { sessionManager, reviewService } = resolveGlobalDeps() as ExecuteStageDeps;
+  const allDeps = resolveGlobalDeps() as ExecuteStageDeps;
+  const { sessionManager, reviewService, acpClient, streamingService } = allDeps;
   const { runId, stage, round } = input;
   const log = logger.child({ runId, stage: stage.name, round });
   const db = getDb();
@@ -225,12 +228,21 @@ export async function executeStage(
       .where(eq(schema.stageExecutions.id, execId))
       .run();
 
-    // ── Step 5: Send prompt into ACP session ────────────────────────
+    // ── Step 5: Register ACP stream for live events ────────────────
+    if (acpClient && streamingService) {
+      const sandboxName = sessionManager.getSandboxName?.(runId);
+      if (sandboxName) {
+        streamingService.registerAcpStream(runId, sandboxName, acpClient, stage.name, round);
+        log.info({ sandboxName }, 'ACP stream registered for live output');
+      }
+    }
+
+    // ── Step 6: Send prompt into ACP session ────────────────────────
     const promptPreview = prompt.length > 500 ? prompt.slice(0, 500) + '…' : prompt;
     log.info({ promptLength: prompt.length, preview: promptPreview }, 'Sending stage prompt to agent');
-    await deps.sessionManager.sendPrompt(runId, prompt);
+    await sessionManager.sendPrompt(runId, prompt);
 
-    // ── Step 6: Record user prompt in runMessages ───────────────────
+    // ── Step 7: Record user prompt in runMessages ───────────────────
     db.insert(schema.runMessages)
       .values({
         workflowRunId: runId,
@@ -243,10 +255,26 @@ export async function executeStage(
       })
       .run();
 
-    // ── Step 7: Await agent completion ───────────────────────────────
-    const result = await deps.sessionManager.awaitCompletion(runId);
+    // ── Step 8: Await agent completion ───────────────────────────────
+    const result = await sessionManager.awaitCompletion(runId);
 
-    // ── Step 8: Update stageExecution ───────────────────────────────
+    // ── Step 9: Save assistant response in runMessages ──────────────
+    if (result.lastAssistantMessage) {
+      db.insert(schema.runMessages)
+        .values({
+          workflowRunId: runId,
+          stageName: stage.name,
+          round,
+          sessionBoundary: false,
+          role: 'assistant',
+          content: result.lastAssistantMessage,
+          isIntervention: false,
+        })
+        .run();
+      log.info({ responseLength: result.lastAssistantMessage.length }, 'Assistant response saved');
+    }
+
+    // ── Step 10: Update stageExecution ──────────────────────────────
     db.update(schema.stageExecutions)
       .set({
         status: result.status,

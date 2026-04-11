@@ -87,6 +87,7 @@ export interface SessionManager {
   sendIntervention(runId: string, message: string): Promise<void>;
   awaitCompletion(runId: string): Promise<StageResult>;
   isActive(runId: string): boolean;
+  getSandboxName(runId: string): string | null;
 }
 
 // ── Dependencies ─────────────────────────────────────────────────────
@@ -567,6 +568,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   // ── Public interface ────────────────────────────────────────────
 
+  function getSandboxName(runId: string): string | null {
+    return sessions.get(runId)?.sandboxName ?? null;
+  }
+
   return {
     create,
     continue: sessionContinue,
@@ -576,5 +581,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     sendIntervention,
     awaitCompletion,
     isActive,
+    getSandboxName,
   };
 }

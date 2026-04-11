@@ -87,6 +87,8 @@ setPipelineDeps({
   worktreeService,
   proposalService,
   branchNamer,
+  acpClient,
+  streamingService,
 });
 logger.info("Pipeline deps initialized");
 
