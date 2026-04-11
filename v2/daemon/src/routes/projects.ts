@@ -50,6 +50,23 @@ projects.post('/api/projects', async (c) => {
     );
   }
 
+  const db = getDb();
+
+  // FK check: verify credential set exists
+  if (defaultCredentialSetId) {
+    const credSet = db
+      .select()
+      .from(schema.credentialSets)
+      .where(eq(schema.credentialSets.id, defaultCredentialSetId))
+      .get();
+    if (!credSet) {
+      return c.json(
+        { error: { code: 'CREDENTIAL_SET_NOT_FOUND', message: 'Credential set not found' } },
+        404,
+      );
+    }
+  }
+
   // Auto-extract gitUrl from remote origin
   let gitUrl: string | null = null;
   const remoteResult = await execCommand('git', ['-C', localPath, 'remote', 'get-url', 'origin']);
@@ -57,7 +74,6 @@ projects.post('/api/projects', async (c) => {
     gitUrl = remoteResult.stdout.trim();
   }
 
-  const db = getDb();
   const [project] = db
     .insert(schema.projects)
     .values({
@@ -118,6 +134,21 @@ projects.patch('/api/projects/:id', async (c) => {
       { error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: parsed.error.flatten() } },
       400,
     );
+  }
+
+  // FK check: verify credential set exists
+  if (parsed.data.defaultCredentialSetId) {
+    const credSet = db
+      .select()
+      .from(schema.credentialSets)
+      .where(eq(schema.credentialSets.id, parsed.data.defaultCredentialSetId))
+      .get();
+    if (!credSet) {
+      return c.json(
+        { error: { code: 'CREDENTIAL_SET_NOT_FOUND', message: 'Credential set not found' } },
+        404,
+      );
+    }
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
