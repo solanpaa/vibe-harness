@@ -319,14 +319,21 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
         const updateType = (update.sessionUpdate as string) ?? '';
         const content = update.content as Record<string, unknown> | undefined;
 
-        // Log every ACP event type with a truncated preview
-        const previewContent = content
-          ? JSON.stringify(content).slice(0, 200)
-          : undefined;
-        log.debug(
-          { updateType, previewContent },
-          'ACP sessionUpdate received',
-        );
+        // Log raw ACP event for debugging tool names and data structure
+        if (updateType === 'tool_call' || updateType === 'tool_call_update') {
+          log.info(
+            { updateType, rawUpdate: JSON.stringify(update).slice(0, 500) },
+            'ACP tool event (raw)',
+          );
+        } else {
+          const previewContent = content
+            ? JSON.stringify(content).slice(0, 200)
+            : undefined;
+          log.debug(
+            { updateType, previewContent },
+            'ACP sessionUpdate received',
+          );
+        }
 
         // Map ACP session updates to our event system
         let eventType: AcpEventType = 'session_update';
@@ -349,20 +356,24 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
           case 'tool_call': {
             eventType = 'tool_call';
             // Extract tool name from ACP event data
+            // Copilot CLI uses: kind="edit"|"read", title="Editing .../file.md"
+            const toolKind = (update.kind as string) ?? '';
+            const toolTitle = (update.title as string) ?? '';
             const rawInput = (update.rawInput as Record<string, unknown>) ?? {};
-            const toolName = (rawInput.description as string)
-              ?? (update.toolName as string)
-              ?? (content?.name as string)
-              ?? 'tool';
+            const toolName = toolTitle || toolKind || (rawInput.description as string) || 'tool';
             eventData.name = toolName;
             eventData.content = toolName;
             eventData.arguments = rawInput;
+            eventData.toolCallId = update.toolCallId;
+            eventData.status = update.status;
             break;
           }
           case 'tool_call_update': {
             eventType = 'tool_result';
-            eventData.output = (update.output as string) ?? (content?.text as string) ?? '';
-            eventData.callId = update.toolCallId ?? update.id ?? '';
+            const rawOutput = (update.rawOutput as Record<string, unknown>) ?? {};
+            eventData.output = (rawOutput.content as string) ?? (rawOutput.message as string) ?? '';
+            eventData.callId = update.toolCallId ?? '';
+            eventData.status = update.status;
             break;
           }
           case 'agent_turn_end':
