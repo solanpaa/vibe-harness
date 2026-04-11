@@ -1,5 +1,12 @@
 {
   "name": "vibe-harness-v2",
   "private": true,
-  "workspaces": ["shared", "daemon", "gui"]
+  "workspaces": ["shared", "daemon", "gui"],
+  "scripts": {
+    "dev": "npm run dev --workspace=daemon",
+    "dev:gui": "npm run tauri:dev --workspace=gui",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
 }

@@ -43,7 +43,7 @@ export interface PipelineInput {
 // (which must be serializable for replay).
 let _pipelineDeps: PipelineDeps | null = null;
 
-export function setPipelineDeps(deps: PipelineDeps): void {
+export async function setPipelineDeps(deps: PipelineDeps): Promise<void> {
   _pipelineDeps = deps;
 }
 
