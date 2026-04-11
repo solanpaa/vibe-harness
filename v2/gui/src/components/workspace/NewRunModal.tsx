@@ -1,5 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useDaemonStore } from "../../stores/daemon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   ProjectListResponse,
   WorkflowTemplateListResponse,
@@ -145,13 +152,13 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
       }}
       onKeyDown={handleKeyDown}
     >
-      <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+      <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-700/50">
-          <h2 className="text-lg font-semibold text-zinc-100">New Run</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
+          <h2 className="text-lg font-semibold text-foreground">New Run</h2>
           <button
             onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-300 text-lg"
+            className="text-muted-foreground hover:text-foreground text-lg"
           >
             ✕
           </button>
@@ -161,50 +168,50 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         <div className="px-6 py-4 space-y-4">
           {/* Project (required) */}
           <FormField label="Project" required>
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-            >
-              <option value="">Select project...</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select value={projectId} onValueChange={setProjectId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select project..." />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormField>
 
           {/* Workflow template (required) */}
           <FormField label="Workflow Template" required>
-            <select
-              value={workflowTemplateId}
-              onChange={(e) => setWorkflowTemplateId(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-            >
-              <option value="">Select template...</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+            <Select value={workflowTemplateId} onValueChange={setWorkflowTemplateId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select template..." />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormField>
 
           {/* Agent (required) */}
           <FormField label="Agent" required>
-            <select
-              value={agentDefinitionId}
-              onChange={(e) => setAgentDefinitionId(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-            >
-              <option value="">Select agent...</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+            <Select value={agentDefinitionId} onValueChange={setAgentDefinitionId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select agent..." />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormField>
 
           {/* Description / prompt (required) */}
@@ -214,30 +221,34 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Describe what the agent should do..."
               rows={4}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-none"
+              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50 resize-none"
             />
           </FormField>
 
           {/* Optional fields */}
           <details className="group">
-            <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-400 transition-colors py-1">
+            <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors py-1">
               Advanced options ▸
             </summary>
             <div className="mt-3 space-y-4">
               {/* Base branch */}
               <FormField label="Base Branch">
-                <select
-                  value={baseBranch}
-                  onChange={(e) => setBaseBranch(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                <Select
+                  value={baseBranch || "default"}
+                  onValueChange={(v) => setBaseBranch(v === "default" ? "" : v)}
                 >
-                  <option value="">Default branch</option>
-                  {branches.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Default branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default branch</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b} value={b}>
+                        {b}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </FormField>
 
               {/* Target branch */}
@@ -247,24 +258,28 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
                   value={targetBranch}
                   onChange={(e) => setTargetBranch(e.target.value)}
                   placeholder="Auto-generated if empty"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
                 />
               </FormField>
 
               {/* Credential set */}
               <FormField label="Credential Set">
-                <select
-                  value={credentialSetId}
-                  onChange={(e) => setCredentialSetId(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                <Select
+                  value={credentialSetId || "none"}
+                  onValueChange={(v) => setCredentialSetId(v === "none" ? "" : v)}
                 >
-                  <option value="">None</option>
-                  {credentials.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {credentials.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </FormField>
 
               {/* Model override */}
@@ -274,7 +289,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder="e.g. gpt-4.1, claude-sonnet-4.5"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
                 />
               </FormField>
             </div>
@@ -289,10 +304,10 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-700/50">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border/50">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+            className="px-4 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground transition-colors"
           >
             Cancel
           </button>
@@ -320,7 +335,7 @@ function FormField({
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+      <label className="block text-xs font-medium text-muted-foreground mb-1.5">
         {label}
         {required && <span className="text-red-400 ml-0.5">*</span>}
       </label>
