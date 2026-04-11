@@ -112,7 +112,9 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
       case "tool_call": {
         flushAssistant();
         flushThought();
-        const toolName = data.metadata?.toolName || data.content?.replace(/^Tool call:\s*/i, "") || "tool";
+        let toolName = data.metadata?.toolName || data.content?.replace(/^Tool call:\s*/i, "") || "tool";
+        // Strip worktree paths: "Viewing ...worktrees/run-xxx/file.md" → "Viewing file.md"
+        toolName = toolName.replace(/\s+\S*\/([^/\s]+)$/, ' $1');
         blocks.push({
           id: `tool-${blocks.length}`,
           type: "tool_call",
