@@ -481,17 +481,14 @@ function TemplateDetail({
       <div className="flex items-center gap-2 pt-2 border-t border-border">
         <button
           onClick={() => setEditing(true)}
-          disabled={template.isBuiltIn}
-          className="px-3 py-1.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title={template.isBuiltIn ? "Cannot edit built-in templates" : ""}
+          className="px-3 py-1.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 text-white"
         >
           Edit
         </button>
         <button
           onClick={handleDelete}
-          disabled={template.isBuiltIn || deleting}
+          disabled={deleting}
           className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          title={template.isBuiltIn ? "Cannot delete built-in templates" : ""}
         >
           {deleting ? "Deleting..." : "Delete"}
         </button>

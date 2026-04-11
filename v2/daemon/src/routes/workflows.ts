@@ -95,13 +95,6 @@ workflows.put('/api/workflows/:id', async (c) => {
     );
   }
 
-  if (existing.isBuiltIn) {
-    return c.json(
-      { error: { code: 'CONFLICT', message: 'Cannot modify built-in templates' } },
-      409,
-    );
-  }
-
   const body = await c.req.json();
   const parsed = createWorkflowTemplateSchema.safeParse(body);
 
@@ -143,13 +136,6 @@ workflows.delete('/api/workflows/:id', (c) => {
     return c.json(
       { error: { code: 'WORKFLOW_TEMPLATE_NOT_FOUND', message: 'Workflow template not found' } },
       404,
-    );
-  }
-
-  if (existing.isBuiltIn) {
-    return c.json(
-      { error: { code: 'CONFLICT', message: 'Cannot delete built-in templates' } },
-      409,
     );
   }
 
