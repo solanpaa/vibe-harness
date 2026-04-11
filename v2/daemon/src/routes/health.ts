@@ -1,9 +1,15 @@
 import { Hono } from "hono";
 
 const health = new Hono();
+const startedAt = Date.now();
 
 health.get("/health", (c) =>
-  c.json({ status: "ok", service: "vibe-harness-daemon" }),
+  c.json({
+    status: "ok",
+    service: "vibe-harness-daemon",
+    version: "0.1.0",
+    uptime: Math.floor((Date.now() - startedAt) / 1000),
+  }),
 );
 
 // /api/prerequisites is intentionally auth-protected (not on /health).

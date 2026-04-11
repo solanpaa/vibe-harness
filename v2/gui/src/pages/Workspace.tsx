@@ -30,18 +30,26 @@ export function Workspace() {
     let cancelled = false;
     setLoading(true);
 
-    client
-      .listRuns()
-      .then((res) => {
-        if (!cancelled) setRuns(res.runs);
-      })
-      .catch((err) => console.error("Failed to load runs:", err))
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const fetchRuns = () => {
+      client
+        .listRuns()
+        .then((res) => {
+          if (!cancelled) setRuns(res.runs);
+        })
+        .catch((err) => console.error("Failed to load runs:", err))
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    fetchRuns();
+
+    // Poll every 3s to catch status changes
+    const interval = setInterval(fetchRuns, 3000);
 
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [client, connected, setRuns, setLoading]);
 

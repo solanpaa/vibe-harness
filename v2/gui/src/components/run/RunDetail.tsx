@@ -39,7 +39,7 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
   const [activeTab, setActiveTab] = useState<TabId>("conversation");
   const [cancelling, setCancelling] = useState(false);
 
-  // Fetch run detail
+  // Fetch run detail + poll while running
   useEffect(() => {
     if (!client) return;
 
@@ -47,20 +47,31 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
     setLoading(true);
     setError(null);
 
-    client
-      .getRun(runId)
-      .then((res) => {
-        if (!cancelled) setDetail(res);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message ?? "Failed to load run");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const fetchDetail = () => {
+      client
+        .getRun(runId)
+        .then((res) => {
+          if (!cancelled) {
+            setDetail(res);
+            setLoading(false);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setError(err.message ?? "Failed to load run");
+            setLoading(false);
+          }
+        });
+    };
+
+    fetchDetail();
+
+    // Poll every 3s to catch status + conversation changes
+    const interval = setInterval(fetchDetail, 3000);
 
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [client, runId]);
 

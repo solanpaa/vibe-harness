@@ -221,6 +221,22 @@ runs.get('/api/runs/:id', (c) => {
   return c.json({ ...run, stages, reviews });
 });
 
+// ── GET /api/runs/:id/messages — Run conversation messages ──────────
+
+runs.get('/api/runs/:id/messages', (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+
+  const messages = db
+    .select()
+    .from(schema.runMessages)
+    .where(eq(schema.runMessages.workflowRunId, runId))
+    .orderBy(schema.runMessages.createdAt)
+    .all();
+
+  return c.json({ messages });
+});
+
 // ── PATCH /api/runs/:id/cancel — Cancel a running workflow ──────────
 
 runs.patch('/api/runs/:id/cancel', async (c) => {

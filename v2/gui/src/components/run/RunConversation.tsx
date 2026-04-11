@@ -217,6 +217,7 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [restMessages, setRestMessages] = useState<RunOutputMessage[]>([]);
 
   // Trigger REST resync when server signals buffer gap
   useEffect(() => {
@@ -225,7 +226,29 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
     }
   }, [needsResync, runId, client]);
 
-  const events = buffer?.events ?? [];
+  // Poll for messages from REST when streaming buffer is empty
+  useEffect(() => {
+    if (!client) return;
+    // If streaming buffer has events, don't need REST
+    if (buffer?.events?.length) return;
+
+    let cancelled = false;
+    const fetchMessages = () => {
+      client.getRunMessages(runId)
+        .then((res) => {
+          if (!cancelled && res.messages?.length) {
+            setRestMessages(res.messages);
+          }
+        })
+        .catch(() => { /* ignore - messages endpoint may not exist yet */ });
+    };
+
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [client, runId, buffer?.events?.length]);
+
+  const events = buffer?.events?.length ? buffer.events : restMessages;
   const blocks = eventsToBlocks(events);
 
   // Determine if the last block is still streaming

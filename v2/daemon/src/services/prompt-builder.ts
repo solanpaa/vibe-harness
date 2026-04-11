@@ -61,10 +61,16 @@ export function buildStagePrompt(input: StagePromptInput): string {
 
 // --- Format helpers ------------------------------------------------------ //
 
+/** Interpolate template variables like {{description}} in stage prompts. */
+function interpolate(template: string, runDescription: string): string {
+  return template.replace(/\{\{description\}\}/g, runDescription);
+}
+
 function formatStandardPrompt(
   runDescription: string,
   stage: { name: string; promptTemplate: string },
 ): string {
+  const stagePrompt = interpolate(stage.promptTemplate, runDescription);
   return [
     '## Task',
     '',
@@ -72,7 +78,7 @@ function formatStandardPrompt(
     '',
     `## Current Stage: ${stage.name}`,
     '',
-    stage.promptTemplate,
+    stagePrompt,
   ].join('\n');
 }
 
@@ -95,7 +101,7 @@ function formatFreshSessionPrompt(
     '',
     `## Current Stage: ${stage.name}`,
     '',
-    stage.promptTemplate,
+    interpolate(stage.promptTemplate, runDescription),
   ].join('\n');
 }
 
@@ -121,7 +127,7 @@ function formatRetryPrompt(
     '',
     `## Current Stage: ${stage.name}`,
     '',
-    stage.promptTemplate,
+    interpolate(stage.promptTemplate, runDescription),
   ].join('\n');
 }
 
@@ -146,7 +152,7 @@ function formatRequestChangesPrompt(
     '',
     `## Current Stage: ${stage.name}`,
     '',
-    stage.promptTemplate,
+    interpolate(stage.promptTemplate, runDescription),
   ].join('\n');
 }
 
