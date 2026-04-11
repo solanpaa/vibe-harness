@@ -3,7 +3,18 @@ import type {
   WorkflowRunListResponse,
   WorkflowRunDetailResponse,
   ProjectListResponse,
+  ProjectDetailResponse,
+  ProjectBranchesResponse,
+  AgentDefinitionListResponse,
+  AgentDefinitionDetailResponse,
+  CreateProjectRequest,
+  UpdateProjectRequest,
+  CreateAgentDefinitionRequest,
+  UpdateAgentDefinitionRequest,
   WorkflowTemplateListResponse,
+  WorkflowTemplate,
+  CreateWorkflowTemplateRequest,
+  UpdateWorkflowTemplateRequest,
   WorkspaceSummaryResponse,
 } from "@vibe-harness/shared";
 
@@ -44,7 +55,7 @@ export function clearCachedPort(): void {
   cachedPort = null;
 }
 
-async function getAuthToken(): Promise<string | null> {
+export async function getAuthToken(): Promise<string | null> {
   return readStateFile("auth.token");
 }
 
@@ -72,6 +83,11 @@ export class DaemonClient {
       throw new Error(`Daemon API error ${res.status}: ${body}`);
     }
 
+    // 204 No Content
+    if (res.status === 204) {
+      return undefined as T;
+    }
+
     return res.json() as Promise<T>;
   }
 
@@ -92,11 +108,91 @@ export class DaemonClient {
     return this.fetch<WorkflowRunDetailResponse>(`/api/runs/${id}`);
   }
 
+  // ── Projects ──────────────────────────────────────────────────────
+
   async listProjects(): Promise<ProjectListResponse> {
     return this.fetch<ProjectListResponse>("/api/projects");
   }
 
+  async getProject(id: string): Promise<ProjectDetailResponse> {
+    return this.fetch<ProjectDetailResponse>(`/api/projects/${id}`);
+  }
+
+  async createProject(data: CreateProjectRequest): Promise<ProjectDetailResponse> {
+    return this.fetch<ProjectDetailResponse>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProject(id: string, data: UpdateProjectRequest): Promise<ProjectDetailResponse> {
+    return this.fetch<ProjectDetailResponse>(`/api/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    return this.fetch<void>(`/api/projects/${id}`, { method: "DELETE" });
+  }
+
+  async getProjectBranches(id: string): Promise<ProjectBranchesResponse> {
+    return this.fetch<ProjectBranchesResponse>(`/api/projects/${id}/branches`);
+  }
+
+  // ── Agents ────────────────────────────────────────────────────────
+
+  async listAgents(): Promise<AgentDefinitionListResponse> {
+    return this.fetch<AgentDefinitionListResponse>("/api/agents");
+  }
+
+  async getAgent(id: string): Promise<AgentDefinitionDetailResponse> {
+    return this.fetch<AgentDefinitionDetailResponse>(`/api/agents/${id}`);
+  }
+
+  async createAgent(data: CreateAgentDefinitionRequest): Promise<AgentDefinitionDetailResponse> {
+    return this.fetch<AgentDefinitionDetailResponse>("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAgent(id: string, data: UpdateAgentDefinitionRequest): Promise<AgentDefinitionDetailResponse> {
+    return this.fetch<AgentDefinitionDetailResponse>(`/api/agents/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAgent(id: string): Promise<void> {
+    return this.fetch<void>(`/api/agents/${id}`, { method: "DELETE" });
+  }
+
+  // ── Workflow Templates ────────────────────────────────────────────
+
   async listWorkflowTemplates(): Promise<WorkflowTemplateListResponse> {
-    return this.fetch<WorkflowTemplateListResponse>("/api/workflow-templates");
+    return this.fetch<WorkflowTemplateListResponse>("/api/workflows");
+  }
+
+  async getWorkflowTemplate(id: string): Promise<WorkflowTemplate> {
+    return this.fetch<WorkflowTemplate>(`/api/workflows/${id}`);
+  }
+
+  async createWorkflowTemplate(data: CreateWorkflowTemplateRequest): Promise<WorkflowTemplate> {
+    return this.fetch<WorkflowTemplate>("/api/workflows", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateWorkflowTemplate(id: string, data: UpdateWorkflowTemplateRequest): Promise<WorkflowTemplate> {
+    return this.fetch<WorkflowTemplate>(`/api/workflows/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteWorkflowTemplate(id: string): Promise<void> {
+    await this.fetch<void>(`/api/workflows/${id}`, { method: "DELETE" });
   }
 }
