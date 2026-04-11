@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useStreamingStore, resyncFromRest } from "../../stores/streaming";
 import { useDaemonStore } from "../../stores/daemon";
 import {
@@ -6,6 +6,24 @@ import {
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements/reasoning";
+import {
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolInput,
+  ToolOutput,
+} from "@/components/ai-elements/tool";
 import type { RunOutputMessage } from "@vibe-harness/shared";
 
 interface RunConversationProps {
@@ -98,7 +116,7 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
         blocks.push({
           id: `tool-${blocks.length}`,
           type: "tool_call",
-          content: data.content,
+          content: "",
           stageName,
           timestamp: ts,
           toolName,
@@ -110,14 +128,20 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
       }
       case "tool_result": {
         flushThought();
-        blocks.push({
-          id: `tool-result-${blocks.length}`,
-          type: "tool_result",
-          content: data.content,
-          stageName,
-          timestamp: ts,
-          toolName: data.metadata?.toolName,
-        });
+        // Merge result into the preceding tool_call block when possible
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock?.type === "tool_call") {
+          lastBlock.content = data.content;
+        } else {
+          blocks.push({
+            id: `tool-result-${blocks.length}`,
+            type: "tool_result",
+            content: data.content,
+            stageName,
+            timestamp: ts,
+            toolName: data.metadata?.toolName,
+          });
+        }
         break;
       }
       case "intervention": {
@@ -198,69 +222,10 @@ function UserMessage({ block }: { block: MessageBlock }) {
   );
 }
 
-function ToolCallBlock({ block }: { block: MessageBlock }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="border border-zinc-700/50 rounded-md overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800/50 hover:bg-zinc-800 transition-colors text-left"
-      >
-        <span className="text-zinc-500">{expanded ? "▾" : "▸"}</span>
-        <span className="text-blue-400 font-mono">
-          {block.toolName ?? "tool_call"}
-        </span>
-        <span className="text-zinc-500 ml-auto">{block.stageName}</span>
-      </button>
-      {expanded && (
-        <div className="px-3 py-2 text-xs">
-          {block.toolArgs && (
-            <pre className="text-zinc-400 font-mono whitespace-pre-wrap mb-2 max-h-40 overflow-y-auto">
-              {block.toolArgs}
-            </pre>
-          )}
-          {block.content && (
-            <div className="text-zinc-300 whitespace-pre-wrap max-h-60 overflow-y-auto">
-              {block.content}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolResultBlock({ block }: { block: MessageBlock }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="border border-zinc-700/30 rounded-md overflow-hidden ml-4">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-1 text-xs bg-zinc-800/30 hover:bg-zinc-800/50 transition-colors text-left"
-      >
-        <span className="text-zinc-500">{expanded ? "▾" : "▸"}</span>
-        <span className="text-zinc-400 font-mono">
-          ↳ result{block.toolName ? `: ${block.toolName}` : ""}
-        </span>
-      </button>
-      {expanded && (
-        <div className="px-3 py-2 text-xs text-zinc-400 font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
-          {block.content}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// useState is imported at the top
-
 export function RunConversation({ runId, isRunning }: RunConversationProps) {
   const buffer = useStreamingStore((s) => s.buffers.get(runId));
   const needsResync = useStreamingStore((s) => s.resyncRequired.has(runId));
   const { client } = useDaemonStore();
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
   const [restMessages, setRestMessages] = useState<RunOutputMessage[]>([]);
 
   // Trigger REST resync when server signals buffer gap
@@ -319,43 +284,31 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
     lastEvent?.data?.eventType === "agent_message" &&
     lastEvent?.data?.metadata?.isStreaming;
 
-  // Auto-scroll to bottom when new content arrives
-  useEffect(() => {
-    if (autoScroll && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [blocks.length, autoScroll]);
-
-  const handleScroll = () => {
-    if (!containerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    setAutoScroll(isAtBottom);
-  };
-
   if (events.length === 0 && !isRunning) {
     return (
-      <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">
-        No conversation output yet
-      </div>
+      <Conversation>
+        <ConversationEmptyState
+          title="No conversation output yet"
+          description="Run a task to see agent output here"
+        />
+      </Conversation>
     );
   }
 
   if (events.length === 0 && isRunning) {
     return (
-      <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">
-        <span className="animate-pulse">Waiting for agent output...</span>
-      </div>
+      <Conversation>
+        <ConversationEmptyState
+          title="Waiting for agent output..."
+          description="The agent is starting up"
+        />
+      </Conversation>
     );
   }
 
   return (
-    <div className="relative h-full flex flex-col">
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto space-y-3 px-1 pb-4"
-      >
+    <Conversation>
+      <ConversationContent>
         {blocks.map((block) => {
           const isStreamingBlock =
             isLastStreaming &&
@@ -376,24 +329,52 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               );
 
             case "tool_call":
-              return <ToolCallBlock key={block.id} block={block} />;
+              return (
+                <Tool key={block.id} defaultOpen={false}>
+                  <ToolHeader
+                    type={`tool-${block.toolName ?? "tool"}`}
+                    state={block.content ? "output-available" : "input-available"}
+                  />
+                  <ToolContent>
+                    {block.toolArgs && (
+                      <ToolInput input={JSON.parse(block.toolArgs)} />
+                    )}
+                    {block.content && (
+                      <ToolOutput
+                        output={<span className="text-sm whitespace-pre-wrap">{block.content}</span>}
+                        errorText={undefined}
+                      />
+                    )}
+                  </ToolContent>
+                </Tool>
+              );
 
             case "tool_result":
-              return <ToolResultBlock key={block.id} block={block} />;
+              // Orphaned tool_result (no preceding tool_call to merge into)
+              return (
+                <Tool key={block.id} defaultOpen={false}>
+                  <ToolHeader
+                    type={`tool-${block.toolName ?? "result"}`}
+                    state="output-available"
+                  />
+                  <ToolContent>
+                    <ToolOutput
+                      output={<span className="text-sm whitespace-pre-wrap">{block.content}</span>}
+                      errorText={undefined}
+                    />
+                  </ToolContent>
+                </Tool>
+              );
 
             case "thought":
               return (
-                <details
+                <Reasoning
                   key={block.id}
-                  className="text-xs text-muted-foreground border border-border/50 rounded-md"
+                  isStreaming={isRunning && block === blocks[blocks.length - 1]}
                 >
-                  <summary className="px-3 py-1.5 cursor-pointer hover:bg-muted/30 transition-colors">
-                    💭 Agent reasoning · {block.stageName}
-                  </summary>
-                  <div className="px-3 py-2 italic whitespace-pre-wrap text-muted-foreground/70">
-                    {block.content}
-                  </div>
-                </details>
+                  <ReasoningTrigger />
+                  <ReasoningContent>{block.content}</ReasoningContent>
+                </Reasoning>
               );
 
             case "session_boundary":
@@ -423,21 +404,8 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               return null;
           }
         })}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* "Jump to bottom" button when user has scrolled up */}
-      {!autoScroll && (
-        <button
-          onClick={() => {
-            setAutoScroll(true);
-            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-          }}
-          className="absolute bottom-4 right-4 px-3 py-1.5 text-xs rounded-full bg-zinc-700 text-zinc-300 hover:bg-zinc-600 shadow-lg transition-colors"
-        >
-          ↓ Jump to bottom
-        </button>
-      )}
-    </div>
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
   );
 }
