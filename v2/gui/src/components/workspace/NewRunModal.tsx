@@ -176,7 +176,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
           <FormField label="Project" required>
             <Select value={projectId} onValueChange={setProjectId}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select project..." />
+                <SelectValue placeholder="Select project...">
+                  {projects.find(p => p.id === projectId)?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {projects.map((p) => (
@@ -192,7 +194,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
           <FormField label="Workflow Template" required>
             <Select value={workflowTemplateId} onValueChange={setWorkflowTemplateId}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select template..." />
+                <SelectValue placeholder="Select template...">
+                  {templates.find(t => t.id === workflowTemplateId)?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {templates.map((t) => (
@@ -208,7 +212,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
           <FormField label="Agent" required>
             <Select value={agentDefinitionId} onValueChange={setAgentDefinitionId}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select agent..." />
+                <SelectValue placeholder="Select agent...">
+                  {agents.find(a => a.id === agentDefinitionId)?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {agents.map((a) => (
