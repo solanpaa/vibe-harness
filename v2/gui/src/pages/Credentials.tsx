@@ -6,6 +6,16 @@ import type {
   CredentialEntryType,
   CredentialAuditResponse,
 } from "@vibe-harness/shared";
+import {
+  EnvironmentVariables,
+  EnvironmentVariablesHeader,
+  EnvironmentVariablesTitle,
+  EnvironmentVariablesToggle,
+  EnvironmentVariablesContent,
+  EnvironmentVariable,
+  EnvironmentVariableName,
+  EnvironmentVariableValue,
+} from "@/components/ai-elements/environment-variables";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -267,9 +277,9 @@ function AddEntryForm({
   );
 }
 
-// ── Entry Row ──────────────────────────────────────────────────────
+// ── Entry Delete Button ────────────────────────────────────────────
 
-function EntryRow({
+function EntryDeleteButton({
   entry,
   setId,
   onDeleted,
@@ -281,58 +291,37 @@ function EntryRow({
   const { client } = useDaemonStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const typeLabel = ENTRY_TYPES.find((t) => t.value === entry.type)?.label ?? entry.type;
-  const typeColor =
-    entry.type === "command_extract"
-      ? "text-amber-400"
-      : entry.type === "docker_login"
-        ? "text-purple-400"
-        : "text-blue-400";
+  if (confirmDelete) {
+    return (
+      <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={async () => {
+            if (client) {
+              await client.deleteCredentialEntry(setId, entry.id);
+              onDeleted();
+            }
+          }}
+          className="px-2 py-0.5 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
+        >
+          Confirm
+        </button>
+        <button
+          onClick={() => setConfirmDelete(false)}
+          className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 bg-zinc-900 rounded text-sm">
-      <span className={`text-xs font-mono ${typeColor}`}>{typeLabel}</span>
-      <span className="text-zinc-200 font-mono flex-1 truncate">{entry.key}</span>
-      {entry.mountPath && (
-        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
-          → {entry.mountPath}
-        </span>
-      )}
-      {entry.command && (
-        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
-          $ {entry.command}
-        </span>
-      )}
-      <span className="text-xs text-zinc-600 font-mono">•••</span>
-      {confirmDelete ? (
-        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={async () => {
-              if (client) {
-                await client.deleteCredentialEntry(setId, entry.id);
-                onDeleted();
-              }
-            }}
-            className="px-2 py-0.5 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
-          >
-            Confirm
-          </button>
-          <button
-            onClick={() => setConfirmDelete(false)}
-            className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setConfirmDelete(true)}
-          className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
-        >
-          Delete
-        </button>
-      )}
-    </div>
+    <button
+      onClick={() => setConfirmDelete(true)}
+      className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
+    >
+      Delete
+    </button>
   );
 }
 
@@ -438,16 +427,51 @@ function CredentialSetRow({
           {loadingEntries ? (
             <p className="text-xs text-zinc-500">Loading entries…</p>
           ) : entries.length > 0 ? (
-            <div className="space-y-1.5">
-              {entries.map((entry) => (
-                <EntryRow
-                  key={entry.id}
-                  entry={entry}
-                  setId={credSet.id}
-                  onDeleted={loadEntries}
-                />
-              ))}
-            </div>
+            <EnvironmentVariables className="bg-zinc-900 border-zinc-600">
+              <EnvironmentVariablesHeader>
+                <EnvironmentVariablesTitle>Credentials</EnvironmentVariablesTitle>
+                <EnvironmentVariablesToggle />
+              </EnvironmentVariablesHeader>
+              <EnvironmentVariablesContent>
+                {entries.map((entry) => (
+                  <EnvironmentVariable
+                    key={entry.id}
+                    name={entry.key}
+                    value="••••••••"
+                    className="group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span
+                        className={`text-xs font-mono shrink-0 ${
+                          entry.type === "command_extract"
+                            ? "text-amber-400"
+                            : entry.type === "docker_login"
+                              ? "text-purple-400"
+                              : "text-blue-400"
+                        }`}
+                      >
+                        {ENTRY_TYPES.find((t) => t.value === entry.type)?.label ?? entry.type}
+                      </span>
+                      <EnvironmentVariableName />
+                      {entry.mountPath && (
+                        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
+                          → {entry.mountPath}
+                        </span>
+                      )}
+                      {entry.command && (
+                        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
+                          $ {entry.command}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <EnvironmentVariableValue />
+                      <EntryDeleteButton entry={entry} setId={credSet.id} onDeleted={loadEntries} />
+                    </div>
+                  </EnvironmentVariable>
+                ))}
+              </EnvironmentVariablesContent>
+            </EnvironmentVariables>
           ) : (
             <p className="text-xs text-zinc-500">No entries yet.</p>
           )}
