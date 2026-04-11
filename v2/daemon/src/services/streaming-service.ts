@@ -405,7 +405,7 @@ export function registerAcpStream(
       role: agentOutput.role,
       content: agentOutput.content,
       isIntervention: false,
-      metadata: agentOutput.metadata ? JSON.stringify(agentOutput.metadata) : null,
+      metadata: JSON.stringify({ ...agentOutput.metadata, eventType: agentOutput.eventType }),
     });
 
     // Fan out to subscribed WS clients
