@@ -1,0 +1,392 @@
+// ---------------------------------------------------------------------------
+// Workflow Runs API Routes (CDD-workflow §6)
+//
+// Manages workflow run lifecycle: create, list, detail, cancel, retry, skip,
+// and message (intervention). Hooks into the durable workflow engine.
+// ---------------------------------------------------------------------------
+
+import { Hono } from 'hono';
+import { eq, desc } from 'drizzle-orm';
+import { start, resumeHook } from 'workflow/api';
+import { getDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { logger } from '../lib/logger.js';
+import { runWorkflowPipeline, type PipelineDeps } from '../workflows/pipeline.js';
+import { stageFailedHook } from '../workflows/hooks.js';
+import { z } from 'zod';
+
+const runs = new Hono();
+
+// ── Helper: get pipeline deps from app context ───────────────────────
+// In production, these would come from a DI container. For now we use
+// a simple module-level holder that must be initialized at startup.
+
+let pipelineDeps: PipelineDeps | null = null;
+
+export function setPipelineDeps(deps: PipelineDeps): void {
+  pipelineDeps = deps;
+}
+
+function getDeps(): PipelineDeps {
+  if (!pipelineDeps) {
+    throw new Error('Pipeline dependencies not initialized. Call setPipelineDeps() at startup.');
+  }
+  return pipelineDeps;
+}
+
+// ── POST /api/runs — Create and start a workflow run ─────────────────
+
+const createRunSchema = z.object({
+  workflowTemplateId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  agentDefinitionId: z.string().uuid(),
+  description: z.string().optional(),
+  title: z.string().optional(),
+  baseBranch: z.string().optional().default('main'),
+  targetBranch: z.string().optional(),
+  model: z.string().optional(),
+  credentialSetId: z.string().uuid().optional(),
+});
+
+runs.post('/api/runs', async (c) => {
+  const body = await c.req.json();
+  const parsed = createRunSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: parsed.error.flatten() } },
+      400,
+    );
+  }
+
+  const {
+    workflowTemplateId,
+    projectId,
+    agentDefinitionId,
+    description,
+    title,
+    baseBranch,
+    targetBranch,
+    model,
+    credentialSetId,
+  } = parsed.data;
+
+  const db = getDb();
+
+  // Validate references exist
+  const template = db
+    .select({ id: schema.workflowTemplates.id })
+    .from(schema.workflowTemplates)
+    .where(eq(schema.workflowTemplates.id, workflowTemplateId))
+    .get();
+  if (!template) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow template not found' } }, 404);
+  }
+
+  const project = db
+    .select({ id: schema.projects.id })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId))
+    .get();
+  if (!project) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Project not found' } }, 404);
+  }
+
+  const agent = db
+    .select({ id: schema.agentDefinitions.id })
+    .from(schema.agentDefinitions)
+    .where(eq(schema.agentDefinitions.id, agentDefinitionId))
+    .get();
+  if (!agent) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Agent definition not found' } }, 404);
+  }
+
+  // Create the workflow run record
+  const runId = crypto.randomUUID();
+  db.insert(schema.workflowRuns)
+    .values({
+      id: runId,
+      workflowTemplateId,
+      projectId,
+      agentDefinitionId,
+      description: description ?? null,
+      title: title ?? null,
+      status: 'pending',
+      baseBranch,
+      targetBranch: targetBranch ?? baseBranch,
+      model: model ?? null,
+      credentialSetId: credentialSetId ?? null,
+    })
+    .run();
+
+  // Save as last-run config (singleton)
+  db.insert(schema.lastRunConfig)
+    .values({
+      id: 1,
+      projectId,
+      agentDefinitionId,
+      credentialSetId: credentialSetId ?? null,
+      workflowTemplateId,
+    })
+    .onConflictDoUpdate({
+      target: schema.lastRunConfig.id,
+      set: {
+        projectId,
+        agentDefinitionId,
+        credentialSetId: credentialSetId ?? null,
+        workflowTemplateId,
+        updatedAt: new Date().toISOString(),
+      },
+    })
+    .run();
+
+  // Start the durable workflow
+  const deps = getDeps();
+  try {
+    await start(runWorkflowPipeline, [{ runId, deps }]);
+  } catch (err) {
+    logger.error({ err, runId }, 'Failed to start workflow pipeline');
+    db.update(schema.workflowRuns)
+      .set({ status: 'failed' })
+      .where(eq(schema.workflowRuns.id, runId))
+      .run();
+    return c.json({ error: { code: 'WORKFLOW_START_ERROR', message: 'Failed to start workflow' } }, 500);
+  }
+
+  logger.info({ runId, workflowTemplateId, projectId }, 'Workflow run created and started');
+
+  const created = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  return c.json(created, 201);
+});
+
+// ── GET /api/runs — List workflow runs ───────────────────────────────
+
+runs.get('/api/runs', (c) => {
+  const db = getDb();
+  const statusFilter = c.req.query('status');
+  const projectFilter = c.req.query('projectId');
+
+  let query = db.select().from(schema.workflowRuns).orderBy(desc(schema.workflowRuns.createdAt));
+
+  // Apply filters if provided (using .where chaining)
+  const allRuns = query.all().filter((r) => {
+    if (statusFilter && r.status !== statusFilter) return false;
+    if (projectFilter && r.projectId !== projectFilter) return false;
+    return true;
+  });
+
+  return c.json({ runs: allRuns });
+});
+
+// ── GET /api/runs/:id — Run detail with stage executions ────────────
+
+runs.get('/api/runs/:id', (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+
+  const run = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow run not found' } }, 404);
+  }
+
+  const stages = db
+    .select()
+    .from(schema.stageExecutions)
+    .where(eq(schema.stageExecutions.workflowRunId, runId))
+    .all();
+
+  const reviews = db
+    .select()
+    .from(schema.reviews)
+    .where(eq(schema.reviews.workflowRunId, runId))
+    .all();
+
+  return c.json({ ...run, stages, reviews });
+});
+
+// ── PATCH /api/runs/:id/cancel — Cancel a running workflow ──────────
+
+runs.patch('/api/runs/:id/cancel', async (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+
+  const run = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow run not found' } }, 404);
+  }
+
+  if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+    return c.json(
+      { error: { code: 'CONFLICT', message: `Run is already in terminal state: ${run.status}` } },
+      409,
+    );
+  }
+
+  // Stop the session (best-effort)
+  try {
+    const deps = getDeps();
+    await deps.sessionManager.stop(runId);
+  } catch {
+    // Session may not be active
+  }
+
+  db.update(schema.workflowRuns)
+    .set({ status: 'cancelled', completedAt: new Date().toISOString() })
+    .where(eq(schema.workflowRuns.id, runId))
+    .run();
+
+  logger.info({ runId }, 'Workflow run cancelled');
+  return c.json({ status: 'cancelled' });
+});
+
+// ── POST /api/runs/:id/retry-stage — Resume stageFailedHook (retry) ─
+
+runs.post('/api/runs/:id/retry-stage', async (c) => {
+  const runId = c.req.param('id');
+  return resumeStageHook(c, runId, { action: 'retry' as const });
+});
+
+// ── POST /api/runs/:id/skip-stage — Resume stageFailedHook (skip) ───
+
+runs.post('/api/runs/:id/skip-stage', async (c) => {
+  const runId = c.req.param('id');
+  return resumeStageHook(c, runId, { action: 'skip' as const });
+});
+
+// ── POST /api/runs/:id/message — Send user intervention ─────────────
+
+const messageSchema = z.object({
+  message: z.string().min(1),
+});
+
+runs.post('/api/runs/:id/message', async (c) => {
+  const runId = c.req.param('id');
+  const body = await c.req.json();
+  const parsed = messageSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'Invalid input' } },
+      400,
+    );
+  }
+
+  const db = getDb();
+  const run = db
+    .select({ status: schema.workflowRuns.status })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow run not found' } }, 404);
+  }
+
+  if (run.status !== 'running') {
+    return c.json(
+      { error: { code: 'CONFLICT', message: 'Can only send messages to running workflows' } },
+      409,
+    );
+  }
+
+  try {
+    const deps = getDeps();
+    await deps.sessionManager.sendIntervention(runId, parsed.data.message);
+
+    // Record the intervention in runMessages
+    db.insert(schema.runMessages)
+      .values({
+        workflowRunId: runId,
+        stageName: run.status,
+        round: 1,
+        role: 'user',
+        content: parsed.data.message,
+        isIntervention: true,
+      })
+      .run();
+
+    return c.json({ status: 'sent' });
+  } catch (err) {
+    return c.json(
+      { error: { code: 'INTERVENTION_FAILED', message: 'Failed to send message' } },
+      500,
+    );
+  }
+});
+
+// ── Helper: resume stage failed hook via outbox pattern ──────────────
+
+async function resumeStageHook(
+  c: any,
+  runId: string,
+  payload: { action: 'retry' } | { action: 'skip' },
+) {
+  const db = getDb();
+  const run = db
+    .select({ status: schema.workflowRuns.status, currentStage: schema.workflowRuns.currentStage })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow run not found' } }, 404);
+  }
+
+  if (run.status !== 'stage_failed') {
+    return c.json(
+      { error: { code: 'CONFLICT', message: `Run is not in stage_failed state (current: ${run.status})` } },
+      409,
+    );
+  }
+
+  // Find the hook token — look for recent stageFailedHook token pattern
+  // The token format is: `failed:{runId}:{stageName}:{timestamp}`
+  // We resume via the typed hook's resume method
+  try {
+    // Write to outbox first for crash safety
+    const outboxId = crypto.randomUUID();
+    const hookToken = `failed:${runId}:${run.currentStage}`;
+
+    db.insert(schema.hookResumes)
+      .values({
+        id: outboxId,
+        hookToken,
+        action: JSON.stringify(payload),
+      })
+      .run();
+
+    // Resume the hook — find by token prefix since timestamps vary
+    await stageFailedHook.resume(hookToken, payload);
+
+    // Delete from outbox on success
+    db.delete(schema.hookResumes)
+      .where(eq(schema.hookResumes.id, outboxId))
+      .run();
+
+    logger.info({ runId, action: payload.action }, 'Stage failed hook resumed');
+    return c.json({ status: 'resumed', action: payload.action });
+  } catch (err) {
+    logger.error({ err, runId }, 'Failed to resume stage hook');
+    return c.json(
+      { error: { code: 'HOOK_RESUME_ERROR', message: 'Failed to resume hook' } },
+      500,
+    );
+  }
+}
+
+export { runs };

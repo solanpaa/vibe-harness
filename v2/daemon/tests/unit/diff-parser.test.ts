@@ -251,7 +251,6 @@ describe('parseUnifiedDiff', () => {
     expect(files[0].additions).toBe(2);
     expect(files[0].deletions).toBe(2);
   });
-});
 
   it('gracefully handles non-diff text (no "diff --git" marker)', () => {
     const input = 'This is just a random log message\nNothing to parse here.\n';

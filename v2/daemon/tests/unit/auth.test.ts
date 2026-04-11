@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ── Test the real exported functions by pointing getConfigDir at a temp dir ──
@@ -76,7 +76,6 @@ describe('getOrCreateToken', () => {
   });
 
   it('handles token file containing trailing whitespace', () => {
-    const { writeFileSync } = require('node:fs') as typeof import('node:fs');
     writeFileSync(join(TEST_DIR, 'auth.token'), '  aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233  \n');
     const token = getOrCreateToken();
     expect(token).toBe('aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233');
