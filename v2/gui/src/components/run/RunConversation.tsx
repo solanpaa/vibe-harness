@@ -330,10 +330,10 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
 
             case "tool_call":
               return (
-                <Tool key={block.id} defaultOpen={false}>
+                <Tool key={block.id} defaultOpen={false} className="mb-1.5">
                   <ToolHeader
                     type={`tool-${block.toolName ?? "tool"}`}
-                    state={block.content ? "output-available" : "input-available"}
+                    state="output-available"
                   />
                   <ToolContent>
                     {block.toolArgs && (
@@ -352,7 +352,7 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
             case "tool_result":
               // Orphaned tool_result (no preceding tool_call to merge into)
               return (
-                <Tool key={block.id} defaultOpen={false}>
+                <Tool key={block.id} defaultOpen={false} className="mb-1.5">
                   <ToolHeader
                     type={`tool-${block.toolName ?? "result"}`}
                     state="output-available"
