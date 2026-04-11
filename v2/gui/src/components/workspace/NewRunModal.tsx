@@ -236,8 +236,10 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   // Expanded mode: description takes full screen
   if (expanded) {
     return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="fixed inset-0 z-50 flex flex-col bg-background"
+        className="flex flex-col bg-card border border-border rounded-xl shadow-2xl"
+        style={{ width: 'calc(100vw - 4rem)', height: 'calc(100vh - 4rem)' }}
         onKeyDown={handleKeyDown}
       >
         {/* Compact header */}
@@ -324,6 +326,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
             </button>
           </div>
         </div>
+      </div>
       </div>
     );
   }
