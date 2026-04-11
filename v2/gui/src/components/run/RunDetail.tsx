@@ -82,7 +82,13 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
 
     client
       .getRun(runId)
-      .then((res) => setDetail(res))
+      .then((res) => {
+        setDetail(res);
+        // Auto-switch to review tab when run enters awaiting_review
+        if (res.status === "awaiting_review" && res.activeReviewId) {
+          setActiveTab("review");
+        }
+      })
       .catch((err) => console.error("Failed to refresh run detail:", err));
   }, [client, runId, wsRunStatus, detail?.status]);
   const isRunning = detail ? RUNNING_STATUSES.has(detail.status) : false;
@@ -258,6 +264,14 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
               </DetailSection>
             )}
           </div>
+        )}
+
+        {activeTab === "review" && hasReview && (
+          <ReviewPanel
+            reviewId={detail.activeReviewId!}
+            runId={runId}
+            onBack={() => setActiveTab("conversation")}
+          />
         )}
       </div>
 

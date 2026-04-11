@@ -33,7 +33,6 @@ import type {
   ApproveReviewResponse,
   RequestChangesResponse,
   CreateReviewCommentRequest,
-  ReviewCommentsResponse,
   ReviewComment,
 } from "@vibe-harness/shared";
 
