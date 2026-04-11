@@ -10,6 +10,7 @@
 import { getDb } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
+import { logger } from '../../lib/logger.js';
 
 // ── Types (shared with pipeline.ts) ────────────────────────────────────────
 
@@ -57,6 +58,7 @@ export interface AgentDefResult {
 // ── Context loading ────────────────────────────────────────────────────────
 
 export async function loadPipelineContext(runId: string): Promise<PipelineContext> {
+  const log = logger.child({ runId, op: 'loadPipelineContext' });
   const db = getDb();
 
   const run = db
@@ -76,6 +78,18 @@ export async function loadPipelineContext(runId: string): Promise<PipelineContex
   if (!template) throw new Error(`Workflow template ${run.workflowTemplateId} not found`);
 
   const stages: WorkflowStage[] = JSON.parse(template.stages);
+
+  log.info(
+    {
+      projectId: run.projectId,
+      agentDefinitionId: run.agentDefinitionId,
+      templateId: run.workflowTemplateId,
+      stageCount: stages.length,
+      stageNames: stages.map(s => s.name),
+      baseBranch: run.baseBranch,
+    },
+    'Pipeline context loaded',
+  );
 
   return {
     runId,
@@ -262,20 +276,48 @@ export async function provisionSession(input: {
   baseBranch: string;
   model?: string;
 }): Promise<void> {
+  const log = logger.child({ runId: input.runId, op: 'provisionSession' });
+  log.info(
+    {
+      projectId: input.projectId,
+      agentDefinitionId: input.agentDefinitionId,
+      baseBranch: input.baseBranch,
+      model: input.model,
+    },
+    'Provisioning session',
+  );
+
   const deps = (globalThis as any)[DEPS_KEY];
-  if (!deps?.sessionManager) return;
+  if (!deps?.sessionManager) {
+    log.warn('No sessionManager in global deps, skipping provision');
+    return;
+  }
 
   const db = getDb();
   const run = db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, input.runId)).get();
-  if (!run) return;
+  if (!run) {
+    log.warn('Run not found, skipping provision');
+    return;
+  }
 
-  if (deps.sessionManager.isActive(input.runId)) return;
+  if (deps.sessionManager.isActive(input.runId)) {
+    log.info('Session already active, skipping provision');
+    return;
+  }
 
   const project = db.select().from(schema.projects).where(eq(schema.projects.id, input.projectId)).get();
-  if (!project) return;
+  if (!project) {
+    log.warn({ projectId: input.projectId }, 'Project not found, skipping provision');
+    return;
+  }
 
   const agent = db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, input.agentDefinitionId)).get();
   if (!agent) throw new Error(`Agent definition ${input.agentDefinitionId} not found`);
+
+  log.info(
+    { projectPath: project.localPath, branchName: run.branch, agentCommand: agent.commandTemplate },
+    'Calling sessionManager.create',
+  );
 
   await deps.sessionManager.create(input.runId, {
     model: input.model,
@@ -287,12 +329,20 @@ export async function provisionSession(input: {
       dockerImage: agent.dockerImage ?? undefined,
     },
   });
+
+  log.info('Session provisioned successfully');
 }
 
 export async function stopSession(input: { runId: string }): Promise<void> {
+  const log = logger.child({ runId: input.runId, op: 'stopSession' });
+  log.info('Stopping session');
   const deps = (globalThis as any)[DEPS_KEY];
-  if (!deps?.sessionManager) return;
+  if (!deps?.sessionManager) {
+    log.warn('No sessionManager in global deps, skipping stop');
+    return;
+  }
   await deps.sessionManager.stop(input.runId);
+  log.info('Session stopped');
 }
 
 /** Resolve pipeline deps from globalThis (set at daemon startup). */

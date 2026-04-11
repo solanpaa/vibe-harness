@@ -241,18 +241,31 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
       }
     }
 
-    log.info({ isContinuation, model }, 'Starting ACP session');
+    // Build the full command args for logging (redact token values)
+    const fullArgs = [
+      'sandbox', 'exec', '-i',
+      ...envArgs,
+      sandboxName,
+      'copilot', ...copilotArgs,
+    ];
+    const redactedArgs = fullArgs.map(arg =>
+      arg.startsWith('GITHUB_TOKEN=') ? 'GITHUB_TOKEN=<redacted>'
+      : arg.startsWith('GH_TOKEN=') ? 'GH_TOKEN=<redacted>'
+      : arg,
+    );
+    log.info(
+      { isContinuation, model, hasGhToken: !!ghToken, envKeyCount: Object.keys(extraEnv ?? {}).length },
+      'Starting ACP session',
+    );
+    log.debug({ cmd: ['docker', ...redactedArgs] }, 'Spawning docker sandbox exec');
 
     const child = spawn(
       'docker',
-      [
-        'sandbox', 'exec', '-i',
-        ...envArgs,
-        sandboxName,
-        'copilot', ...copilotArgs,
-      ],
+      fullArgs,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
+
+    log.info({ pid: child.pid }, 'ACP process spawned');
 
     const conn: ActiveConnection = {
       process: child,
@@ -265,9 +278,9 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
 
     connections.set(sandboxName, conn);
 
-    // Log stderr for diagnostics
+    // Log stderr at info level so it's visible by default
     child.stderr!.on('data', (chunk: Buffer) => {
-      log.debug({ acpStderr: chunk.toString().trim() }, 'ACP stderr');
+      log.info({ acpStderr: chunk.toString().trim() }, 'ACP stderr');
     });
 
     // Handle process exit
@@ -305,6 +318,15 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
         const update = params.update as Record<string, unknown>;
         const updateType = (update.sessionUpdate as string) ?? '';
         const content = update.content as Record<string, unknown> | undefined;
+
+        // Log every ACP event type with a truncated preview
+        const previewContent = content
+          ? JSON.stringify(content).slice(0, 200)
+          : undefined;
+        log.debug(
+          { updateType, previewContent },
+          'ACP sessionUpdate received',
+        );
 
         // Map ACP session updates to our event system
         let eventType: AcpEventType = 'session_update';
@@ -418,6 +440,10 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
       throw new AcpSessionNotActiveError(sandboxName);
     }
 
+    const log = logger.child({ sandboxName });
+    const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
+    log.info({ promptLength: message.length, preview: truncated }, 'Sending prompt to ACP');
+
     await conn.acpConnection.prompt({
       sessionId: conn.sessionId,
       prompt: [{ type: 'text', text: message }],
@@ -470,6 +496,8 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
   function disconnect(sandboxName: string): void {
     const conn = connections.get(sandboxName);
     if (conn) {
+      const log = logger.child({ sandboxName });
+      log.info({ pid: conn.process.pid, hadSession: !!conn.sessionId }, 'Disconnecting ACP');
       conn.isActive = false;
       conn.listeners.clear();
       if (!conn.process.killed) {

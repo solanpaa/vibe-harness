@@ -124,13 +124,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * the completion promise when a result event arrives.
    */
   function makeEventHandler(session: ActiveSession): (event: AcpEvent) => void {
-    // Capture the generation at handler creation so we can discard stale
-    // results that arrive after a new stage has already started (fix #3).
     const capturedGeneration = session.generation;
+    const log = logger.child({ runId: session.runId, op: 'eventHandler', generation: capturedGeneration });
 
     return (event: AcpEvent) => {
       // Stale event from a prior stage — ignore
       if (session.generation !== capturedGeneration) return;
+
+      const preview = event.data
+        ? JSON.stringify(event.data).slice(0, 200)
+        : undefined;
+      log.debug({ eventType: event.type, preview }, 'ACP event received');
 
       if (event.type === 'agent_message') {
         const data = event.data as { content?: string; partial?: boolean };
@@ -249,6 +253,19 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       model,
     } = options;
 
+    log.info(
+      {
+        projectPath,
+        branchName,
+        baseBranch,
+        model,
+        agentCommand: agentDef.commandTemplate,
+        hasCredentials: !!credentials,
+        credEnvKeys: credentials?.envVars.map(e => e.key),
+      },
+      'Session create: provisioning resources',
+    );
+
     // 1. Create git worktree
     // If the run record has a parentWorktreeCommit (child of a split),
     // branch from that exact SHA instead of the symbolic baseBranch name.
@@ -340,6 +357,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const newModel = options?.model;
       const modelChanged = newModel != null && newModel !== session.currentModel;
 
+      log.info(
+        { sandboxName: session.sandboxName, newModel, currentModel: session.currentModel, modelChanged, acpActive: acp.isActive(session.sandboxName) },
+        'Session continue: evaluating reconnect',
+      );
+
       if (acp.isActive(session.sandboxName) && !modelChanged) {
         log.debug('ACP connection active, same model — ready for continuation');
         return;
@@ -387,7 +409,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     await session.mutex.runExclusive(async () => {
       // Disconnect current ACP session
-      log.info('Resetting ACP session (fresh)');
+      log.info(
+        { sandboxName: session.sandboxName, contextLength: context.summary.length, newModel: options?.model },
+        'Resetting ACP session (fresh)',
+      );
       acp.disconnect(session.sandboxName);
 
       // Reset completion + message tracking
@@ -427,6 +452,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!session) return; // Already stopped or never started
 
     const log = logger.child({ runId, op: 'session.stop' });
+    log.info(
+      { sandboxName: session.sandboxName, hasPendingCompletion: !!session.pendingCompletion },
+      'Stopping session: beginning cleanup',
+    );
 
     try {
       await session.mutex.runExclusive(async () => {
@@ -477,6 +506,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   async function sendPrompt(runId: string, message: string): Promise<void> {
     const session = getSession(runId);
+    const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
+    logger.child({ runId, op: 'session.sendPrompt' }).info(
+      { promptLength: message.length, preview: truncated },
+      'Sending prompt to agent',
+    );
     await session.mutex.runExclusive(async () => {
       await acp.sendPrompt(session.sandboxName, message);
     });

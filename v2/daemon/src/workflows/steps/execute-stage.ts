@@ -66,6 +66,23 @@ export async function executeStage(
   const db = getDb();
   const deps = { sessionManager, reviewService };
 
+  const stageStartTime = Date.now();
+  log.info(
+    {
+      stageName: stage.name,
+      stageType: stage.type,
+      round,
+      isFirstStage: input.isFirstStage,
+      isContinuation: !input.isFirstStage && !stage.freshSession,
+      freshSession: stage.freshSession,
+      hasRetryError: !!input.retryError,
+      hasRequestChanges: !!input.requestChangesComments,
+      requestChangesCount: input.requestChangesComments?.length ?? 0,
+      resolvedModel: stage.model,
+    },
+    'Stage execution starting',
+  );
+
   // ── Step 1: Idempotency check (SAD §5.3, step 1) ───────────────────
   const existing = db
     .select()
@@ -209,6 +226,8 @@ export async function executeStage(
       .run();
 
     // ── Step 5: Send prompt into ACP session ────────────────────────
+    const promptPreview = prompt.length > 500 ? prompt.slice(0, 500) + '…' : prompt;
+    log.info({ promptLength: prompt.length, preview: promptPreview }, 'Sending stage prompt to agent');
     await deps.sessionManager.sendPrompt(runId, prompt);
 
     // ── Step 6: Record user prompt in runMessages ───────────────────
@@ -238,7 +257,17 @@ export async function executeStage(
       .where(eq(schema.stageExecutions.id, execId))
       .run();
 
-    log.info({ status: result.status }, 'Stage finished');
+    log.info(
+      {
+        status: result.status,
+        hasLastAssistantMessage: !!result.lastAssistantMessage,
+        lastAssistantMessageLength: result.lastAssistantMessage?.length ?? 0,
+        error: result.error,
+        durationMs: Date.now() - stageStartTime,
+        usage: result.usage,
+      },
+      'Stage finished',
+    );
 
     return {
       status: result.status,
@@ -248,7 +277,7 @@ export async function executeStage(
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    log.error({ err }, 'Stage execution error');
+    log.error({ err, durationMs: Date.now() - stageStartTime }, 'Stage execution error');
 
     db.update(schema.stageExecutions)
       .set({

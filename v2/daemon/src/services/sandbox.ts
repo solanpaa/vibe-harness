@@ -191,7 +191,10 @@ export function createSandboxService(deps: {
         break;
     }
 
+    const log = logger.child({ sandboxName });
+    log.debug({ cmd: ['docker', ...args], policy }, 'Configuring network proxy');
     const result = await execCommand('docker', args);
+    log.debug({ exitCode: result.exitCode }, 'Network proxy result');
     if (result.exitCode !== 0) {
       throw new SandboxProvisionError(
         sandboxName,
@@ -294,8 +297,8 @@ export function createSandboxService(deps: {
 
     // Step 1: Create sandbox with docker sandbox create
     // API: docker sandbox create [--name NAME] [--template IMAGE] AGENT WORKSPACE
-    log.info('Creating Docker sandbox');
     const agentSubcommand = options.agentSubcommand ?? 'copilot';
+    log.info({ agentSubcommand, workdir: options.workdir, image: options.image }, 'Creating Docker sandbox');
     const createArgs = [
       'sandbox', 'create',
       '--name', sandboxName,
@@ -303,8 +306,13 @@ export function createSandboxService(deps: {
       agentSubcommand,
       options.workdir,
     ];
+    log.debug({ cmd: ['docker', ...createArgs] }, 'Full sandbox create command');
 
     const createResult = await execCommand('docker', createArgs);
+    log.debug(
+      { exitCode: createResult.exitCode, stdout: createResult.stdout.slice(0, 300), stderr: createResult.stderr.slice(0, 300) },
+      'Sandbox create result',
+    );
 
     if (createResult.exitCode !== 0) {
       // Idempotent: if sandbox already exists (e.g. step retry), proceed
@@ -319,15 +327,28 @@ export function createSandboxService(deps: {
     }
 
     // Step 2: Configure network proxy (SAD §6.2)
+    log.info({ networkPolicy: options.networkPolicy, allowlistCount: options.networkAllowlist?.length ?? 0 }, 'Configuring network proxy');
     await configureNetworkProxy(
       sandboxName,
       options.networkPolicy,
       options.networkAllowlist,
     );
+    log.info('Network proxy configured');
 
     // Step 3: Inject credentials (must happen before ACP session starts)
     if (options.credentials) {
+      const credSummary = {
+        envVarCount: options.credentials.envVars.length,
+        envVarKeys: options.credentials.envVars.map(e => e.key),
+        fileMountCount: options.credentials.fileMounts.length,
+        fileMountPaths: options.credentials.fileMounts.map(f => f.mountPath),
+        dockerLoginCount: options.credentials.dockerLogins.length,
+        dockerLoginRegistries: options.credentials.dockerLogins.map(l => l.registry),
+        hostDirMountCount: options.credentials.hostDirMounts.length,
+      };
+      log.info(credSummary, 'Injecting credentials');
       await injectCredentials(sandboxName, options.credentials, log);
+      log.info('Credentials injected');
     }
 
     // Step 4: Register sandbox with persisted env vars
@@ -465,9 +486,9 @@ export function createSandboxService(deps: {
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      await execCommand('docker', [
-        'sandbox', 'rm', sandboxName,
-      ]);
+      const rmArgs = ['sandbox', 'rm', sandboxName];
+      log.debug({ cmd: ['docker', ...rmArgs] }, 'Running sandbox rm');
+      await execCommand('docker', rmArgs);
     }
 
     activeSandboxes.delete(sandboxName);
@@ -537,7 +558,9 @@ export function createSandboxService(deps: {
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      await execCommand('docker', ['sandbox', 'rm', sandboxName]);
+      const rmArgs = ['sandbox', 'rm', sandboxName];
+      log.debug({ cmd: ['docker', ...rmArgs] }, 'Running sandbox rm (force)');
+      await execCommand('docker', rmArgs);
     }
 
     activeSandboxes.delete(sandboxName);
