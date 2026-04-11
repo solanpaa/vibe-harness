@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useDaemonStore } from "../stores/daemon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   CredentialSet,
   CredentialEntry,
@@ -168,17 +175,23 @@ function AddEntryForm({
 
       <div>
         <label className="block text-xs text-muted-foreground mb-1">Type</label>
-        <select
+        <Select
           value={type}
-          onChange={(e) => setType(e.target.value as CredentialEntryType)}
-          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+          onValueChange={(v) => setType(v as CredentialEntryType)}
         >
-          {ENTRY_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="w-full">
+            <SelectValue>
+              {ENTRY_TYPES.find((t) => t.value === type)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {ENTRY_TYPES.map((t) => (
+              <SelectItem key={t.value} value={t.value}>
+                {t.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <p className="text-xs text-muted-foreground mt-1">
           {ENTRY_TYPES.find((t) => t.value === type)?.description}
         </p>

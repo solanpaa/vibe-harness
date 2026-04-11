@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useDaemonStore } from "../stores/daemon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   WorkflowTemplate,
   WorkflowStage,
@@ -146,14 +153,18 @@ function StageEditor({
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-0.5">Type</label>
-              <select
+              <Select
                 value={stage.type}
-                onChange={(e) => update(idx, { type: e.target.value as "standard" | "split" })}
-                className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
+                onValueChange={(v) => update(idx, { type: v as "standard" | "split" })}
               >
-                <option value="standard">Standard</option>
-                <option value="split">Split</option>
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue>{stage.type === "split" ? "Split" : "Standard"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="split">Split</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

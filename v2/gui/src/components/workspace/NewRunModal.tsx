@@ -30,7 +30,6 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const [agentDefinitionId, setAgentDefinitionId] = useState("");
   const [description, setDescription] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
-  const [targetBranch, setTargetBranch] = useState("");
   const [credentialSetId, setCredentialSetId] = useState("");
   const [model, setModel] = useState("");
 
@@ -113,7 +112,6 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         agentDefinitionId,
         description: description.trim(),
         ...(baseBranch ? { baseBranch } : {}),
-        ...(targetBranch ? { targetBranch } : {}),
         ...(credentialSetId ? { credentialSetId } : {}),
         ...(model ? { model } : {}),
       };
@@ -128,7 +126,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     }
   }, [
     client, projectId, workflowTemplateId, agentDefinitionId,
-    description, baseBranch, targetBranch, credentialSetId, model, onCreated,
+    description, baseBranch, credentialSetId, model, onCreated,
   ]);
 
   const resetForm = () => {
@@ -237,75 +235,60 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
             />
           </FormField>
 
-          {/* Optional fields */}
-          <details className="group">
-            <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors py-1">
-              Advanced options ▸
-            </summary>
-            <div className="mt-3 space-y-4">
-              {/* Base branch */}
-              <FormField label="Base Branch">
-                <Select
-                  value={baseBranch || "default"}
-                  onValueChange={(v) => setBaseBranch(v === "default" ? "" : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Default branch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default branch</SelectItem>
-                    {branches.map((b) => (
-                      <SelectItem key={b} value={b}>
-                        {b}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
+          {/* Base branch */}
+          <FormField label="Base Branch">
+            <Select
+              value={baseBranch || "default"}
+              onValueChange={(v) => setBaseBranch(v === "default" ? "" : v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Default branch">
+                  {baseBranch || "Default branch"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default branch</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b} value={b}>
+                    {b}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
 
-              {/* Target branch */}
-              <FormField label="Target Branch">
-                <input
-                  type="text"
-                  value={targetBranch}
-                  onChange={(e) => setTargetBranch(e.target.value)}
-                  placeholder="Auto-generated if empty"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
-                />
-              </FormField>
+          {/* Credential set */}
+          <FormField label="Credential Set">
+            <Select
+              value={credentialSetId || "none"}
+              onValueChange={(v) => setCredentialSetId(v === "none" ? "" : v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="None">
+                  {credentials.find(c => c.id === credentialSetId)?.name || "None"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {credentials.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
 
-              {/* Credential set */}
-              <FormField label="Credential Set">
-                <Select
-                  value={credentialSetId || "none"}
-                  onValueChange={(v) => setCredentialSetId(v === "none" ? "" : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="None" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {credentials.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-
-              {/* Model override */}
-              <FormField label="Model Override">
-                <input
-                  type="text"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="e.g. gpt-4.1, claude-sonnet-4.5"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
-                />
-              </FormField>
-            </div>
-          </details>
+          {/* Model override */}
+          <FormField label="Model">
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="e.g. gpt-4.1, claude-sonnet-4.5"
+              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
+            />
+          </FormField>
 
           {/* Error */}
           {error && (
