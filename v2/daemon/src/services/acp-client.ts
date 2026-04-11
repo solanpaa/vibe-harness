@@ -346,12 +346,25 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
               eventData.content = content.text;
             }
             break;
-          case 'tool_call':
+          case 'tool_call': {
             eventType = 'tool_call';
+            // Extract tool name from ACP event data
+            const rawInput = (update.rawInput as Record<string, unknown>) ?? {};
+            const toolName = (rawInput.description as string)
+              ?? (update.toolName as string)
+              ?? (content?.name as string)
+              ?? 'tool';
+            eventData.name = toolName;
+            eventData.content = toolName;
+            eventData.arguments = rawInput;
             break;
-          case 'tool_call_update':
+          }
+          case 'tool_call_update': {
             eventType = 'tool_result';
+            eventData.output = (update.output as string) ?? (content?.text as string) ?? '';
+            eventData.callId = update.toolCallId ?? update.id ?? '';
             break;
+          }
           case 'agent_turn_end':
             conn.receivedResult = true;
             eventType = 'result';

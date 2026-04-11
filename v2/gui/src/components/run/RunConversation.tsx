@@ -25,9 +25,10 @@ interface MessageBlock {
 function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   let pendingAssistant: { content: string; stageName: string; timestamp: string } | null = null;
+  let pendingThought: { content: string; stageName: string; timestamp: string } | null = null;
 
   const flushAssistant = () => {
-    if (pendingAssistant) {
+    if (pendingAssistant && pendingAssistant.content.trim()) {
       blocks.push({
         id: `assistant-${blocks.length}`,
         type: "assistant",
@@ -39,39 +40,65 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
     }
   };
 
+  const flushThought = () => {
+    if (pendingThought && pendingThought.content.trim()) {
+      blocks.push({
+        id: `thought-${blocks.length}`,
+        type: "thought",
+        content: pendingThought.content,
+        stageName: pendingThought.stageName,
+        timestamp: pendingThought.timestamp,
+      });
+      pendingThought = null;
+    }
+  };
+
   for (const event of events) {
     const { data, stageName } = event;
-    if (!data) continue; // Guard against malformed events
+    if (!data) continue;
     const ts = (data as any).timestamp ?? (data.metadata as any)?.timestamp ?? new Date().toISOString();
 
     switch (data.eventType) {
       case "agent_message": {
-        if (!pendingAssistant) {
-          pendingAssistant = { content: "", stageName, timestamp: ts };
+        flushThought();
+        if (data.role === "user") {
+          // User prompt (from REST or streaming)
+          flushAssistant();
+          blocks.push({
+            id: `user-${blocks.length}`,
+            type: "user",
+            content: data.content,
+            stageName,
+            timestamp: ts,
+          });
+        } else {
+          if (!pendingAssistant) {
+            pendingAssistant = { content: "", stageName, timestamp: ts };
+          }
+          pendingAssistant.content += data.content;
         }
-        pendingAssistant.content += data.content;
         break;
       }
       case "agent_thought": {
         flushAssistant();
-        blocks.push({
-          id: `thought-${blocks.length}`,
-          type: "thought",
-          content: data.content,
-          stageName,
-          timestamp: ts,
-        });
+        // Consolidate consecutive thought chunks
+        if (!pendingThought) {
+          pendingThought = { content: "", stageName, timestamp: ts };
+        }
+        pendingThought.content += data.content;
         break;
       }
       case "tool_call": {
         flushAssistant();
+        flushThought();
+        const toolName = data.metadata?.toolName || data.content?.replace(/^Tool call:\s*/i, "") || "tool";
         blocks.push({
           id: `tool-${blocks.length}`,
           type: "tool_call",
           content: data.content,
           stageName,
           timestamp: ts,
-          toolName: data.metadata?.toolName,
+          toolName,
           toolArgs: data.metadata?.toolArgs
             ? JSON.stringify(data.metadata.toolArgs, null, 2)
             : undefined,
@@ -79,6 +106,7 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
         break;
       }
       case "tool_result": {
+        flushThought();
         blocks.push({
           id: `tool-result-${blocks.length}`,
           type: "tool_result",
@@ -91,6 +119,7 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
       }
       case "intervention": {
         flushAssistant();
+        flushThought();
         blocks.push({
           id: `user-${blocks.length}`,
           type: "user",
@@ -103,6 +132,7 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
       }
       case "session_update": {
         flushAssistant();
+        flushThought();
         blocks.push({
           id: `session-${blocks.length}`,
           type: "session_boundary",
@@ -113,8 +143,8 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
         break;
       }
       case "system_prompt": {
-        // Usually not shown, but include as system
         flushAssistant();
+        flushThought();
         blocks.push({
           id: `system-${blocks.length}`,
           type: "system",
@@ -126,11 +156,13 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
       }
       case "result": {
         flushAssistant();
+        flushThought();
         break;
       }
     }
   }
 
+  flushThought();
   flushAssistant();
   return blocks;
 }
