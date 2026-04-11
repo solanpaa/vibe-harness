@@ -161,10 +161,17 @@ function AgentRow({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {agent.supportsStreaming && <span title="Streaming">🔄</span>}
-        {agent.supportsContinue && <span title="Continue">⏩</span>}
-        {agent.supportsIntervention && <span title="Intervention">✋</span>}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {agent.supportsStreaming && (
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">streaming</span>
+        )}
+        {agent.supportsContinue && (
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">continue</span>
+        )}
+        {agent.supportsIntervention && (
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">intervention</span>
+        )}
+        <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{agent.outputFormat}</span>
       </div>
 
       {!agent.isBuiltIn && (
