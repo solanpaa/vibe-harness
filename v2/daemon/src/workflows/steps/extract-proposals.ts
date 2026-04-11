@@ -35,15 +35,21 @@ export interface ExtractProposalsDeps {
   proposalService: ProposalService;
 }
 
+function resolveGlobalDeps(): ExtractProposalsDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 export async function extractProposals(
   input: ExtractProposalsInput,
-  deps: ExtractProposalsDeps,
 ): Promise<ProposalRecord[]> {
   const { runId, stageName, agentOutput } = input;
   const log = logger.child({ runId, stageName });
   const db = getDb();
+  const { proposalService } = resolveGlobalDeps();
 
   // ── Idempotency: check if proposals already exist for this stage ──
   // Fix #3: Check both existence AND completeness. We parse the expected
@@ -61,7 +67,7 @@ export async function extractProposals(
 
   // Parse to determine expected count (deterministic — same input always
   // produces the same parsed output).
-  const parsed = deps.proposalService.parseProposals(agentOutput);
+  const parsed = proposalService.parseProposals(agentOutput);
 
   if (existing.length > 0 && existing.length === parsed.length) {
     log.info({ count: existing.length }, 'Proposals already extracted, returning cached');
@@ -83,7 +89,7 @@ export async function extractProposals(
     }
 
     // Use the service's idempotent createProposal (UNIQUE constraint)
-    const created = deps.proposalService.createProposal({
+    const created = proposalService.createProposal({
       workflowRunId: runId,
       stageName,
       title: p.title,

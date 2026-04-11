@@ -11,7 +11,8 @@ import { start, resumeHook } from 'workflow/api';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
-import { runWorkflowPipeline, setPipelineDeps as setPipelineDepsInternal, type PipelineDeps } from '../workflows/pipeline.js';
+import { runWorkflowPipeline, type PipelineDeps } from '../workflows/pipeline.js';
+import { setPipelineDeps as setPipelineDepsInternal } from '../workflows/pipeline-deps.js';
 import {
   stageFailedHook,
   reviewDecisionHook,

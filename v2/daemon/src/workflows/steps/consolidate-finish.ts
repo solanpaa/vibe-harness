@@ -27,6 +27,12 @@ export interface ConsolidateFinishDeps {
   sessionManager: SessionManager;
 }
 
+function resolveGlobalDeps(): ConsolidateFinishDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 /**
@@ -40,11 +46,11 @@ export interface ConsolidateFinishDeps {
  */
 export async function consolidateFinish(
   input: ConsolidateFinishInput,
-  deps: ConsolidateFinishDeps,
 ): Promise<void> {
   const { parentRunId, parallelGroupId } = input;
   const log = logger.child({ parentRunId, parallelGroupId, op: 'consolidate-finish' });
   const db = getDb();
+  const deps = resolveGlobalDeps();
 
   // ── Load journal — must exist and be in 'merged' phase ────────────
   const journal = db

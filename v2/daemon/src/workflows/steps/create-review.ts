@@ -33,6 +33,12 @@ export interface CreateReviewDeps {
   reviewService: ReviewService;
 }
 
+function resolveGlobalDeps(): CreateReviewDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // Consolidation sentinel (matches schema.ts convention)
 const CONSOLIDATION_SENTINEL = '__consolidation__';
 
@@ -40,11 +46,11 @@ const CONSOLIDATION_SENTINEL = '__consolidation__';
 
 export async function createReview(
   input: CreateReviewInput,
-  deps: CreateReviewDeps,
 ): Promise<CreateReviewOutput> {
   const { runId, stageName, round, type } = input;
   const log = logger.child({ runId, stageName, round, type });
   const db = getDb();
+  const { reviewService } = resolveGlobalDeps();
   const dbStageName = stageName ?? CONSOLIDATION_SENTINEL;
 
   // ── Idempotency: UNIQUE(workflowRunId, stageName, round, type) ────
@@ -86,7 +92,7 @@ export async function createReview(
   }
 
   // ── Generate diff via reviewService ───────────────────────────────
-  const reviewResult = await deps.reviewService.createReview({
+  const reviewResult = await reviewService.createReview({
     runId,
     stageName: dbStageName,
     round,

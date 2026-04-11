@@ -38,15 +38,21 @@ export interface LaunchChildrenDeps {
   branchNamer: BranchNamer;
 }
 
+function resolveGlobalDeps(): LaunchChildrenDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 export async function launchChildren(
   input: LaunchChildrenInput,
-  deps: LaunchChildrenDeps,
 ): Promise<LaunchChildrenOutput> {
   const { parentRunId, selectedProposalIds, projectId, agentDefinitionId, credentialSetId } = input;
   const log = logger.child({ parentRunId });
   const db = getDb();
+  const deps = resolveGlobalDeps();
 
   // ── Idempotency: check if parallel group already exists ───────────
   // Fix #3: On replay, check which children were already created and

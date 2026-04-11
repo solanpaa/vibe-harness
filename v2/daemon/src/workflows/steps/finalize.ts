@@ -30,15 +30,21 @@ export interface FinalizeDeps {
   sessionManager: SessionManager;
 }
 
+function resolveGlobalDeps(): FinalizeDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 export async function finalize(
   input: FinalizeInput,
-  deps: FinalizeDeps,
 ): Promise<FinalizeOutput> {
   const { runId, targetBranch } = input;
   const log = logger.child({ runId, targetBranch });
   const db = getDb();
+  const deps = resolveGlobalDeps();
 
   // ── Load or resume journal (SAD §5.5.3) ───────────────────────────
   let journal = db

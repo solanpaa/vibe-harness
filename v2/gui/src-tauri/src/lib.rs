@@ -283,8 +283,16 @@ fn get_daemon_status(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init());
+
+    // MCP Bridge — dev-only, enables AI-driven UI automation & debugging
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+    }
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![read_state_file, get_daemon_status])
         .setup(|app| {
             let handle = app.handle().clone();

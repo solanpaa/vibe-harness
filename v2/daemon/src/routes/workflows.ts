@@ -26,7 +26,7 @@ workflows.get('/api/workflows', (c) => {
     ...toTemplate(r),
     stageCount: JSON.parse(r.stages).length as number,
   }));
-  return c.json({ workflows: templates });
+  return c.json({ templates: templates });
 });
 
 // POST /api/workflows — create template

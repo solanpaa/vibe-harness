@@ -1,16 +1,24 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { join } from 'path';
 import * as schema from './schema.js';
 import { seed } from './seed.js';
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 let sqlite: Database.Database | null = null;
+let resolvedDbPath: string | null = null;
 
-export function getDb(dbPath = './vibe-harness.db') {
+export function getDb(dbPath?: string) {
   if (db) return db;
 
-  sqlite = new Database(dbPath);
+  // Use provided path, previously resolved path, or derive from HOME
+  const effectivePath = dbPath ?? resolvedDbPath
+    ?? join(process.env.HOME ?? process.env.USERPROFILE ?? '.', '.vibe-harness', 'vibe-harness.db');
+
+  resolvedDbPath = effectivePath;
+
+  sqlite = new Database(effectivePath);
 
   // WAL mode for concurrent read performance
   sqlite.pragma('journal_mode = WAL');

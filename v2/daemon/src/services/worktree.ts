@@ -174,7 +174,9 @@ export function createWorktreeService(deps: {
 
       if (result.exitCode !== 0) {
         if (result.stderr.includes('already exists')) {
-          throw new BranchAlreadyExistsError(branchName);
+          // Idempotent: if branch exists (e.g. step retry), reuse existing worktree
+          log.info({ branchName }, 'Branch already exists, reusing worktree');
+          return { worktreePath, branch: branchName };
         }
         throw new WorktreeCreateError(branchName, result.stderr);
       }

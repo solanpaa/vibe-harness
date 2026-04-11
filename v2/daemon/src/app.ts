@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { authMiddleware } from "./lib/auth.js";
 import { health } from "./routes/health.js";
 import { projects } from "./routes/projects.js";
@@ -10,6 +11,13 @@ import { reviews } from "./routes/reviews.js";
 import { proposals } from "./routes/proposals.js";
 
 const app = new Hono();
+
+// CORS — allow Tauri webview and dev server origins
+app.use("*", cors({
+  origin: ["tauri://localhost", "https://tauri.localhost", "http://localhost:1420", "http://127.0.0.1:1420"],
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization"],
+}));
 
 // Auth middleware — skips /health automatically
 app.use("*", authMiddleware());

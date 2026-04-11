@@ -42,22 +42,29 @@ export interface ExecuteStageOutput {
   error?: string;
 }
 
-// ── Dependencies (injected by pipeline) ──────────────────────────────
+// ── Dependencies (resolved from globalThis at runtime) ───────────────
 
 export interface ExecuteStageDeps {
   sessionManager: SessionManager;
   reviewService: ReviewService;
 }
 
+function resolveGlobalDeps(): ExecuteStageDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 export async function executeStage(
   input: ExecuteStageInput,
-  deps: ExecuteStageDeps,
 ): Promise<ExecuteStageOutput> {
+  const { sessionManager, reviewService } = resolveGlobalDeps() as ExecuteStageDeps;
   const { runId, stage, round } = input;
   const log = logger.child({ runId, stage: stage.name, round });
   const db = getDb();
+  const deps = { sessionManager, reviewService };
 
   // ── Step 1: Idempotency check (SAD §5.3, step 1) ───────────────────
   const existing = db

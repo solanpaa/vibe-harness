@@ -272,8 +272,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     log.info({ sandboxName }, 'Provisioning sandbox');
     await sandbox.getOrCreate({
       runId,
-      image: agentDef.dockerImage ?? 'vibe-harness/copilot:latest',
+      image: agentDef.dockerImage,
       workdir: worktreePath,
+      agentSubcommand: 'copilot',
       networkPolicy: 'open',
       credentials,
     });

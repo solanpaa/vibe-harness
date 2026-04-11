@@ -35,15 +35,21 @@ export interface ConsolidateDeps {
   worktreeService: WorktreeService;
 }
 
+function resolveGlobalDeps(): ConsolidateDeps {
+  const deps = (globalThis as any).__vibe_pipeline_deps__;
+  if (!deps) throw new Error('Pipeline deps not initialized');
+  return deps;
+}
+
 // ── Step implementation ──────────────────────────────────────────────
 
 export async function consolidate(
   input: ConsolidateInput,
-  deps: ConsolidateDeps,
 ): Promise<ConsolidateOutput> {
   const { parentRunId, parallelGroupId } = input;
   const log = logger.child({ parentRunId, parallelGroupId });
   const db = getDb();
+  const deps = resolveGlobalDeps();
 
   // ── Load or resume journal (SAD §5.5.3) ───────────────────────────
   let journal = db

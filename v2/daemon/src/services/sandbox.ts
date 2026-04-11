@@ -34,10 +34,12 @@ export interface SandboxCredentials {
 export interface SandboxCreateOptions {
   /** Workflow run ID — used to derive sandbox name: vibe-<first12chars> */
   runId: string;
-  /** Docker image to use (from agent definition) */
-  image: string;
+  /** Docker image to use as template (from agent definition). Optional — agent default used if not set. */
+  image?: string;
   /** Host path to mount as the working directory (worktree path) */
   workdir: string;
+  /** Agent subcommand for docker sandbox (e.g. 'copilot', 'claude', 'codex') */
+  agentSubcommand?: string;
   /** Network policy for this project (SAD §6.2) */
   networkPolicy: NetworkPolicy;
   /** Network allowlist hosts (only used when networkPolicy is 'allowlist') */
@@ -286,24 +288,34 @@ export function createSandboxService(deps: {
     const log = logger.child({ sandboxName, runId: options.runId });
 
     if (activeSandboxes.has(sandboxName)) {
-      throw new SandboxAlreadyExistsError(sandboxName);
+      log.info('Sandbox already tracked, reusing');
+      return sandboxName;
     }
 
-    // Step 1: Create sandbox (mount worktree as /workspace)
+    // Step 1: Create sandbox with docker sandbox create
+    // API: docker sandbox create [--name NAME] [--template IMAGE] AGENT WORKSPACE
     log.info('Creating Docker sandbox');
-    const createResult = await execCommand('docker', [
+    const agentSubcommand = options.agentSubcommand ?? 'copilot';
+    const createArgs = [
       'sandbox', 'create',
       '--name', sandboxName,
-      '--image', options.image,
-      '-v', `${options.workdir}:/workspace`,
-      ...buildHostDirMountArgs(options.credentials?.hostDirMounts ?? []),
-    ]);
+      ...(options.image ? ['--template', options.image] : []),
+      agentSubcommand,
+      options.workdir,
+    ];
+
+    const createResult = await execCommand('docker', createArgs);
 
     if (createResult.exitCode !== 0) {
-      throw new SandboxProvisionError(
-        sandboxName,
-        `docker sandbox create failed: ${createResult.stderr}`,
-      );
+      // Idempotent: if sandbox already exists (e.g. step retry), proceed
+      if (createResult.stderr.includes('already exists')) {
+        log.info('Sandbox already exists, reusing');
+      } else {
+        throw new SandboxProvisionError(
+          sandboxName,
+          `docker sandbox create failed: ${createResult.stderr}`,
+        );
+      }
     }
 
     // Step 2: Configure network proxy (SAD §6.2)

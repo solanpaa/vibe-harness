@@ -15,6 +15,14 @@ import { eq, and, inArray } from 'drizzle-orm';
 import * as schema from "./db/schema.js";
 import { reconcileOnStartup } from "./lib/reconcile.js";
 import { createSandboxService, type SandboxService } from "./services/sandbox.js";
+import { createWorktreeService } from "./services/worktree.js";
+import { createAcpClient } from "./services/acp-client.js";
+import { createSessionManager } from "./services/session-manager.js";
+import { createReviewService } from "./services/review-service.js";
+import { createProposalService } from "./services/proposal-service.js";
+import { createBranchNamer } from "./services/branch-namer.js";
+import { parseUnifiedDiff } from "./services/diff-parser.js";
+import { setPipelineDeps } from "./routes/runs.js";
 import * as streamingService from "./services/streaming-service.js";
 
 // ── Single-instance guard ───────────────────────────────────────────
@@ -52,6 +60,35 @@ logger.info("Database initialized");
 
 // Create sandbox service for reconciliation and shutdown
 const sandboxService: SandboxService = createSandboxService({ logger });
+
+// Create all services needed by the workflow pipeline
+const worktreeService = createWorktreeService({ logger, diffParser: { parseUnifiedDiff } });
+const acpClient = createAcpClient({ logger });
+const branchNamer = createBranchNamer({ logger });
+const sessionManager = createSessionManager({
+  sandbox: sandboxService,
+  worktree: worktreeService,
+  acp: acpClient,
+  branchNamer,
+  logger,
+});
+const reviewService = createReviewService({
+  logger,
+  db,
+  worktreeService,
+  sandboxService,
+});
+const proposalService = createProposalService({ logger, db });
+
+// Inject pipeline deps so workflow runs can resolve them
+setPipelineDeps({
+  sessionManager,
+  reviewService,
+  worktreeService,
+  proposalService,
+  branchNamer,
+});
+logger.info("Pipeline deps initialized");
 
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
 // stop orphaned sandboxes, replay pending hook resumes.
