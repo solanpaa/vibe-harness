@@ -154,9 +154,9 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | ID | Requirement | Priority |
 |----|------------|----------|
 | FR-C1 | User can create named credential sets | Must |
-| FR-C2 | Credential entries support types: environment variable, file mount, Docker login | Must |
+| FR-C2 | Credential entries support types: environment variable, file mount, Docker login, host directory mount (read-only bind mount of a host directory into sandbox, e.g. `~/.azure`), and command extraction (run a host command at boot to capture a token, e.g. `az account get-access-token`) | Must |
 | FR-C3 | Credential values are encrypted at rest using AES-256. Encryption key stored in macOS Keychain or Linux libsecret. Fallback: key stored in `~/.vibe-harness/encryption.key` with 0600 permissions | Must |
-| FR-C4 | Credentials are injected into Docker sandboxes at workflow run start: env vars via `-e`, file mounts via stdin pipe to `tee`, Docker logins via `docker login --password-stdin` | Must |
+| FR-C4 | Credentials are injected into Docker sandboxes at workflow run start: env vars via `-e`, file mounts via stdin pipe, Docker logins via `--password-stdin`, host directories via read-only bind mount, command extractions run on host before sandbox exec with output stored as env var | Must |
 | FR-C5 | System maintains an audit log of credential access (create, delete, access-by-workflow-run) | Should |
 | FR-C6 | Credential sets can be scoped to a project or global. Project-scoped sets are only visible when that project is selected | Should |
 | FR-C7 | Credential values are never returned to the GUI in plaintext. API returns masked values (`***`) | Must |
@@ -214,7 +214,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | NFR-S3 | Credentials encrypted at rest using AES-256. Key stored in macOS Keychain / Linux libsecret, with file-based fallback (0600 permissions) | Must |
 | NFR-S4 | Daemon binds to localhost only — no network exposure | Must |
 | NFR-S5 | Git ref arguments validated to prevent command injection (block backticks, $, ;, pipes, ..) | Must |
-| NFR-S6 | Docker sandboxes: no host filesystem mounts beyond the project worktree directory. Network egress controlled by `docker sandbox network proxy` | Must |
+| NFR-S6 | Docker sandboxes mount the project worktree (read-write) plus any configured host directory mounts (read-only). Network: outbound access allowed by default (agents need package registries, APIs). Configurable per-project to restrict to localhost-only or specific host allowlists | Must |
 | NFR-S7 | Credential values never appear in daemon logs, streaming output, or GUI-facing API responses (always masked) | Must |
 
 ### 3.5 User Experience

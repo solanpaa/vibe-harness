@@ -72,7 +72,7 @@ Vibe Harness v2 is a desktop-native AI coding agent orchestrator. It consists of
 3. **All mutations go through the daemon API.** No direct DB access from GUI. No state mutations in the client.
 4. **Streaming is push-based.** Agent output flows: Docker stdio → daemon ACP client → WebSocket → GUI. GUI subscribes, daemon pushes.
 5. **Idempotent commands.** All mutating API operations are safe to retry.
-6. **Continuous conversation by default.** Within a workflow run, the agent's ACP session persists across stages (`--continue`). `freshSession` marks a boundary but prior messages are always retained in the log.
+6. **Continuous conversation by default.** Within a workflow run, the agent's ACP session persists across stages (`--continue`). `freshSession` marks a boundary but prior messages are always retained in the session log (`runMessages` table — see §4.2).
 
 ---
 
@@ -250,31 +250,39 @@ gui/
 
 #### 2.2.2 Multi-Window Architecture
 
-Tauri supports multiple `WebviewWindow` instances. This is a primary v2 feature (NFR-U1).
+By default, everything works within a **single main window**. Multi-window is an optional capability — users can pop out specific views into separate OS windows when needed (e.g., watching a workflow run while reviewing a diff in another window).
 
-**Window types:**
-- **Main window** — Workspace: run feed + detail panel (always open)
-- **Detached detail windows** — Run detail, Review panel, or Workflow view popped out into separate OS windows
-
-**Architecture:**
+**Default: Single-window layout**
 ```
-┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────────┐
-│  Main Window          │   │  Detached Window 1    │   │  Detached Window 2    │
-│  (Workspace)          │   │  (Run Detail #42)     │   │  (Review #17)         │
-│                       │   │                       │   │                       │
-│  ┌─────────────────┐  │   │  ┌─────────────────┐  │   │  ┌─────────────────┐  │
-│  │ Zustand Store   │  │   │  │ Zustand Store   │  │   │  │ Zustand Store   │  │
-│  │ (independent)   │  │   │  │ (independent)   │  │   │  │ (independent)   │  │
-│  └────────┬────────┘  │   │  └────────┬────────┘  │   │  └────────┬────────┘  │
-│           │            │   │           │            │   │           │            │
-│  ┌────────▼────────┐  │   │  ┌────────▼────────┐  │   │  ┌────────▼────────┐  │
-│  │ WebSocket conn  │  │   │  │ WebSocket conn  │  │   │  │ WebSocket conn  │  │
-│  │ (own connection)│  │   │  │ (own connection)│  │   │  │ (own connection)│  │
-│  └─────────────────┘  │   │  └─────────────────┘  │   │  └─────────────────┘  │
-└──────────────────────┘   └──────────────────────┘   └──────────────────────┘
-         │                           │                           │
-         └───────────────────────────┴───────────────────────────┘
-                              Daemon (localhost HTTP + WS)
+┌──────────────────────────────────────────────────────┐
+│  Main Window (Workspace)                              │
+│  ┌────────────────┐  ┌────────────────────────────┐  │
+│  │  Run Feed       │  │  Detail Panel               │  │
+│  │  (left sidebar) │  │  (run detail / review /     │  │
+│  │                 │  │   workflow view / settings)  │  │
+│  └────────────────┘  └────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+```
+
+**Pop-out support:** User can open a detail view (workflow run, review, streaming output) in a separate OS window via right-click → "Open in New Window" or a pop-out button. This creates a Tauri `WebviewWindow`.
+
+**Architecture (when pop-out is used):**
+```
+┌──────────────────────┐   ┌──────────────────────┐
+│  Main Window          │   │  Pop-out Window       │
+│  (Workspace)          │   │  (Run Detail #42)     │
+│                       │   │                       │
+│  ┌─────────────────┐  │   │  ┌─────────────────┐  │
+│  │ Zustand Store   │  │   │  │ Zustand Store   │  │
+│  │ (independent)   │  │   │  │ (independent)   │  │
+│  └────────┬────────┘  │   │  └────────┬────────┘  │
+│  ┌────────▼────────┐  │   │  ┌────────▼────────┐  │
+│  │ WebSocket conn  │  │   │  │ WebSocket conn  │  │
+│  └─────────────────┘  │   │  └─────────────────┘  │
+└──────────────────────┘   └──────────────────────┘
+         │                           │
+         └───────────────────────────┘
+                    Daemon (localhost HTTP + WS)
 ```
 
 **State model:**
@@ -287,8 +295,8 @@ Tauri supports multiple `WebviewWindow` instances. This is a primary v2 feature 
 **Window lifecycle:**
 - User right-clicks run → "Open in New Window" → Tauri creates `new WebviewWindow({ url: '/run/42' })`
 - New window bootstraps: read auth token, connect WS, fetch run data, subscribe to run stream
-- Main window's run feed continues to show status updates for all runs (including detached ones)
-- Closing a detached window has no effect on the workflow — daemon keeps running
+- Main window's run feed continues to show status updates for all runs (including popped-out ones)
+- Closing a pop-out window has no effect on the workflow — daemon keeps running
 
 **Broadcast:**
 - Global notifications (workflow_status, review_created) are broadcast to ALL connected WS clients
@@ -610,10 +618,20 @@ credentialEntries
   id TEXT PK
   credentialSetId TEXT NOT NULL FK → credentialSets.id ON DELETE CASCADE
   key TEXT NOT NULL
-  value TEXT NOT NULL  -- encrypted (AES-256)
-  type TEXT NOT NULL  -- 'env_var' | 'file_mount' | 'docker_login'
-  mountPath TEXT
+  value TEXT NOT NULL  -- encrypted (AES-256). Content depends on type (see below)
+  type TEXT NOT NULL  -- 'env_var' | 'file_mount' | 'docker_login' | 'host_dir_mount' | 'command_extract'
+  mountPath TEXT  -- for file_mount and host_dir_mount: target path in sandbox
+  command TEXT  -- for command_extract: shell command to run on host at sandbox boot (e.g., 'az account get-access-token --query accessToken -o tsv')
   createdAt TEXT NOT NULL
+
+  -- Credential entry types:
+  -- env_var:         key = env var name, value = env var value. Injected via -e KEY=VALUE
+  -- file_mount:      key = identifier, value = file content. Injected via stdin pipe to tee <mountPath>
+  -- docker_login:    key = registry, value = JSON {username, password}. Injected via docker login --password-stdin
+  -- host_dir_mount:  key = identifier, value = host directory path (e.g., ~/.azure).
+  --                  Mounted read-only into sandbox at mountPath (e.g., /home/user/.azure)
+  -- command_extract: key = env var name to store result, command = host command to run at boot.
+  --                  Command is executed on the HOST before sandbox exec. Output stored as env var.
 
 credentialAuditLog
   id TEXT PK
@@ -1132,11 +1150,25 @@ On replay/restart, the step reads the journal and resumes from the last complete
 
 ### 6.2 Sandbox Isolation
 
-- Docker sandboxes mount ONLY the project worktree directory (read-write)
-- No host filesystem access beyond the worktree
-- Network: `docker sandbox network proxy` with localhost allowlist only
-- Credentials injected via stdin pipe (env vars via `-e`, files via `tee`, logins via `docker login --password-stdin`) — never mounted as files from host
-- Sandbox name: `vibe-<shortId>` derived from workflow run ID
+**Filesystem:**
+- Docker sandboxes mount the project worktree directory (read-write)
+- Additional host directories can be mounted read-only via `host_dir_mount` credential entries (e.g., `~/.azure` for Azure CLI credentials)
+- No other host filesystem access
+
+**Network:**
+- **Outbound access is allowed by default** — agents typically need package registries (npm, pip), APIs, etc.
+- `docker sandbox network proxy` configured with `--allow-host *` by default
+- Configurable per-project: can be restricted to localhost-only or specific host allowlists for security-sensitive projects
+- Network policy is a project-level setting (stored in `projects.networkPolicy`: `'open' | 'localhost_only' | 'allowlist'`)
+
+**Credential injection:**
+- `env_var`: injected via `-e KEY=VALUE` on sandbox exec
+- `file_mount`: content piped via stdin to `tee <mountPath>` inside sandbox
+- `docker_login`: `docker login <registry> --password-stdin` inside sandbox
+- `host_dir_mount`: mounted as read-only bind mount at `<mountPath>` (e.g., `-v ~/.azure:/home/user/.azure:ro`)
+- `command_extract`: command run on HOST before sandbox exec, output captured as env var (e.g., `az account get-access-token` → injected as `AZURE_TOKEN`)
+
+**Sandbox naming:** `vibe-<shortId>` derived from workflow run ID
 
 ---
 
