@@ -187,3 +187,28 @@ export class SandboxExecError extends AppError {
     );
   }
 }
+
+// ── Credential errors ───────────────────────────────────────────────
+
+export class CredentialDecryptionError extends AppError {
+  readonly code = 'CREDENTIAL_DECRYPTION_ERROR';
+  readonly httpStatus = 500;
+  constructor(entryId: string, reason: string) {
+    super(`Failed to decrypt credential entry '${entryId}': ${reason}`, {
+      entryId,
+      reason,
+    });
+  }
+}
+
+export class CommandExtractError extends AppError {
+  readonly code = 'COMMAND_EXTRACT_ERROR';
+  readonly httpStatus = 500;
+  constructor(key: string, command: string, stderr: string) {
+    super(`Command extract failed for '${key}': ${command}`, {
+      key,
+      command,
+      stderr,
+    });
+  }
+}

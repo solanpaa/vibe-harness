@@ -16,6 +16,13 @@ import type {
   CreateWorkflowTemplateRequest,
   UpdateWorkflowTemplateRequest,
   WorkspaceSummaryResponse,
+  CredentialSetListResponse,
+  CredentialSetDetailResponse,
+  CreateCredentialSetRequest,
+  CreateCredentialEntryRequest,
+  CredentialAuditResponse,
+  CredentialSet,
+  CredentialEntry,
 } from "@vibe-harness/shared";
 
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
@@ -118,6 +125,10 @@ export class DaemonClient {
     return this.fetch<WorkflowRunDetailResponse>(`/api/runs/${id}`);
   }
 
+  async getRunMessages(id: string): Promise<WorkflowRunMessagesResponse> {
+    return this.fetch<WorkflowRunMessagesResponse>(`/api/runs/${id}/messages`);
+  }
+
   // ── Projects ──────────────────────────────────────────────────────
 
   async listProjects(): Promise<ProjectListResponse> {
@@ -204,5 +215,43 @@ export class DaemonClient {
 
   async deleteWorkflowTemplate(id: string): Promise<void> {
     await this.fetch<void>(`/api/workflows/${id}`, { method: "DELETE" });
+  }
+
+  // ── Credentials ──────────────────────────────────────────────────────
+
+  async listCredentialSets(projectId?: string): Promise<CredentialSetListResponse> {
+    const params = projectId ? `?projectId=${projectId}` : "";
+    return this.fetch<CredentialSetListResponse>(`/api/credentials${params}`);
+  }
+
+  async getCredentialSet(id: string): Promise<CredentialSetDetailResponse> {
+    return this.fetch<CredentialSetDetailResponse>(`/api/credentials/${id}`);
+  }
+
+  async createCredentialSet(data: CreateCredentialSetRequest): Promise<CredentialSet> {
+    return this.fetch<CredentialSet>("/api/credentials", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCredentialSet(id: string): Promise<void> {
+    await this.fetch<void>(`/api/credentials/${id}`, { method: "DELETE" });
+  }
+
+  async addCredentialEntry(setId: string, data: CreateCredentialEntryRequest): Promise<CredentialEntry> {
+    return this.fetch<CredentialEntry>(`/api/credentials/${setId}/entries`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCredentialEntry(setId: string, entryId: string): Promise<void> {
+    await this.fetch<void>(`/api/credentials/${setId}/entries/${entryId}`, { method: "DELETE" });
+  }
+
+  async getCredentialAuditLog(credentialSetId?: string): Promise<CredentialAuditResponse> {
+    const params = credentialSetId ? `?credentialSetId=${credentialSetId}` : "";
+    return this.fetch<CredentialAuditResponse>(`/api/credentials/audit${params}`);
   }
 }

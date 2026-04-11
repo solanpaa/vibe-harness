@@ -4,15 +4,15 @@ import { z } from 'zod';
 import { nonEmptyString, uuidSchema } from './shared.js';
 
 export const createProjectSchema = z.object({
-  name: nonEmptyString.max(200),
+  name: nonEmptyString.max(100),
   localPath: nonEmptyString.max(1024),
-  description: z.string().max(2000).optional(),
-  defaultCredentialSetId: uuidSchema.optional(),
+  description: z.string().max(500).nullable().optional(),
+  defaultCredentialSetId: uuidSchema.nullable().optional(),
 });
 
 export const updateProjectSchema = z.object({
-  name: nonEmptyString.max(200).optional(),
-  description: z.string().max(2000).optional(),
+  name: nonEmptyString.max(100).optional(),
+  description: z.string().max(500).nullable().optional(),
   defaultCredentialSetId: uuidSchema.nullable().optional(),
 });
 

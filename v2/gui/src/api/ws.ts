@@ -16,13 +16,13 @@ export interface WebSocketConfig {
   initialReconnectDelay?: number;
   /** Maximum reconnect delay in ms. Default 30000. */
   maxReconnectDelay?: number;
-  /** Max reconnect attempts before giving up. Default Infinity. */
+  /** Max reconnect attempts before giving up. Default 10. */
   maxReconnectAttempts?: number;
 }
 
 // ── State ──
 
-export type WebSocketState = 'connecting' | 'open' | 'closing' | 'closed' | 'reconnecting';
+export type WebSocketState = 'connecting' | 'open' | 'closing' | 'closed' | 'reconnecting' | 'failed';
 
 type MessageListener = (msg: ServerMessage) => void;
 type StateListener = (state: WebSocketState) => void;
@@ -38,6 +38,7 @@ export class WebSocketManager {
   private subscriptions = new Map<string, number>(); // runId → lastSeq
   private messageListeners = new Set<MessageListener>();
   private stateListeners = new Set<StateListener>();
+  private errorListeners = new Set<(error: Error) => void>();
 
   constructor(private config: WebSocketConfig) {}
 
@@ -100,6 +101,16 @@ export class WebSocketManager {
     this.setState('closed');
   }
 
+  /** Reconnect to a new URL (e.g. daemon port changed). */
+  reconnectToNewUrl(getUrl: () => string, getAuthToken: () => string): void {
+    this.config.getUrl = getUrl;
+    this.config.getAuthToken = getAuthToken;
+    this.shouldReconnect = true;
+    this.reconnectAttempts = 0;
+    this.disconnect();
+    this.connect();
+  }
+
   // ── Subscriptions ──
 
   /** Subscribe to a run's streaming output (CDD-api §12.2). */
@@ -126,6 +137,12 @@ export class WebSocketManager {
   onStateChange(listener: StateListener): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
+  }
+
+  /** Register listener for errors (e.g. max reconnect attempts exceeded). Returns unsubscribe fn. */
+  onError(listener: (error: Error) => void): () => void {
+    this.errorListeners.add(listener);
+    return () => this.errorListeners.delete(listener);
   }
 
   // ── Internal ──
@@ -163,9 +180,14 @@ export class WebSocketManager {
 
   /** Exponential backoff reconnect (CDD-api §12.5). */
   private attemptReconnect(): void {
-    const max = this.config.maxReconnectAttempts ?? Infinity;
+    const max = this.config.maxReconnectAttempts ?? 10;
     if (this.reconnectAttempts >= max) {
-      this.setState('closed');
+      this.shouldReconnect = false;
+      this.setState('failed');
+      const error = new Error(`WebSocket reconnect failed after ${max} attempts`);
+      for (const listener of this.errorListeners) {
+        try { listener(error); } catch { /* ignore */ }
+      }
       return;
     }
 

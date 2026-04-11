@@ -7,6 +7,7 @@
     "dev": "nitro dev",
     "build": "nitro build",
     "start": "node .output/server/index.mjs",
+    "test": "vitest run",
     "test:db": "tsx src/db/test-db.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
@@ -27,6 +28,7 @@
     "@types/node": "^22",
     "drizzle-kit": "^0.31.1",
     "tsx": "^4.7.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.4"
   }
 }
