@@ -152,22 +152,25 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (event.type === 'result') {
         const data = event.data as {
           exitCode?: number;
+          status?: string;
+          stopReason?: string;
           usage?: StageResult['usage'];
         };
 
-        const exitCode = data.exitCode ?? 1;
+        // ACP SDK prompt() returns stopReason='end_turn' on success.
+        // Process exit code may be non-zero (copilot CLI exits with 1).
+        // Treat as completed if status='completed' or stopReason='end_turn'.
+        const isSuccess = data.status === 'completed' || data.stopReason === 'end_turn';
+        const exitCode = data.exitCode ?? (isSuccess ? 0 : 1);
         const lastMsg =
           session.lastAssistantMessage ??
           (session.messageBuffer || null);
 
         const result: StageResult = {
-          status: exitCode === 0 ? 'completed' : 'failed',
+          status: isSuccess ? 'completed' : 'failed',
           lastAssistantMessage: lastMsg,
           planMarkdown: null,
-          error:
-            exitCode !== 0
-              ? `Agent exited with code ${exitCode}`
-              : undefined,
+          error: !isSuccess ? `Agent exited with code ${exitCode}` : undefined,
           usage: data.usage,
         };
 

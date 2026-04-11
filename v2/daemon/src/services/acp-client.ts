@@ -430,6 +430,9 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
 
   // ------------------------------------------------------------------
   // sendPrompt — send user message via ACP SDK
+  // The prompt() call blocks until the agent finishes. We fire it
+  // without awaiting so the caller can use awaitCompletion() separately.
+  // When prompt() resolves, we emit a synthetic 'result' event.
   // ------------------------------------------------------------------
   async function sendPrompt(sandboxName: string, message: string): Promise<void> {
     const conn = connections.get(sandboxName);
@@ -444,9 +447,34 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
     const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
     log.info({ promptLength: message.length, preview: truncated }, 'Sending prompt to ACP');
 
-    await conn.acpConnection.prompt({
+    // Fire prompt() without awaiting — it resolves when agent finishes
+    conn.acpConnection.prompt({
       sessionId: conn.sessionId,
       prompt: [{ type: 'text', text: message }],
+    }).then((result) => {
+      log.info({ stopReason: result?.stopReason }, 'ACP prompt completed');
+      conn.receivedResult = true;
+
+      const event: AcpEvent = {
+        type: 'result',
+        data: { type: 'result', status: 'completed', stopReason: result?.stopReason },
+        receivedAt: new Date().toISOString(),
+      };
+      for (const listener of conn.listeners) {
+        try { listener(event); } catch (err) {
+          log.error({ err }, 'Error in ACP event listener (result)');
+        }
+      }
+    }).catch((err) => {
+      log.error({ err: err instanceof Error ? err.message : err }, 'ACP prompt failed');
+      const event: AcpEvent = {
+        type: 'result',
+        data: { type: 'result', status: 'failed', error: err instanceof Error ? err.message : String(err) },
+        receivedAt: new Date().toISOString(),
+      };
+      for (const listener of conn.listeners) {
+        try { listener(event); } catch { /* ignore */ }
+      }
     });
   }
 
