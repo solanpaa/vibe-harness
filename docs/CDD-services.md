@@ -91,11 +91,11 @@ The `session-manager` lives in the workflow layer, not the services layer. It is
 
 interface SessionManager {
   /** Provision sandbox + worktree + ACP session for a new workflow run */
-  create(runId: string, options: SessionCreateOptions): Promise<void>;
-  /** Send prompt into existing ACP session (--continue semantics) */
+  create(runId: string, options?: { model?: string | null }): Promise<void>;
+  /** Send prompt into existing ACP session (--continue semantics). Model is NOT accepted — continuation reuses the existing session's model */
   continue(runId: string, prompt: string): Promise<void>;
   /** Start fresh ACP session in same sandbox/worktree, inject prior context */
-  fresh(runId: string, prompt: string, context: FreshSessionContext): Promise<void>;
+  fresh(runId: string, prompt: string, context: FreshSessionContext, options?: { model?: string | null }): Promise<void>;
   /** Graceful stop → force kill after timeout */
   stop(runId: string): Promise<void>;
   /** Send intervention message to running agent */
@@ -1500,6 +1500,8 @@ export interface AcpConnectOptions {
   isContinuation: boolean;
   /** Environment variables for the copilot process */
   env?: Record<string, string>;
+  /** Model override — passed as --model flag on session creation (FR-W23) */
+  model?: string | null;
 }
 
 export interface AcpConnection {
@@ -1608,13 +1610,16 @@ export function createAcpClient(deps: {
     options: AcpConnectOptions,
     onEvent: AcpEventCallback
   ): Promise<AcpConnection> {
-    const { sandboxName, isContinuation, env } = options;
+    const { sandboxName, isContinuation, env, model } = options;
     const log = logger.child({ sandboxName });
 
     // Build command
     const copilotArgs = ['--acp', '--stdio', '--yolo', '--autopilot'];
     if (isContinuation) {
       copilotArgs.push('--continue');
+    }
+    if (model) {
+      copilotArgs.push('--model', model);
     }
 
     const envArgs = Object.entries(env ?? {}).flatMap(

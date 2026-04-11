@@ -505,7 +505,7 @@ workflowTemplates
   id TEXT PK
   name TEXT NOT NULL
   description TEXT
-  stages TEXT NOT NULL  -- JSON: WorkflowStage[]
+  stages TEXT NOT NULL  -- JSON: WorkflowStage[] (each stage may include optional `model` override)
   createdAt TEXT NOT NULL
   updatedAt TEXT NOT NULL
 
@@ -520,6 +520,7 @@ workflowRuns
   title TEXT  -- auto-generated or user-provided
   status TEXT NOT NULL DEFAULT 'pending'
   currentStage TEXT
+  model TEXT  -- run-level model override (e.g., 'gpt-4.1'), passed as --model flag
   sandboxId TEXT  -- Docker sandbox name (shared across all stages)
   worktreePath TEXT  -- filesystem path to worktree (shared across all stages)
   branch TEXT  -- LLM-generated branch name
@@ -538,6 +539,7 @@ stageExecutions
   status TEXT NOT NULL DEFAULT 'pending'
   prompt TEXT  -- built prompt for this stage+round
   freshSession INTEGER NOT NULL DEFAULT 0  -- was a new ACP session started?
+  model TEXT  -- resolved model used for this execution (stage.model > run.model > agent default)
   startedAt TEXT
   completedAt TEXT
   failureReason TEXT  -- 'daemon_restart' | 'agent_error' | ...
@@ -806,25 +808,29 @@ Workflow step (execute-stage.ts):
      → If yes and completed: return cached result (idempotent replay)
      → If yes and running: skip to step 4 (resume monitoring)
      → If yes and failed: return failure
-  2. Create stageExecution record in SQLite (status: pending)
-  3. Determine session mode:
-     - First stage of run: call sessionManager.create(runId)
-       → provisions sandbox, creates worktree, starts ACP session
+  2. Resolve model: stage.model > run.model > agentDefinition.defaultModel > null (FR-W23)
+  3. Create stageExecution record in SQLite (status: pending, model: resolvedModel)
+  4. Determine session mode:
+     - First stage of run: call sessionManager.create(runId, { model })
+       → provisions sandbox, creates worktree, starts ACP session with --model flag
      - Continuation (freshSession=false): call sessionManager.continue(runId)
        → sends prompt into existing ACP session via --continue
-     - Fresh session (freshSession=true): call sessionManager.fresh(runId, context)
-       → starts new ACP session in same sandbox/worktree
+       → NOTE: model is NOT passed — continuation reuses the session's model.
+         If stage.model differs from the current session's model, a warning is logged.
+         Model changes require freshSession=true.
+     - Fresh session (freshSession=true): call sessionManager.fresh(runId, context, { model })
+       → starts new ACP session in same sandbox/worktree with --model flag
        → injects context: prior assistant messages + plan.md + review summary
-  4. Build stage prompt via buildStagePrompt():
+  5. Build stage prompt via buildStagePrompt():
      - Run description + stage template instructions
      - For request_changes rounds: append bundled review comments
-  5. Send prompt into ACP session (via stdin)
-  6. Update stageExecution.status = 'running'
-  7. Stream output events → WebSocket → GUI
-  8. Await agent completion (ACP 'result' event or exit)
-  9. Update stageExecution: status = 'completed' or 'failed'
-  10. Store usage stats, last assistant message
-  11. Return stage result to workflow orchestrator
+  6. Send prompt into ACP session (via stdin)
+  7. Update stageExecution.status = 'running'
+  8. Stream output events → WebSocket → GUI
+  9. Await agent completion (ACP 'result' event or exit)
+  10. Update stageExecution: status = 'completed' or 'failed'
+  11. Store usage stats, last assistant message
+  12. Return stage result to workflow orchestrator
 ```
 
 This model means:
@@ -985,10 +991,10 @@ class SessionManager {
 
 ```
 Stage 1 (first stage):
-  1. sessionManager.create(runId):
+  1. sessionManager.create(runId, { model }):
      a. Provisions Docker sandbox (vibe-<shortId>)
      b. Creates git worktree with LLM-generated branch name
-     c. Starts ACP: copilot --acp --stdio --yolo --autopilot
+     c. Starts ACP: copilot --acp --stdio --yolo --autopilot [--model <model>]
      d. Receives session initialization → stores acpSessionId on workflowRun
   2. Stage prompt sent into conversation
   3. Agent executes, completes
@@ -999,13 +1005,14 @@ Stage 2 (continuation, freshSession=false):
      a. Reuses same sandbox (already running)
      b. Sends new prompt via ACP stdin (--continue semantics)
      c. Agent resumes with full context from all prior stages
+     d. Model is NOT passed — continuation reuses the existing session's model
   2. Agent executes, completes
 
 Stage 3 (freshSession=true):
-  1. sessionManager.fresh(runId, context):
+  1. sessionManager.fresh(runId, context, { model }):
      a. Same sandbox + worktree (no new container)
      b. Sends ACP session reset command
-     c. Starts new ACP session within same container
+     c. Starts new ACP session within same container with --model flag
      d. Injects context into fresh prompt:
         - Agent's final assistant message from each completed stage
         - plan.md content (if captured from sandbox filesystem)
@@ -1240,7 +1247,7 @@ See SRD §2 for functional requirements. Full API spec will be in CDD.md.
 ```
 Runs:
   GET    /api/runs                    List runs (filterable by status, project)
-  POST   /api/runs                    Create + start a workflow run
+  POST   /api/runs                    Create + start a workflow run (optional `model` field for run-level override)
   GET    /api/runs/:id                Get run details (stages, current state)
   DELETE /api/runs/:id                Delete a run (must be terminal)
   PATCH  /api/runs/:id/cancel         Cancel a running workflow (ACP stop)
@@ -1386,7 +1393,7 @@ Validation fails fast with clear error before provisioning any resources.
 | §2.1 Project Management (FR-P1–P7) | §4.2 Schema (projects), §8.1 Projects endpoint |
 | §2.2 Agent Definitions (FR-A1–A5) | §4.2 Schema (agentDefinitions), §10.8 Capability Validation |
 | §2.3 Conceptual Model | §1.3 Principles, §5.1 Separation of Concerns, §5.2 Stage Execution Model |
-| §2.4 Workflow Orchestration (FR-W1–W22) | §5 Workflow Architecture, §4.1 Persistence, §5.3 Hooks, §5.4 Session Continuity |
+| §2.4 Workflow Orchestration (FR-W1–W23) | §5 Workflow Architecture, §4.1 Persistence, §5.3 Hooks, §5.4 Session Continuity |
 | §2.5 Split Execution (FR-S1–S13) | §5.4.4 Parallel Completion Hook, §5.4.5 Consolidation Review Hook, §5.5.2 Worktree Lifecycle, §5.5.3 Git Journal |
 | §2.6 Human Review (FR-R1–R11) | §5.3.1 Review Hook, §5.3.4 Conflict Hook, §3.1–3.2 REST+WS |
 | §2.7 Credentials (FR-C1–C8) | §6 Security Architecture, §4.2 Schema (credentials) |

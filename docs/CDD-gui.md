@@ -1673,7 +1673,7 @@ Template management (SRD §2.4 FR-W1, FR-W12).
 **Key interactions:**
 - Create template: name + description + stage builder
 - Edit template: add/remove/reorder stages, edit stage prompts
-- Stage editor fields: name, type (standard/split), prompt template, reviewRequired/autoAdvance toggle, freshSession toggle
+- Stage editor fields: name, type (standard/split), prompt template, reviewRequired/autoAdvance toggle, freshSession toggle, model (text input, optional — per-stage model override, FR-W23)
 - Delete template: confirmation, blocks if used by active runs
 
 ```typescript
@@ -1872,6 +1872,7 @@ interface StageTimelineProps {
 // - Stage name
 // - Status icon: ✓ completed, ● running (animated), ✕ failed, ○ pending, ⊘ skipped
 // - Round indicator (e.g., "R2" if on round 2 after request_changes)
+// - Model badge (if stage has a model override — shows resolved model, e.g., "gpt-4.1-mini")
 // - Click to scroll conversation to that stage's messages
 // - For split stages: fan-out visualization showing child count
 ```
@@ -1897,6 +1898,9 @@ interface NewRunModalProps {
 //    Shows project-scoped sets + global sets
 // 7. Agent (dropdown, optional) — GET /api/agents
 //    Default: first available agent
+// 8. Model (text input, optional) — run-level model override (FR-W23)
+//    Placeholder: "e.g. gpt-4.1, claude-sonnet-4.5"
+//    Overrides agent default for all stages unless a stage specifies its own model
 //
 // Remembers last config via GET /api/stats (lastRunConfig).
 // Submit: POST /api/runs → navigate to new run.

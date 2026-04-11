@@ -155,7 +155,7 @@ interface WorkflowRunSummary {
 
 ### 3.2 POST /api/runs
 
-**SRD refs:** FR-W3, FR-W4, FR-W13, FR-W17, FR-W18, FR-W22
+**SRD refs:** FR-W3, FR-W4, FR-W13, FR-W17, FR-W18, FR-W22, FR-W23
 **Description:** Create and start a workflow run. The run is created in `pending` status and the workflow pipeline is started asynchronously.
 
 **Request body:**
@@ -170,9 +170,12 @@ const CreateRunBody = z.object({
   baseBranch: z.string().regex(/^[a-zA-Z0-9._\/-]+$/).optional(), // default: current checked-out branch
   targetBranch: z.string().regex(/^[a-zA-Z0-9._\/-]+$/).optional(), // default: baseBranch
   title: z.string().max(200).optional(),               // if omitted, auto-generated
+  model: z.string().max(100).optional(),               // run-level model override (FR-W23)
 });
 type CreateRunBody = z.infer<typeof CreateRunBody>;
 ```
+
+> **Model precedence (FR-W23):** stage-level `model` > run-level `model` > agent definition default. Per-stage model overrides are defined in the workflow template. The run-level `model` here serves as a default for stages that don't specify their own.
 
 **Response:** `201 Created`
 
@@ -229,6 +232,7 @@ interface GetRunResponse {
   baseBranch: string | null;
   targetBranch: string | null;
   credentialSetId: string | null;
+  model: string | null;                  // run-level model override (FR-W23)
   createdAt: string;
   completedAt: string | null;
   stages: StageExecutionDetail[];
@@ -242,6 +246,7 @@ interface StageExecutionDetail {
   round: number;
   status: StageStatus;
   freshSession: boolean;
+  model: string | null;           // resolved model used for this execution (FR-W23)
   prompt: string | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -594,6 +599,7 @@ const CreateWorkflowBody = z.object({
     reviewRequired: z.boolean().default(true),
     autoAdvance: z.boolean().default(false),
     freshSession: z.boolean().default(false),
+    model: z.string().max(100).optional(),             // per-stage model override (FR-W23)
     isFinal: z.boolean().optional(),
   })).min(1).max(20)
     .refine(stages => stages.every(s => !(s.reviewRequired && s.autoAdvance)),
@@ -2537,7 +2543,7 @@ export function zodHook(result: { success: boolean; error?: z.ZodError }, c: any
 
 | Endpoint | SRD Requirements |
 |----------|-----------------|
-| `POST /api/runs` | FR-W3, FR-W4, FR-W13, FR-W17, FR-W18, FR-W22 |
+| `POST /api/runs` | FR-W3, FR-W4, FR-W13, FR-W17, FR-W18, FR-W22, FR-W23 |
 | `GET /api/runs` | FR-D2, FR-D3 |
 | `GET /api/runs/:id` | FR-W16 |
 | `DELETE /api/runs/:id` | — |
@@ -2549,7 +2555,7 @@ export function zodHook(result: { success: boolean; error?: z.ZodError }, c: any
 | `POST /api/runs/:id/skip-stage` | FR-W14 |
 | `POST /api/runs/:id/resolve-conflict` | FR-R10, FR-S10 |
 | `GET /api/workflows` | FR-W1, FR-W11, FR-W12 |
-| `POST /api/workflows` | FR-W1, FR-W2 |
+| `POST /api/workflows` | FR-W1, FR-W2, FR-W23 |
 | `GET /api/workflows/:id` | FR-W12 |
 | `PUT /api/workflows/:id` | FR-W12 |
 | `DELETE /api/workflows/:id` | FR-W12 |

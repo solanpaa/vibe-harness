@@ -124,6 +124,7 @@ export const workflowRuns = sqliteTable(
       .references(() => credentialSets.id),
     baseBranch: text('base_branch'),                 // branch worktree was created from
     targetBranch: text('target_branch'),             // branch to merge into on approval
+    model: text('model'),                            // run-level model override (FR-W23)
     createdAt: createdAt(),
     completedAt: text('completed_at'),
   },
@@ -153,6 +154,7 @@ export const stageExecutions = sqliteTable(
     status: text('status').notNull().default('pending'), // StageStatus
     prompt: text('prompt'),                          // built prompt for this stage+round
     freshSession: integer('fresh_session', { mode: 'boolean' }).notNull().default(false),
+    model: text('model'),                            // resolved model used for this execution (FR-W23)
     startedAt: text('started_at'),
     completedAt: text('completed_at'),
     failureReason: text('failure_reason'),            // StageFailureReason enum value
@@ -623,6 +625,7 @@ export interface WorkflowStage {
   reviewRequired: boolean;
   autoAdvance: boolean;                             // mutually exclusive with reviewRequired
   freshSession: boolean;
+  model?: string;                                   // per-stage model override (FR-W23)
   isFinal?: boolean;                                // explicit last-stage marker (SAD §5.5.2)
 }
 
@@ -688,6 +691,7 @@ export interface WorkflowRun {
   credentialSetId: string | null;
   baseBranch: string | null;
   targetBranch: string | null;
+  model: string | null;                            // run-level model override (FR-W23)
   createdAt: string;
   completedAt: string | null;
 }
@@ -709,6 +713,7 @@ export interface StageExecution {
   status: StageStatus;
   prompt: string | null;
   freshSession: boolean;
+  model: string | null;                            // resolved model used for this execution (FR-W23)
   startedAt: string | null;
   completedAt: string | null;
   failureReason: StageFailureReason | null;
@@ -1213,6 +1218,7 @@ export interface CreateWorkflowRunRequest {
   baseBranch?: string;
   targetBranch?: string;
   title?: string;
+  model?: string;                                  // run-level model override (FR-W23)
 }
 
 export interface WorkflowRunListQuery {
@@ -1680,6 +1686,7 @@ const workflowStageSchema = z
     reviewRequired: z.boolean(),
     autoAdvance: z.boolean(),
     freshSession: z.boolean().default(false),
+    model: z.string().max(100).optional(),         // per-stage model override (FR-W23)
     isFinal: z.boolean().optional(),
   })
   .refine(
@@ -1720,6 +1727,7 @@ export const createWorkflowRunSchema = z.object({
   baseBranch: gitRefSchema.optional(),
   targetBranch: gitRefSchema.optional(),
   title: z.string().max(200).optional(),
+  model: z.string().max(100).optional(),           // run-level model override (FR-W23)
 });
 
 export const sendInterventionSchema = z.object({

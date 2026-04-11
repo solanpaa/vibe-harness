@@ -65,6 +65,7 @@ interface WorkflowStage {
   reviewRequired: boolean;
   autoAdvance: boolean;
   freshSession: boolean;
+  model?: string;                        // per-stage model override (FR-W23)
 }
 
 /** Returned by executeStage step (see §3.1). */
@@ -961,6 +962,7 @@ interface ExecuteStageInput {
     type: "standard" | "split";
     promptTemplate: string;
     freshSession: boolean;
+    model?: string;                      // per-stage model override (FR-W23)
   };
   stageIndex: number;
   round: number;
@@ -1059,6 +1061,15 @@ export async function executeStage(input: ExecuteStageInput): Promise<ExecuteSta
   // ── Step 2: Create stageExecution record ────────────────────────────
   const execId = existing?.id ?? crypto.randomUUID();
 
+  // ── Model resolution (SAD §5.3 step 2, FR-W23) ─────────────────────
+  // Precedence: stage.model > run.model > agentDefinition.defaultModel > null
+  const run = await db.query.workflowRuns.findFirst({
+    where: eq(workflowRuns.id, runId),
+    with: { agentDefinition: { columns: { defaultModel: true } } },
+    columns: { model: true },
+  });
+  const resolvedModel = stage.model ?? run?.model ?? run?.agentDefinition?.defaultModel ?? null;
+
   if (!existing) {
     await db.insert(stageExecutions).values({
       id: execId,
@@ -1067,6 +1078,7 @@ export async function executeStage(input: ExecuteStageInput): Promise<ExecuteSta
       round,
       status: "pending",
       freshSession: stage.freshSession ? 1 : 0,
+      model: resolvedModel,
     });
   }
 
@@ -1074,11 +1086,18 @@ export async function executeStage(input: ExecuteStageInput): Promise<ExecuteSta
   try {
     if (input.isFirstStage && round === 1) {
       // First stage of the entire workflow run: provision everything
-      await sessionManager.create(runId);
+      await sessionManager.create(runId, { model: resolvedModel });
     } else if (stage.freshSession && round === 1) {
       // Fresh session in the same sandbox/worktree (SAD §5.4, stage 3)
       const context = await buildFreshSessionContext(runId, input.previousResult);
-      await sessionManager.fresh(runId, context);
+      await sessionManager.fresh(runId, context, { model: resolvedModel });
+    } else if (resolvedModel) {
+      // Continuation — model is NOT passed to sessionManager.continue().
+      // If the stage wants a different model than the current session, warn.
+      log.warn(
+        { resolvedModel },
+        "Stage has model override but freshSession=false; model ignored for continuation. Set freshSession=true to apply a different model."
+      );
     }
     // else: continuation — session already exists, just send prompt
 
@@ -2284,7 +2303,7 @@ class SessionManager {
   //      method is the single point of worktree creation for all runs.
   // -------------------------------------------------------------------
 
-  async create(runId: string): Promise<void> {
+  async create(runId: string, options?: { model?: string | null }): Promise<void> {
     const log = logger.child({ runId, op: "session.create" });
 
     if (this.sessions.has(runId)) {
@@ -2339,10 +2358,14 @@ class SessionManager {
     }
 
     // ── 1e. Start ACP session ───────────────────────────────────────
+    const acpFlags = ["--acp", "--stdio", "--yolo", "--autopilot"];
+    if (options?.model) {
+      acpFlags.push("--model", options.model);
+    }
     const acpSession = await acpClient.startSession({
       sandboxId,
       command: run.agentDefinition.commandTemplate,
-      flags: ["--acp", "--stdio", "--yolo", "--autopilot"],
+      flags: acpFlags,
       worktreePath,
     });
 
@@ -2397,7 +2420,7 @@ class SessionManager {
   //      SAD §5.4, Stage 3.
   // -------------------------------------------------------------------
 
-  async fresh(runId: string, context: string): Promise<void> {
+  async fresh(runId: string, context: string, options?: { model?: string | null }): Promise<void> {
     await this.withSession(runId, async (session) => {
       const log = logger.child({ runId, op: "session.fresh" });
 
@@ -2413,7 +2436,9 @@ class SessionManager {
       const newAcpSession = await acpClient.startSession({
         sandboxId: session.sandboxId,
         command: run!.agentDefinition.commandTemplate,
-        flags: ["--acp", "--stdio", "--yolo", "--autopilot"],
+        flags: options?.model
+          ? ["--acp", "--stdio", "--yolo", "--autopilot", "--model", options.model]
+          : ["--acp", "--stdio", "--yolo", "--autopilot"],
         worktreePath: session.worktreePath,
       });
 
@@ -2802,14 +2827,14 @@ function formatReviewComments(comments: ReviewComment[]): string {
 | §1 Split handling | §5.3.3–5.3.5 Hooks | FR-S1–S13 |
 | §1 Finalization | §5.5.2 Worktree Lifecycle, §5.5.3 Git Journal | FR-R10 |
 | §2 Hooks | §5.3 Hook Architecture | FR-W5, FR-W14, FR-S3–S4, FR-S12, FR-R10 |
-| §3.1 execute-stage | §5.3 Stage Execution Model, §5.4 Session Continuity | FR-W4, FR-W7, FR-W8 |
+| §3.1 execute-stage | §5.3 Stage Execution Model, §5.4 Session Continuity | FR-W4, FR-W7, FR-W8, FR-W23 |
 | §3.2 create-review | §5.3.1 Review Hook | FR-R1, FR-R2 |
 | §3.3 consolidate-finish | §5.3.5, §5.5.3 Git Journal (post-review) | FR-S9, FR-S11, FR-S13 |
 | §3.4 extract-proposals | §5.3.3 Proposal Review Hook | FR-S1, FR-S2 |
 | §3.5 launch-children | §5.5.2 Worktree Lifecycle (split) | FR-S4, FR-S5, FR-S6 |
 | §3.6 consolidate | §5.5.3 Git Journal (consolidate, merge only) | FR-S8, FR-S9, FR-S10 |
 | §3.7 finalize | §5.5.3 Git Journal (finalize) | FR-R10 |
-| §4 Session Manager | §5.4 ACP Session Continuity | FR-W7, FR-W10, FR-W17, FR-W19, FR-W21 |
+| §4 Session Manager | §5.4 ACP Session Continuity | FR-W7, FR-W10, FR-W17, FR-W19, FR-W21, FR-W23 |
 | §5 Prompt Builder | §5.3 step 4, §5.4 | FR-W8, FR-W14, FR-R7, FR-S5 |
 
 ## Appendix B: Key Design Decisions
@@ -2833,3 +2858,5 @@ function formatReviewComments(comments: ReviewComment[]): string {
 9. **Post-split freshSession (Fix #6).** After a split stage's consolidation is approved, the pipeline forces `freshSession=true` for the next stage and passes the consolidation summary as context. This is tracked via the `splitResult` variable in the main loop. On replay, the context is recovered from durable data: completed stage messages + approved reviews in the DB (Fix #7).
 
 10. **Durable sleep (Fix #9).** `sleep()` is imported from the `workflow` package, not implemented locally with `setTimeout`. The workflow runtime persists state before sleeping, so daemon crashes during sleep resume correctly.
+
+11. **Model resolution (FR-W23).** Model precedence is `stage.model > run.model > agentDefinition.defaultModel`. The resolved model is passed to `sessionManager.create()` and `sessionManager.fresh()` as `--model <model>` flag. `sessionManager.continue()` does NOT accept a model — continuation reuses the existing session's model. If a stage specifies a different model but `freshSession=false`, the model override is **ignored** and a warning is logged. This intentional limitation keeps continuation semantics simple: to change models mid-workflow, set `freshSession: true` on the stage.
