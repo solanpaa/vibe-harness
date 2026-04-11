@@ -112,7 +112,7 @@ function AddAgentForm({
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Agent"}
         </button>
@@ -236,7 +236,7 @@ export function Settings() {
   if (!connected) {
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground mb-4">Settings</h1>
+        <h1 className="text-sm font-medium text-foreground mb-4">Settings</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage settings.
         </p>
@@ -246,7 +246,7 @@ export function Settings() {
 
   return (
     <div className="p-6 max-w-4xl h-full flex flex-col">
-      <h1 className="text-lg font-semibold text-foreground mb-6">Settings</h1>
+      <h1 className="text-sm font-medium text-foreground mb-6">Settings</h1>
 
       {/* Agent Definitions Section */}
       <section>
@@ -257,7 +257,7 @@ export function Settings() {
           {!showAddForm && (
             <button
               onClick={() => setShowAddForm(true)}
-              className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
             >
               + Add Agent
             </button>

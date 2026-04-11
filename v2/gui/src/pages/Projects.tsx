@@ -108,7 +108,7 @@ function AddProjectForm({
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Project"}
         </button>
@@ -285,7 +285,7 @@ export function Projects() {
   if (!connected) {
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground mb-4">Projects</h1>
+        <h1 className="text-sm font-medium text-foreground mb-4">Projects</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage projects.
         </p>
@@ -296,11 +296,11 @@ export function Projects() {
   return (
     <div className="p-6 max-w-4xl h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-foreground">Projects</h1>
+        <h1 className="text-sm font-medium text-foreground">Projects</h1>
         {!showAddForm && (
           <button
             onClick={() => setShowAddForm(true)}
-            className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
           >
             + Add Project
           </button>

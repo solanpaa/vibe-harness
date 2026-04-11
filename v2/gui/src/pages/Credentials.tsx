@@ -98,7 +98,7 @@ function AddSetForm({
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Creating…" : "Create Set"}
         </button>
@@ -261,7 +261,7 @@ function AddEntryForm({
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Entry"}
         </button>
@@ -606,7 +606,7 @@ export function Credentials() {
   if (!connected) {
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground mb-4">Credentials</h1>
+        <h1 className="text-sm font-medium text-foreground mb-4">Credentials</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage credentials.
         </p>
@@ -617,11 +617,11 @@ export function Credentials() {
   return (
     <div className="p-6 max-w-4xl h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-foreground">Credentials</h1>
+        <h1 className="text-sm font-medium text-foreground">Credentials</h1>
         {!showAddForm && (
           <button
             onClick={() => setShowAddForm(true)}
-            className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
           >
             + New Set
           </button>

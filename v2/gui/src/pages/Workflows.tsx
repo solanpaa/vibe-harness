@@ -385,7 +385,7 @@ function TemplateDetail({
   if (editing) {
     return (
       <div>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Edit Template</h2>
+        <h2 className="text-sm font-medium text-foreground mb-4">Edit Template</h2>
         <TemplateForm
           initial={template}
           onSubmit={handleUpdate}
@@ -405,7 +405,7 @@ function TemplateDetail({
         >
           ← Back
         </button>
-        <h2 className="text-lg font-semibold text-foreground">{template.name}</h2>
+        <h2 className="text-sm font-medium text-foreground">{template.name}</h2>
         {template.isBuiltIn && (
           <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             Built-in
@@ -535,7 +535,7 @@ export function Workflows() {
 
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground mb-6">Create Workflow Template</h1>
+        <h1 className="text-sm font-medium text-foreground mb-6">Create Workflow Template</h1>
         <TemplateForm
           onSubmit={handleCreate}
           onCancel={() => setView("list")}
@@ -572,7 +572,7 @@ export function Workflows() {
   if (!connected) {
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground mb-4">Workflows</h1>
+        <h1 className="text-sm font-medium text-foreground mb-4">Workflows</h1>
         <p className="text-muted-foreground">Daemon not connected.</p>
       </div>
     );
@@ -581,7 +581,7 @@ export function Workflows() {
   return (
     <div className="p-6 max-w-4xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-foreground">Workflow Templates</h1>
+        <h1 className="text-sm font-medium text-foreground">Workflow Templates</h1>
         <button
           onClick={() => setView("create")}
           className="text-sm px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground"
