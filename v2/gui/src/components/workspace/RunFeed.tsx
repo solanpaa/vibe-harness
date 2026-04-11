@@ -44,9 +44,10 @@ export function RunFeed({ selectedRunId, onSelectRun, onNewRun }: RunFeedProps) 
         </h2>
         <button
           onClick={onNewRun}
-          className="px-3 py-1 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-500 transition-colors"
+          className="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:text-foreground hover:bg-accent transition-colors"
+          title="New run"
         >
-          + New Run
+          +
         </button>
       </div>
 
