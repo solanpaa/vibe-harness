@@ -300,7 +300,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const onEvent = makeEventHandler(session);
     log.info({ model }, 'Connecting ACP session');
     await acp.connect(
-      { sandboxName, isContinuation: false, env, model },
+      { sandboxName, isContinuation: false, env, model, worktreePath },
       onEvent,
     );
 
@@ -360,6 +360,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           isContinuation: true,
           env,
           model: newModel ?? session.currentModel,
+          worktreePath: session.worktreePath,
         },
         onEvent,
       );
@@ -402,6 +403,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           isContinuation: false,
           env,
           model: newModel,
+          worktreePath: session.worktreePath,
         },
         onEvent,
       );

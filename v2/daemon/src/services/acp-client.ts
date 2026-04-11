@@ -8,8 +8,9 @@
 // ---------------------------------------------------------------------------
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { Readable, Writable } from 'node:stream';
 import type { Logger } from 'pino';
+import * as acp from '@agentclientprotocol/sdk';
 import {
   AcpConnectionError,
   AcpSessionNotActiveError,
@@ -102,6 +103,8 @@ export interface AcpConnectOptions {
   env?: Record<string, string>;
   /** Model override — passed as --model flag */
   model?: string | null;
+  /** Worktree path inside the sandbox (used as cwd for session/new) */
+  worktreePath?: string;
 }
 
 export interface AcpConnection {
@@ -127,6 +130,7 @@ export interface AcpClient {
 
 interface ActiveConnection {
   process: ChildProcess;
+  acpConnection: acp.ClientSideConnection | null;
   sessionId: string | null;
   listeners: Set<AcpEventCallback>;
   isActive: boolean;
@@ -252,6 +256,7 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
 
     const conn: ActiveConnection = {
       process: child,
+      acpConnection: null,
       sessionId: null,
       listeners: new Set([onEvent]),
       isActive: true,
@@ -260,48 +265,9 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
 
     connections.set(sandboxName, conn);
 
-    // Parse NDJSON from stdout line-by-line
-    const rl = createInterface({ input: child.stdout! });
-
-    rl.on('line', (line: string) => {
-      if (!line.trim()) return;
-
-      try {
-        const raw = JSON.parse(line) as { type: string; [key: string]: unknown };
-        const event: AcpEvent = {
-          type: raw.type as AcpEventType,
-          data: raw as Record<string, unknown>,
-          receivedAt: new Date().toISOString(),
-        };
-
-        // Track whether we received an explicit result event
-        if (event.type === 'result') {
-          conn.receivedResult = true;
-        }
-
-        // Extract session ID from session_update events
-        if (event.type === 'session_update' && raw.sessionId) {
-          conn.sessionId = raw.sessionId as string;
-          log.info({ sessionId: conn.sessionId }, 'ACP session established');
-        }
-
-        // Fan out to all listeners
-        for (const listener of conn.listeners) {
-          try {
-            listener(event);
-          } catch (err) {
-            log.error({ err }, 'Error in ACP event listener');
-          }
-        }
-      } catch (err) {
-        log.warn({ line, err }, 'Failed to parse NDJSON line from ACP');
-      }
-    });
-
     // Log stderr for diagnostics
-    const stderrRl = createInterface({ input: child.stderr! });
-    stderrRl.on('line', (line: string) => {
-      log.debug({ acpStderr: line }, 'ACP stderr');
+    child.stderr!.on('data', (chunk: Buffer) => {
+      log.debug({ acpStderr: chunk.toString().trim() }, 'ACP stderr');
     });
 
     // Handle process exit
@@ -309,24 +275,130 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
       log.info({ exitCode: code }, 'ACP process exited');
       conn.isActive = false;
 
-      // Emit synthetic result event only if we didn't already receive one
       if (!conn.receivedResult) {
         const exitEvent: AcpEvent = {
           type: 'result',
           data: { type: 'result', exitCode: code ?? 1 },
           receivedAt: new Date().toISOString(),
         };
-
         for (const listener of conn.listeners) {
-          try {
-            listener(exitEvent);
-          } catch { /* ignore listener errors on exit */ }
+          try { listener(exitEvent); } catch { /* ignore */ }
         }
       }
     });
 
-    // Wait for ACP session to be established (with timeout)
-    await waitForSession(conn, SESSION_TIMEOUT_MS);
+    // Set up ACP SDK connection (mirrors v1 pattern)
+    const sdkOutput = Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
+    const sdkInput = Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
+    const stream = acp.ndJsonStream(sdkOutput, sdkInput);
+
+    const acpClient: acp.Client = {
+      async requestPermission(params) {
+        const opts = (params as Record<string, unknown>).options as Array<{ id: string }> | undefined;
+        if (opts && opts.length > 0) {
+          return { outcome: { outcome: 'selected' as const, optionId: opts[0].id } };
+        }
+        return { outcome: { outcome: 'cancelled' as const } };
+      },
+
+      async sessionUpdate(params) {
+        const update = params.update as Record<string, unknown>;
+        const updateType = (update.sessionUpdate as string) ?? '';
+        const content = update.content as Record<string, unknown> | undefined;
+
+        // Map ACP session updates to our event system
+        let eventType: AcpEventType = 'session_update';
+        const eventData: Record<string, unknown> = { ...update };
+
+        switch (updateType) {
+          case 'agent_message_chunk':
+            eventType = 'agent_message';
+            if (content?.type === 'text') {
+              eventData.content = content.text;
+              eventData.partial = true;
+            }
+            break;
+          case 'agent_thought_chunk':
+            eventType = 'agent_thought';
+            if (content?.type === 'text') {
+              eventData.content = content.text;
+            }
+            break;
+          case 'tool_call':
+            eventType = 'tool_call';
+            break;
+          case 'tool_call_update':
+            eventType = 'tool_result';
+            break;
+          case 'agent_turn_end':
+            conn.receivedResult = true;
+            eventType = 'result';
+            eventData.status = 'completed';
+            break;
+        }
+
+        const event: AcpEvent = {
+          type: eventType,
+          data: eventData,
+          receivedAt: new Date().toISOString(),
+        };
+
+        for (const listener of conn.listeners) {
+          try { listener(event); } catch (err) {
+            log.error({ err }, 'Error in ACP event listener');
+          }
+        }
+      },
+    };
+
+    const acpConnection = new acp.ClientSideConnection((_agent) => acpClient, stream);
+    conn.acpConnection = acpConnection;
+
+    // ACP protocol handshake: initialize → session/new
+    const INIT_DELAY_MS = 1500;
+    const MAX_INIT_RETRIES = 3;
+
+    for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt++) {
+      await new Promise(r => setTimeout(r, INIT_DELAY_MS));
+
+      if (!conn.isActive) {
+        throw new AcpConnectionError('ACP process exited before initialization');
+      }
+
+      try {
+        log.info({ attempt }, 'Sending ACP initialize');
+        await acpConnection.initialize({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        break;
+      } catch (err) {
+        if (attempt === MAX_INIT_RETRIES) {
+          throw new AcpConnectionError(
+            `ACP initialize failed after ${MAX_INIT_RETRIES} attempts: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        log.warn({ attempt, err: err instanceof Error ? err.message : err }, 'ACP initialize attempt failed, retrying');
+      }
+    }
+
+    // Create or load session
+    const worktreePath = options.worktreePath;
+    try {
+      log.info({ cwd: worktreePath, isContinuation }, 'Creating ACP session');
+      const sessionResult = await Promise.race([
+        acpConnection.newSession({ cwd: worktreePath ?? '/', mcpServers: [] }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('session/new timed out after 30s')), 30_000),
+        ),
+      ]);
+      conn.sessionId = sessionResult.sessionId;
+      log.info({ sessionId: conn.sessionId }, 'ACP session created');
+    } catch (err) {
+      throw new AcpConnectionError(
+        `ACP session creation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     return {
       sessionId: conn.sessionId,
@@ -335,45 +407,34 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
   }
 
   // ------------------------------------------------------------------
-  // sendPrompt — write NDJSON to stdin with backpressure handling
+  // sendPrompt — send user message via ACP SDK
   // ------------------------------------------------------------------
   async function sendPrompt(sandboxName: string, message: string): Promise<void> {
     const conn = connections.get(sandboxName);
     if (!conn || !conn.isActive) {
       throw new AcpSessionNotActiveError(sandboxName);
     }
-
-    const payload = JSON.stringify({ type: 'user_message', content: message });
-    const stdin = conn.process.stdin!;
-    const writeResult = stdin.write(payload + '\n');
-
-    if (!writeResult) {
-      await Promise.race([
-        new Promise<void>(resolve => stdin.once('drain', resolve)),
-        new Promise<void>((_, reject) => stdin.once('error', reject)),
-        new Promise<void>((_, reject) => setTimeout(() => reject(new Error('drain timeout')), 10_000)),
-      ]);
+    if (!conn.acpConnection || !conn.sessionId) {
+      throw new AcpSessionNotActiveError(sandboxName);
     }
+
+    await conn.acpConnection.prompt({
+      sessionId: conn.sessionId,
+      prompt: [{ type: 'text', text: message }],
+    });
   }
 
   // ------------------------------------------------------------------
-  // sendStop — send ACP stop command
+  // sendStop — disconnect the ACP session gracefully
   // ------------------------------------------------------------------
   async function sendStop(sandboxName: string): Promise<void> {
     const conn = connections.get(sandboxName);
     if (!conn || !conn.isActive) return; // Idempotent
 
-    const payload = JSON.stringify({ type: 'stop' });
-    const stdin = conn.process.stdin!;
-    const writeResult = stdin.write(payload + '\n');
-
-    if (!writeResult) {
-      await Promise.race([
-        new Promise<void>(resolve => stdin.once('drain', resolve)),
-        new Promise<void>((_, reject) => stdin.once('error', reject)),
-        new Promise<void>((_, reject) => setTimeout(() => reject(new Error('drain timeout')), 10_000)),
-      ]);
-    }
+    // Kill the process — the ACP SDK doesn't have a "stop" method
+    try {
+      conn.process.kill('SIGTERM');
+    } catch { /* already exited */ }
   }
 
   // ------------------------------------------------------------------

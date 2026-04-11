@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.18.2",
     "@vibe-harness/shared": "*",
     "better-sqlite3": "^11.9.1",
     "drizzle-orm": "^0.44.2",

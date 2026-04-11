@@ -466,7 +466,7 @@ export function createSandboxService(deps: {
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
       await execCommand('docker', [
-        'sandbox', 'rm', '--force', sandboxName,
+        'sandbox', 'rm', sandboxName,
       ]);
     }
 
@@ -537,7 +537,7 @@ export function createSandboxService(deps: {
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      await execCommand('docker', ['sandbox', 'rm', '--force', sandboxName]);
+      await execCommand('docker', ['sandbox', 'rm', sandboxName]);
     }
 
     activeSandboxes.delete(sandboxName);
