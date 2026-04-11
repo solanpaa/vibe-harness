@@ -21,7 +21,7 @@ export function Workspace() {
   const { setRuns, selectedRunId, selectRun, setLoading, newRunModalOpen, setNewRunModalOpen } =
     useWorkspaceStore();
 
-  const [leftWidth, setLeftWidth] = useState(320);
+  const [leftWidth, setLeftWidth] = useState(340);
   const isDragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 

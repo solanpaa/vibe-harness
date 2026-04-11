@@ -154,15 +154,15 @@ function MainApp() {
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100">
       {/* Top nav */}
-      <nav className="flex items-end h-11 border-b border-zinc-700/50 bg-zinc-900 px-5">
-        <div className="flex items-end gap-1">
+      <nav className="flex items-end h-11 border-b border-zinc-700/50 bg-zinc-900 px-4">
+        <div className="flex items-end gap-0.5">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === "/"}
               className={({ isActive }: { isActive: boolean }) =>
-                `px-3 pb-2.5 text-[13px] font-medium transition-colors border-b-2 ${
+                `px-3 pb-2 text-[13px] font-medium transition-colors border-b-2 ${
                   isActive
                     ? "border-blue-400 text-zinc-100"
                     : "border-transparent text-zinc-500 hover:text-zinc-300"
@@ -200,7 +200,7 @@ function MainApp() {
       </main>
 
       {/* Footer */}
-      <footer className="flex items-center justify-end h-6 px-4 border-t border-zinc-800/80 bg-zinc-950/50 text-[11px] shrink-0">
+      <footer className="flex items-center justify-end h-6 px-5 border-t border-zinc-800/80 bg-zinc-950/50 text-[11px] shrink-0">
         <DaemonStatus />
       </footer>
 
