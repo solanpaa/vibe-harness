@@ -1,13 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Routes, Route, NavLink, useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useDaemonStore } from "./stores/daemon";
 import { useStreamingStore } from "./stores/streaming";
+import { useWorkspaceStore } from "./stores/workspace";
 import { WebSocketManager } from "./api/ws";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useWebSocketBridge } from "./hooks/useWebSocketBridge";
 import { DaemonStatus } from "./components/shared/DaemonStatus";
+import { CommandPalette } from "./components/shared/CommandPalette";
 import { Workspace } from "./pages/Workspace";
 import { Projects } from "./pages/Projects";
 import { Workflows } from "./pages/Workflows";
@@ -26,8 +28,14 @@ const NAV_ITEMS = [
 function App() {
   const { setConnected, setDisconnected, port } = useDaemonStore();
   const { handleMessage, setWsState } = useStreamingStore();
+  const runs = useWorkspaceStore((s) => s.runs);
+  const selectedRunId = useWorkspaceStore((s) => s.selectedRunId);
+  const selectRun = useWorkspaceStore((s) => s.selectRun);
   const navigate = useNavigate();
   const wsRef = useRef<WebSocketManager | null>(null);
+
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [showNewRunModal, setShowNewRunModal] = useState(false);
 
   // Bridge WS events (run_status, review_created, etc.) to workspace store
   useWebSocketBridge(wsRef.current);

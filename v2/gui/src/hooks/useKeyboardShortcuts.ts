@@ -5,8 +5,21 @@ interface ShortcutMap {
 }
 
 /**
+ * Returns true if the event target is an input, textarea, or contenteditable
+ * element where single-key shortcuts (j/k/Enter/Escape) should be suppressed.
+ */
+function isEditableTarget(e: KeyboardEvent): boolean {
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if ((e.target as HTMLElement)?.isContentEditable) return true;
+  return false;
+}
+
+/**
  * Register global keyboard shortcuts.
- * Keys use format: "mod+k" (mod = Cmd on Mac, Ctrl otherwise)
+ * Keys use format: "mod+k" (mod = Cmd on Mac, Ctrl otherwise).
+ * Plain keys like "j", "k", "enter", "escape" are only fired
+ * when no input/textarea is focused.
  */
 export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
   useEffect(() => {
@@ -23,6 +36,10 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
       const combo = parts.join("+");
       const action = shortcuts[combo];
       if (action) {
+        // For plain keys (no modifier), skip if user is typing in an input
+        const hasModifier = mod || e.shiftKey || e.altKey;
+        if (!hasModifier && isEditableTarget(e)) return;
+
         e.preventDefault();
         action();
       }

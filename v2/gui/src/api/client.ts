@@ -28,6 +28,13 @@ import type {
   WorkflowRun,
   SendInterventionResponse,
   CancelRunResponse,
+  ReviewDetailResponse,
+  ReviewListResponse,
+  ApproveReviewResponse,
+  RequestChangesResponse,
+  CreateReviewCommentRequest,
+  ReviewCommentsResponse,
+  ReviewComment,
 } from "@vibe-harness/shared";
 
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
@@ -278,5 +285,37 @@ export class DaemonClient {
   async getCredentialAuditLog(credentialSetId?: string): Promise<CredentialAuditResponse> {
     const params = credentialSetId ? `?credentialSetId=${credentialSetId}` : "";
     return this.fetch<CredentialAuditResponse>(`/api/credentials/audit${params}`);
+  }
+
+  // ── Reviews ────────────────────────────────────────────────────────
+
+  async getReview(id: string): Promise<ReviewDetailResponse> {
+    return this.fetch<ReviewDetailResponse>(`/api/reviews/${id}`);
+  }
+
+  async listReviews(runId: string, stageName?: string): Promise<ReviewListResponse> {
+    const params = new URLSearchParams({ runId });
+    if (stageName) params.set("stageName", stageName);
+    return this.fetch<ReviewListResponse>(`/api/reviews?${params}`);
+  }
+
+  async approveReview(id: string): Promise<ApproveReviewResponse> {
+    return this.fetch<ApproveReviewResponse>(`/api/reviews/${id}/approve`, {
+      method: "POST",
+    });
+  }
+
+  async requestChanges(id: string, comments: CreateReviewCommentRequest[]): Promise<RequestChangesResponse> {
+    return this.fetch<RequestChangesResponse>(`/api/reviews/${id}/request-changes`, {
+      method: "POST",
+      body: JSON.stringify({ comments }),
+    });
+  }
+
+  async addComment(reviewId: string, data: CreateReviewCommentRequest): Promise<ReviewComment> {
+    return this.fetch<ReviewComment>(`/api/reviews/${reviewId}/comments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 }
