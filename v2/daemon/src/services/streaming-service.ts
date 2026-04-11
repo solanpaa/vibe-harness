@@ -121,7 +121,7 @@ function flushDbWrites(runId: string, buf: RunBuffer): void {
         isIntervention: entry.isIntervention,
         metadata: entry.metadata,
       })),
-    );
+    ).run();
   } catch (err) {
     log.error({ runId, batchSize: batch.length, err }, 'Failed to flush events to DB');
     // Re-queue failed batch at front for retry on next flush

@@ -258,8 +258,12 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               data: {
                 role: m.role ?? 'user',
                 content: m.content ?? '',
-                eventType: m.role === 'user' ? 'agent_message' as const : 'agent_message' as const,
+                eventType: (() => {
+                  const meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata || '{}') : (m.metadata ?? {});
+                  return meta.eventType ?? (m.role === 'user' ? 'agent_message' : 'agent_message');
+                })() as any,
                 metadata: {
+                  ...(typeof m.metadata === 'string' ? JSON.parse(m.metadata || '{}') : (m.metadata ?? {})),
                   timestamp: m.createdAt,
                   isIntervention: m.isIntervention ?? false,
                 },
