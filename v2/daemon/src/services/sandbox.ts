@@ -103,6 +103,8 @@ export interface SandboxService {
   ): Promise<ExecResult>;
   getEnvVars(sandboxName: string): Record<string, string>;
   stop(sandboxName: string, forceKillTimeout?: number): Promise<void>;
+  /** Remove a sandbox entirely (docker sandbox rm). */
+  remove(sandboxName: string): Promise<void>;
   /** Stop a sandbox by name regardless of active tracking (for reconciliation/shutdown). */
   forceStop(sandboxName: string): Promise<void>;
   list(): Promise<SandboxInfo[]>;
@@ -495,6 +497,18 @@ export function createSandboxService(deps: {
     log.info('Sandbox stopped');
   }
 
+  async function remove(sandboxName: string): Promise<void> {
+    const log = logger.child({ sandboxName });
+    log.info('Removing sandbox');
+    try {
+      await execCommand('docker', ['sandbox', 'rm', sandboxName]);
+      log.info('Sandbox removed');
+    } catch (err) {
+      log.warn({ err }, 'Sandbox rm failed (may already be removed)');
+    }
+    activeSandboxes.delete(sandboxName);
+  }
+
   async function listSandboxes(): Promise<SandboxInfo[]> {
     const result = await execCommand('docker', [
       'sandbox', 'ls',
@@ -576,6 +590,7 @@ export function createSandboxService(deps: {
     execCommand: sandboxExecCommand,
     getEnvVars,
     stop,
+    remove,
     forceStop,
     list: listSandboxes,
     isActive: (name) => activeSandboxes.has(name),

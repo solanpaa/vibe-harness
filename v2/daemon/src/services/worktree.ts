@@ -235,6 +235,24 @@ export function createWorktreeService(deps: {
       }
 
       log.info('Worktree removed');
+
+      // Clean up empty parent directories inside .vibe-harness-worktrees/
+      try {
+        const fs = await import('node:fs/promises');
+        let dir = path.dirname(path.resolve(worktreePath));
+        const worktreeBase = path.resolve(path.join(projectPath, WORKTREE_DIR));
+        while (dir.startsWith(worktreeBase) && dir !== worktreeBase) {
+          const entries = await fs.readdir(dir);
+          if (entries.length === 0) {
+            await fs.rmdir(dir);
+            dir = path.dirname(dir);
+          } else {
+            break;
+          }
+        }
+      } catch {
+        // Best-effort cleanup
+      }
     });
   }
 

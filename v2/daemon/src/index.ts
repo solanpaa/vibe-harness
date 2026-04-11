@@ -89,6 +89,7 @@ setPipelineDeps({
   branchNamer,
   acpClient,
   streamingService,
+  sandboxService,
 });
 logger.info("Pipeline deps initialized");
 

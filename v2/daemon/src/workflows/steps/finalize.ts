@@ -28,6 +28,7 @@ export interface FinalizeOutput {
 export interface FinalizeDeps {
   worktreeService: WorktreeService;
   sessionManager: SessionManager;
+  sandboxService?: { remove(name: string): Promise<void> };
 }
 
 function resolveGlobalDeps(): FinalizeDeps {
@@ -68,6 +69,7 @@ export async function finalize(
       worktreePath: schema.workflowRuns.worktreePath,
       branch: schema.workflowRuns.branch,
       projectId: schema.workflowRuns.projectId,
+      sandboxId: schema.workflowRuns.sandboxId,
     })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
@@ -172,6 +174,16 @@ export async function finalize(
       await deps.sessionManager.stop(runId);
     } catch {
       // Sandbox may already be gone
+    }
+
+    // Remove Docker sandbox
+    const sandboxName = run.sandboxId ?? deps.sessionManager.getSandboxName?.(runId);
+    if (sandboxName && deps.sandboxService) {
+      try {
+        await deps.sandboxService.remove(sandboxName);
+      } catch {
+        log.warn({ sandboxName }, 'Sandbox removal failed (may already be removed)');
+      }
     }
 
     // Remove worktree and branch
