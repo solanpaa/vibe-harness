@@ -1,7 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Routes, Route, NavLink, useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { useDaemonStore } from "./stores/daemon";
+import { useStreamingStore } from "./stores/streaming";
+import { WebSocketManager } from "./api/ws";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { DaemonStatus } from "./components/shared/DaemonStatus";
 import { Workspace } from "./pages/Workspace";
@@ -9,6 +11,7 @@ import { Projects } from "./pages/Projects";
 import { Workflows } from "./pages/Workflows";
 import { Credentials } from "./pages/Credentials";
 import { Settings } from "./pages/Settings";
+import { getAuthToken } from "./api/client";
 
 const NAV_ITEMS = [
   { to: "/", label: "Workspace" },
@@ -19,8 +22,10 @@ const NAV_ITEMS = [
 ] as const;
 
 function App() {
-  const { setConnected, setDisconnected } = useDaemonStore();
+  const { setConnected, setDisconnected, port } = useDaemonStore();
+  const { handleMessage, setWsState } = useStreamingStore();
   const navigate = useNavigate();
+  const wsRef = useRef<WebSocketManager | null>(null);
 
   // Listen for Tauri daemon events
   useEffect(() => {
@@ -37,6 +42,43 @@ function App() {
       unlistenErr.then((fn) => fn());
     };
   }, [setConnected, setDisconnected]);
+
+  // Initialize WebSocket when daemon is connected
+  useEffect(() => {
+    if (!port) {
+      // Disconnect WS if daemon disconnects
+      if (wsRef.current) {
+        wsRef.current.disconnect();
+        wsRef.current = null;
+      }
+      return;
+    }
+
+    // Cache token for synchronous access in WS config
+    let cachedToken = '';
+    getAuthToken().then((t) => { cachedToken = t ?? ''; });
+
+    const ws = new WebSocketManager({
+      getUrl: () => `ws://127.0.0.1:${port}/ws`,
+      getAuthToken: () => cachedToken,
+    });
+
+    ws.onMessage(handleMessage);
+    ws.onStateChange(setWsState);
+
+    // Connect once token is ready
+    getAuthToken().then((token) => {
+      cachedToken = token ?? '';
+      ws.connect();
+    });
+
+    wsRef.current = ws;
+
+    return () => {
+      ws.disconnect();
+      wsRef.current = null;
+    };
+  }, [port, handleMessage, setWsState]);
 
   // Global keyboard shortcuts
   useKeyboardShortcuts({

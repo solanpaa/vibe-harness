@@ -44,9 +44,16 @@ export interface ProjectDetailResponse {
   project: Project;
 }
 
+export interface BranchInfo {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  lastCommit: string | null;
+}
+
 export interface ProjectBranchesResponse {
-  branches: string[];
-  current: string | null;
+  branches: BranchInfo[];
+  currentBranch: string | null;
 }
 
 // ─── Agents ────────────────────────────────────────────────────────────
@@ -175,14 +182,9 @@ export interface WorkflowRunDetailResponse {
 }
 
 // ─── Diff types (shared between runs and reviews) ──────────────────────
-
-export interface DiffChunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  content: string;
-}
+// The API returns the full structured diff from entities.ts: DiffFile[]
+// with hunks containing individual DiffLines (add/delete/context).
+// An earlier CDD draft had a simplified DiffChunk shape — that was removed.
 
 export interface WorkflowRunDiffResponse {
   diff: string;

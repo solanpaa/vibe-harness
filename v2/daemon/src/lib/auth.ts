@@ -26,13 +26,15 @@ export function getOrCreateToken(): string {
 }
 
 export function authMiddleware() {
-  const token = getOrCreateToken();
-
   return createMiddleware(async (c, next) => {
-    // Skip auth for health endpoint
-    if (c.req.path === "/health") {
+    // Skip auth for health endpoint and WebSocket (WS auth via query param)
+    if (c.req.path === "/health" || c.req.path === "/ws") {
       return next();
     }
+
+    // Read token lazily on each request so a token file rotation
+    // takes effect without restarting the daemon.
+    const token = getOrCreateToken();
 
     const authHeader = c.req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {

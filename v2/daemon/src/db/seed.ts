@@ -10,7 +10,8 @@ import * as schema from './schema.js';
 const COPILOT_CLI_AGENT = {
   name: 'Copilot CLI',
   type: 'copilot_cli',
-  commandTemplate: 'copilot-cli',
+  commandTemplate: 'copilot',
+  dockerImage: 'vibe-harness/copilot:latest',
   description: 'GitHub Copilot CLI — built-in default agent',
   supportsStreaming: true,
   supportsContinue: true,
@@ -38,7 +39,7 @@ const WORKFLOW_TEMPLATES = [
   },
   {
     name: 'Plan & Implement',
-    description: 'Three stages: plan, implement, then review the result.',
+    description: 'Three stages: plan, implement, then commit the result.',
     stages: JSON.stringify([
       {
         name: 'plan',
@@ -54,17 +55,17 @@ const WORKFLOW_TEMPLATES = [
         type: 'standard',
         promptTemplate:
           'Implement the plan from the previous stage. Write all necessary code changes.\n\n{{description}}',
-        reviewRequired: false,
-        autoAdvance: true,
+        reviewRequired: true,
+        autoAdvance: false,
         freshSession: false,
       },
       {
-        name: 'review',
+        name: 'commit',
         type: 'standard',
         promptTemplate:
-          'Review the implementation for correctness, style, and completeness. Suggest fixes if needed.',
-        reviewRequired: true,
-        autoAdvance: false,
+          'Commit all changes with a clear, conventional commit message summarizing what was done.',
+        reviewRequired: false,
+        autoAdvance: true,
         freshSession: false,
         isFinal: true,
       },
@@ -74,7 +75,7 @@ const WORKFLOW_TEMPLATES = [
   {
     name: 'Full Review',
     description:
-      'Five stages: plan, implement, test, review, and finalize with review gates.',
+      'Five stages: plan, implement, review, fix, and commit (SRD FR-W11).',
     stages: JSON.stringify([
       {
         name: 'plan',
@@ -95,15 +96,6 @@ const WORKFLOW_TEMPLATES = [
         freshSession: false,
       },
       {
-        name: 'test',
-        type: 'standard',
-        promptTemplate:
-          'Write and run tests for the implementation. Fix any failures.',
-        reviewRequired: false,
-        autoAdvance: true,
-        freshSession: false,
-      },
-      {
         name: 'review',
         type: 'standard',
         promptTemplate:
@@ -113,12 +105,21 @@ const WORKFLOW_TEMPLATES = [
         freshSession: true,
       },
       {
-        name: 'finalize',
+        name: 'fix',
         type: 'standard',
         promptTemplate:
-          'Address any remaining review comments and prepare the final changeset.',
+          'Address all review comments and fix any identified issues.',
         reviewRequired: true,
         autoAdvance: false,
+        freshSession: false,
+      },
+      {
+        name: 'commit',
+        type: 'standard',
+        promptTemplate:
+          'Commit all changes with a clear, conventional commit message summarizing what was done.',
+        reviewRequired: false,
+        autoAdvance: true,
         freshSession: false,
         isFinal: true,
       },

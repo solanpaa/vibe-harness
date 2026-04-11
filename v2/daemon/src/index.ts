@@ -3,18 +3,41 @@ import {
   getConfigDir,
   getDbPath,
   writePidFile,
+  readPidFile,
   removePidFile,
   writePortFile,
   removePortFile,
 } from "./lib/config.js";
 import { getOrCreateToken } from "./lib/auth.js";
 import { logger } from "./lib/logger.js";
-import { getDb } from "./db/index.js";
+import { getDb, closeDb } from "./db/index.js";
+
+// ── Single-instance guard ───────────────────────────────────────────
+
+function ensureSingleInstance(): void {
+  const existingPid = readPidFile();
+  if (existingPid !== null) {
+    try {
+      process.kill(existingPid, 0); // signal 0 = alive check
+      logger.error(
+        { existingPid },
+        "Another daemon instance is already running. Exiting.",
+      );
+      process.exit(1);
+    } catch {
+      // Process not alive — stale PID file, remove and continue
+      logger.warn({ stalePid: existingPid }, "Removing stale PID file");
+      removePidFile();
+    }
+  }
+}
 
 // ── Startup ─────────────────────────────────────────────────────────
 
 const configDir = getConfigDir();
 logger.info({ configDir }, "Config directory ready");
+
+ensureSingleInstance();
 
 const token = getOrCreateToken();
 logger.info("Auth token ready");
@@ -25,11 +48,17 @@ logger.info("Database initialized");
 writePidFile();
 logger.info({ pid: process.pid }, "PID file written");
 
-// Port file is written by Nitro's listen hook (see nitro.config.ts)
-// but we also write a default here for safety
+// NOTE: Port file should ideally be written from Nitro's "listen" callback
+// once the server has actually bound to a port. Nitro 3 alpha does not
+// currently expose a reliable post-bind hook, so we defer briefly to
+// avoid writing the file before the socket is ready.
+// TODO: Replace with Nitro listen hook when available.
 const DEFAULT_PORT = 3000;
-writePortFile(parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10));
-logger.info("Port file written");
+const port = parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
+setTimeout(() => {
+  writePortFile(port);
+  logger.info({ port }, "Port file written (deferred)");
+}, 500);
 
 logger.info("Daemon ready");
 
@@ -37,22 +66,40 @@ logger.info("Daemon ready");
 
 let cleanedUp = false;
 
-function cleanup() {
+async function cleanup(): Promise<void> {
   if (cleanedUp) return;
   cleanedUp = true;
+
+  // TODO: Stop accepting new connections
+  // TODO: Close WebSocket connections
+  // TODO: Stop running sandboxes
+
+  try {
+    closeDb();
+    logger.info("Database closed");
+  } catch (err) {
+    logger.error({ err }, "Error closing database");
+  }
+
   removePidFile();
   removePortFile();
 }
 
-function shutdown(signal: string) {
+async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "Shutting down");
-  cleanup();
+  await cleanup();
   process.exit(0);
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-// Safety net: Nitro dev may intercept signals before our handlers fire
-process.on("exit", () => cleanup());
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+// Safety net: synchronous best-effort on unexpected exit
+process.on("exit", () => {
+  if (!cleanedUp) {
+    try { closeDb(); } catch { /* best effort */ }
+    removePidFile();
+    removePortFile();
+  }
+});
 
 export default app;
