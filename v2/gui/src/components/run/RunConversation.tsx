@@ -41,7 +41,8 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
 
   for (const event of events) {
     const { data, stageName } = event;
-    const ts = data.timestamp ?? new Date().toISOString();
+    if (!data) continue; // Guard against malformed events
+    const ts = (data as any).timestamp ?? (data.metadata as any)?.timestamp ?? new Date().toISOString();
 
     switch (data.eventType) {
       case "agent_message": {
@@ -237,7 +238,24 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
       client.getRunMessages(runId)
         .then((res) => {
           if (!cancelled && res.messages?.length) {
-            setRestMessages(res.messages);
+            // Transform DB messages to RunOutputMessage format
+            const transformed: RunOutputMessage[] = res.messages.map((m: any, i: number) => ({
+              type: 'run_output' as const,
+              runId,
+              seq: i,
+              stageName: m.stageName ?? 'execute',
+              round: m.round ?? 1,
+              data: {
+                role: m.role ?? 'user',
+                content: m.content ?? '',
+                eventType: m.role === 'user' ? 'agent_message' as const : 'agent_message' as const,
+                metadata: {
+                  timestamp: m.createdAt,
+                  isIntervention: m.isIntervention ?? false,
+                },
+              },
+            }));
+            setRestMessages(transformed);
           }
         })
         .catch(() => { /* ignore - messages endpoint may not exist yet */ });
@@ -255,8 +273,8 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
   const lastEvent = events[events.length - 1];
   const isLastStreaming =
     isRunning &&
-    lastEvent?.data.eventType === "agent_message" &&
-    lastEvent?.data.metadata?.isStreaming;
+    lastEvent?.data?.eventType === "agent_message" &&
+    lastEvent?.data?.metadata?.isStreaming;
 
   // Auto-scroll to bottom when new content arrives
   useEffect(() => {
