@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import * as schema from './schema.js';
+import { seed } from './seed.js';
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 let sqlite: Database.Database | null = null;
@@ -16,6 +18,11 @@ export function getDb(dbPath = './vibe-harness.db') {
   sqlite.pragma('foreign_keys = ON');
 
   db = drizzle(sqlite, { schema });
+
+  // Apply pending migrations, then seed built-in data
+  migrate(db, { migrationsFolder: './drizzle' });
+  seed(db);
+
   return db;
 }
 
