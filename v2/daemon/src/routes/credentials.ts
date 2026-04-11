@@ -48,6 +48,20 @@ credentials.post('/api/credentials', async (c) => {
   return c.json(credSet, 201);
 });
 
+// GET /api/credentials/audit — audit log
+// NOTE: must be registered BEFORE the /:id route to avoid "audit" matching :id
+credentials.get('/api/credentials/audit', (c) => {
+  const credentialSetId = c.req.query('credentialSetId');
+  const entries = getAuditLog(credentialSetId || undefined);
+
+  const parsed = entries.map((e) => ({
+    ...e,
+    details: e.details ? JSON.parse(e.details) : null,
+  }));
+
+  return c.json({ entries: parsed, total: parsed.length });
+});
+
 // GET /api/credentials/:id — get set detail with entries (masked)
 credentials.get('/api/credentials/:id', (c) => {
   const id = c.req.param('id');
@@ -114,19 +128,6 @@ credentials.delete('/api/credentials/:id/entries/:entryId', (c) => {
   deleteCredentialEntry(entryId);
   logger.info({ entryId }, 'Credential entry deleted');
   return c.body(null, 204);
-});
-
-// GET /api/credentials/audit — audit log
-credentials.get('/api/credentials/audit', (c) => {
-  const credentialSetId = c.req.query('credentialSetId');
-  const entries = getAuditLog(credentialSetId || undefined);
-
-  const parsed = entries.map((e) => ({
-    ...e,
-    details: e.details ? JSON.parse(e.details) : null,
-  }));
-
-  return c.json({ entries: parsed, total: parsed.length });
 });
 
 export { credentials };

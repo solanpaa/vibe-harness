@@ -307,7 +307,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     sessions.set(runId, session);
 
     // 6. Persist session state to DB so create-review.ts and finalize.ts can read it
-    const db = getDb();
     db.update(schema.workflowRuns)
       .set({
         sandboxId: sandboxName,

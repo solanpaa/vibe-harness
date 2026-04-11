@@ -28,7 +28,7 @@ export const projects = sqliteTable('projects', {
   localPath: text('local_path').notNull(),
   description: text('description'),
   defaultCredentialSetId: text('default_credential_set_id')
-    .references(() => credentialSets.id, { onDelete: 'set null' }),
+    .references((): any => credentialSets.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -80,7 +80,7 @@ export const workflowRuns = sqliteTable(
     parentRunId: text('parent_run_id')
       .references((): any => workflowRuns.id),
     parallelGroupId: text('parallel_group_id')
-      .references(() => parallelGroups.id),
+      .references((): any => parallelGroups.id),
     description: text('description'),
     title: text('title'),
     status: text('status').notNull().default('pending'),
@@ -90,7 +90,7 @@ export const workflowRuns = sqliteTable(
     branch: text('branch'),
     acpSessionId: text('acp_session_id'),
     credentialSetId: text('credential_set_id')
-      .references(() => credentialSets.id),
+      .references((): any => credentialSets.id),
     baseBranch: text('base_branch'),
     targetBranch: text('target_branch'),
     parentWorktreeCommit: text('parent_worktree_commit'),
@@ -245,7 +245,7 @@ export const parallelGroups = sqliteTable(
     id: uuid(),
     sourceWorkflowRunId: text('source_workflow_run_id')
       .notNull()
-      .references(() => workflowRuns.id),
+      .references((): any => workflowRuns.id),
     name: text('name'),
     description: text('description'),
     metadata: text('metadata'),                      // JSON: snapshotCommit, etc.
@@ -267,7 +267,7 @@ export const credentialSets = sqliteTable(
     name: text('name').notNull(),
     description: text('description'),
     projectId: text('project_id')
-      .references(() => projects.id, { onDelete: 'set null' }),
+      .references((): any => projects.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },
   (table) => [
