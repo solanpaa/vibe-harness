@@ -22,6 +22,9 @@ export function assertSafeRef(ref: string, label = 'ref'): void {
   if (!ref || ref.trim().length === 0) {
     throw new InvalidGitRefError(`${label} must not be empty`);
   }
+  if (ref.startsWith('-')) {
+    throw new InvalidGitRefError(`${label} must not start with '-'`);
+  }
   if (DOUBLE_DOT.test(ref)) {
     throw new InvalidGitRefError(`${label} must not contain '..'`);
   }

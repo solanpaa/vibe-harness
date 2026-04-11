@@ -18,6 +18,7 @@ import {
   BranchAlreadyExistsError,
   GitOperationError,
   MergeError,
+  PathTraversalError,
 } from '../lib/errors.js';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -191,7 +192,14 @@ export function createWorktreeService(deps: {
       if (removeResult.exitCode !== 0) {
         if (!removeResult.stderr.includes('is not a working tree')) {
           log.warn({ stderr: removeResult.stderr }, 'Worktree remove returned error, falling back to rm + prune');
-          // Fallback: manual rm + prune
+          // Fallback: manual rm + prune — validate path is inside worktree dir
+          const allowedBase = path.resolve(path.join(projectPath, WORKTREE_DIR));
+          const resolvedWorktree = path.resolve(worktreePath);
+          if (!resolvedWorktree.startsWith(allowedBase + path.sep) && resolvedWorktree !== allowedBase) {
+            throw new PathTraversalError(
+              `Worktree path '${worktreePath}' is not inside '${allowedBase}' — refusing to delete`,
+            );
+          }
           if (fs.existsSync(worktreePath)) {
             fs.rmSync(worktreePath, { recursive: true, force: true });
           }

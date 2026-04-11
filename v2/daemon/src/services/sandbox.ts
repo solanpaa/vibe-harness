@@ -7,6 +7,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
+import { Mutex } from '../lib/mutex.js';
 import { execCommand, type ExecResult } from '../lib/shell.js';
 import {
   SandboxProvisionError,
@@ -69,6 +70,8 @@ export interface SandboxExecOptions {
   env?: Record<string, string>;
   /** Working directory inside the sandbox */
   workdir?: string;
+  /** When true, throw SandboxExecError if exit code is non-zero */
+  expectZero?: boolean;
 }
 
 export interface SandboxProcess {
@@ -116,6 +119,9 @@ export function createSandboxService(deps: {
    * Rebuilt from Docker state on daemon restart via reconcileFromDocker().
    */
   const activeSandboxes = new Map<string, SandboxState>();
+
+  /** Per-sandbox-name mutex to prevent getOrCreate race conditions */
+  const createLocks = new Map<string, Mutex>();
 
   // ── Helpers ──────────────────────────────────────────────────────
 
@@ -281,12 +287,13 @@ export function createSandboxService(deps: {
       throw new SandboxAlreadyExistsError(sandboxName);
     }
 
-    // Step 1: Create sandbox
+    // Step 1: Create sandbox (mount worktree as /workspace)
     log.info('Creating Docker sandbox');
     const createResult = await execCommand('docker', [
       'sandbox', 'create',
       '--name', sandboxName,
       '--image', options.image,
+      '-v', `${options.workdir}:/workspace`,
       ...buildHostDirMountArgs(options.credentials?.hostDirMounts ?? []),
     ]);
 
@@ -323,30 +330,46 @@ export function createSandboxService(deps: {
 
   async function getOrCreate(options: SandboxCreateOptions): Promise<string> {
     const sandboxName = getSandboxName(options.runId);
-    const log = logger.child({ sandboxName, runId: options.runId });
 
-    // 1. Already tracked in memory
-    if (activeSandboxes.has(sandboxName)) {
-      log.debug('Sandbox already active (in-memory), reusing');
-      return sandboxName;
-    }
+    // Acquire per-sandbox-name mutex to prevent concurrent creates
+    const lock = createLocks.get(sandboxName) ?? new Mutex();
+    createLocks.set(sandboxName, lock);
 
-    // 2. Exists in Docker (e.g., after daemon restart + workflow replay)
-    const liveSandboxes = await listSandboxes();
-    const existing = liveSandboxes.find((s) => s.name === sandboxName);
-    if (existing && existing.status === 'running') {
-      log.info('Sandbox found in Docker (reconciliation), populating state');
-      const envVars = options.credentials?.envVars ?? [];
-      activeSandboxes.set(sandboxName, {
-        runId: options.runId,
-        sandboxName,
-        envVars,
-      });
-      return sandboxName;
-    }
+    return lock.runExclusive(async () => {
+      const log = logger.child({ sandboxName, runId: options.runId });
 
-    // 3. Does not exist — create fresh
-    return create(options);
+      // 1. Already tracked in memory
+      if (activeSandboxes.has(sandboxName)) {
+        log.debug('Sandbox already active (in-memory), reusing');
+        return sandboxName;
+      }
+
+      // 2. Exists in Docker (e.g., after daemon restart + workflow replay)
+      const liveSandboxes = await listSandboxes();
+      const existing = liveSandboxes.find((s) => s.name === sandboxName);
+      if (existing && existing.status === 'running') {
+        log.info('Sandbox found in Docker (reconciliation), populating state');
+        const envVars = options.credentials?.envVars ?? [];
+        activeSandboxes.set(sandboxName, {
+          runId: options.runId,
+          sandboxName,
+          envVars,
+        });
+        return sandboxName;
+      }
+
+      // 3. Does not exist — create fresh
+      try {
+        return await create(options);
+      } catch (err) {
+        // Another process may have created it between our check and create
+        if (err instanceof SandboxAlreadyExistsError) {
+          log.info('Sandbox was created concurrently, reusing');
+          return sandboxName;
+        }
+        throw err;
+      }
+    });
   }
 
   async function sandboxExecInteractive(
@@ -356,11 +379,13 @@ export function createSandboxService(deps: {
     assertSandboxExists(sandboxName);
 
     const envArgs = buildEnvArgs(sandboxName, options.env);
+    const workdirArgs = options.workdir ? ['-w', options.workdir] : [];
 
     const child = spawn('docker', [
       'sandbox', 'exec',
       '-i',
       ...envArgs,
+      ...workdirArgs,
       sandboxName,
       ...options.command,
     ], {
@@ -377,13 +402,26 @@ export function createSandboxService(deps: {
     assertSandboxExists(sandboxName);
 
     const envArgs = buildEnvArgs(sandboxName, options.env);
+    const workdirArgs = options.workdir ? ['-w', options.workdir] : [];
 
-    return execCommand('docker', [
+    const result = await execCommand('docker', [
       'sandbox', 'exec',
       ...envArgs,
+      ...workdirArgs,
       sandboxName,
       ...options.command,
     ]);
+
+    if (options.expectZero && result.exitCode !== 0) {
+      throw new SandboxExecError(
+        sandboxName,
+        options.command.join(' '),
+        result.exitCode,
+        result.stderr,
+      );
+    }
+
+    return result;
   }
 
   function getEnvVars(sandboxName: string): Record<string, string> {
@@ -398,6 +436,10 @@ export function createSandboxService(deps: {
     sandboxName: string,
     forceKillTimeout = 10_000,
   ): Promise<void> {
+    if (!activeSandboxes.has(sandboxName)) {
+      return; // already stopped or never tracked
+    }
+
     const log = logger.child({ sandboxName });
 
     log.info('Stopping sandbox');
@@ -442,11 +484,21 @@ export function createSandboxService(deps: {
     const liveSandboxes = await listSandboxes();
 
     for (const info of liveSandboxes) {
+      // Only adopt running sandboxes — stopped/unknown ones are stale
+      if (info.status !== 'running') {
+        log.debug({ sandboxName: info.name, status: info.status }, 'Skipping non-running sandbox');
+        continue;
+      }
+
       if (!activeSandboxes.has(info.name)) {
         // Sandbox exists in Docker but not tracked — add to map.
         // runId is extracted from the sandbox name (vibe-<runIdPrefix>).
-        // envVars cannot be recovered from Docker; they will be re-populated
-        // if the workflow replays the create step via getOrCreate().
+        //
+        // NOTE: envVars will be empty for reconciled sandboxes because
+        // credential values cannot be recovered from Docker state.
+        // When a workflow replays via getOrCreate(), the caller must
+        // re-supply credentials in the SandboxCreateOptions so that
+        // envVars are populated for subsequent exec calls.
         const runIdPrefix = info.name.replace('vibe-', '');
         activeSandboxes.set(info.name, {
           runId: runIdPrefix,

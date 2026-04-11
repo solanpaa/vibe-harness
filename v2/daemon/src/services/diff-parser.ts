@@ -48,6 +48,10 @@ export interface DiffFile {
 export function parseUnifiedDiff(diffText: string): DiffFile[] {
   const files: DiffFile[] = [];
   const lines = diffText.split('\n');
+  // Remove trailing empty string from split (phantom EOF line)
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
   let i = 0;
 
   while (i < lines.length) {
