@@ -3,6 +3,7 @@ import type {
   WorkflowRunListResponse,
   WorkflowRunDetailResponse,
   WorkflowRunMessagesResponse,
+  RunResultResponse,
   ProjectListResponse,
   ProjectDetailResponse,
   ProjectBranchesResponse,
@@ -148,6 +149,10 @@ export class DaemonClient {
 
   async getRunMessages(id: string): Promise<WorkflowRunMessagesResponse> {
     return this.fetch<WorkflowRunMessagesResponse>(`/api/runs/${id}/messages`);
+  }
+
+  async getRunResult(id: string): Promise<RunResultResponse> {
+    return this.fetch<RunResultResponse>(`/api/runs/${id}/result`);
   }
 
   async createRun(data: CreateWorkflowRunRequest): Promise<WorkflowRun> {

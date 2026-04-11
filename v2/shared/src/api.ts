@@ -342,6 +342,23 @@ export interface CancelGroupResponse {
   cancelledRuns: string[];
 }
 
+// ─── Run Result ────────────────────────────────────────────────────────
+
+export interface RunResultFileChange {
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  path: string;
+}
+
+export interface RunResultResponse {
+  commitHash: string | null;
+  commitMessage: string | null;
+  branch: string | null;
+  targetBranch: string | null;
+  completedAt: string | null;
+  filesChanged: RunResultFileChange[];
+  diffStat: string | null;
+}
+
 // ─── Credentials ───────────────────────────────────────────────────────
 
 export interface CreateCredentialSetRequest {

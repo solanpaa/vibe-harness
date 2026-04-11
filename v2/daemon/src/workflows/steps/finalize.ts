@@ -117,6 +117,14 @@ export async function finalize(
       'Final commit from Vibe Harness workflow',
     );
     log.info({ committed: commitResult.committed }, 'Commit phase done');
+
+    if (commitResult.committed && commitResult.sha) {
+      metadata.commitHash = commitResult.sha;
+      metadata.commitMessage = 'Final commit from Vibe Harness workflow';
+      metadata.branch = run.branch;
+      metadata.targetBranch = targetBranch;
+    }
+
     advancePhase(db, journal!.id, 'rebase', metadata);
   }
 

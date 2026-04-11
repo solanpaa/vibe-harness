@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { eq, and, desc } from 'drizzle-orm';
 import { start, resumeHook } from 'workflow/api';
+import { execFileSync } from 'node:child_process';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
@@ -466,5 +467,92 @@ async function resumeStageHook(
     );
   }
 }
+
+// ── GET /api/runs/:id/result — Run result with commit info ──────────
+
+function parseNameStatus(output: string): Array<{ status: string; path: string }> {
+  return output
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [code, ...pathParts] = line.split('\t');
+      const status =
+        code === 'A' ? 'added'
+        : code === 'D' ? 'deleted'
+        : code?.startsWith('R') ? 'renamed'
+        : 'modified';
+      return { status, path: pathParts.join('\t') };
+    });
+}
+
+runs.get('/api/runs/:id/result', (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+
+  const run = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Workflow run not found' } }, 404);
+  }
+
+  const gitOp = db
+    .select()
+    .from(schema.gitOperations)
+    .where(
+      and(
+        eq(schema.gitOperations.workflowRunId, runId),
+        eq(schema.gitOperations.type, 'finalize'),
+      ),
+    )
+    .get();
+
+  const metadata: Record<string, any> = gitOp?.metadata ? JSON.parse(gitOp.metadata) : {};
+
+  let filesChanged: Array<{ status: string; path: string }> = [];
+  let diffStat: string | null = null;
+
+  if (metadata.commitHash) {
+    const project = db
+      .select({ localPath: schema.projects.localPath })
+      .from(schema.projects)
+      .where(eq(schema.projects.id, run.projectId))
+      .get();
+
+    if (project?.localPath) {
+      try {
+        const nameStatusOut = execFileSync(
+          'git',
+          ['diff', '--name-status', `${metadata.commitHash}~1..${metadata.commitHash}`],
+          { cwd: project.localPath, encoding: 'utf-8', timeout: 5000 },
+        );
+        filesChanged = parseNameStatus(nameStatusOut);
+
+        const statOut = execFileSync(
+          'git',
+          ['diff', '--stat', `${metadata.commitHash}~1..${metadata.commitHash}`],
+          { cwd: project.localPath, encoding: 'utf-8', timeout: 5000 },
+        );
+        diffStat = statOut.trim();
+      } catch {
+        // git not available or commit not found — return metadata only
+      }
+    }
+  }
+
+  return c.json({
+    commitHash: metadata.commitHash ?? null,
+    commitMessage: metadata.commitMessage ?? null,
+    branch: metadata.branch ?? run.branch,
+    targetBranch: metadata.targetBranch ?? run.targetBranch,
+    completedAt: run.completedAt,
+    filesChanged,
+    diffStat,
+  });
+});
 
 export { runs };

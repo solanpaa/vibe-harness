@@ -10,6 +10,7 @@ import { PopOutButton } from "../shared/PopOutButton";
 import { ReviewPanel } from "../review/ReviewPanel";
 import { ProposalPanel } from "../workflow/ProposalPanel";
 import { ParallelGroupStatus } from "../workflow/ParallelGroupStatus";
+import { ResultPanel } from "./ResultPanel";
 import type { WebSocketManager } from "../../api/ws";
 import type {
   WorkflowRunDetailResponse,
@@ -27,7 +28,7 @@ const RUNNING_STATUSES = new Set([
   "waiting_for_children",
 ]);
 
-type TabId = "conversation" | "details" | "review" | "proposals" | "parallel";
+type TabId = "conversation" | "details" | "review" | "proposals" | "parallel" | "result";
 
 export function RunDetail({ runId, ws }: RunDetailProps) {
   const { client } = useDaemonStore();
@@ -153,6 +154,7 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
     (detail.status === "waiting_for_children" ||
       detail.status === "children_completed_with_failures") &&
     detail.parallelGroupId;
+  const isCompleted = detail.status === "completed";
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "conversation", label: "Conversation" },
@@ -160,6 +162,7 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
     ...(hasReview ? [{ id: "review" as TabId, label: "📋 Review" }] : []),
     ...(hasProposals ? [{ id: "proposals" as TabId, label: "🔀 Proposals" }] : []),
     ...(hasParallelGroup ? [{ id: "parallel" as TabId, label: "⚡ Parallel" }] : []),
+    ...(isCompleted ? [{ id: "result" as TabId, label: "✅ Result" }] : []),
   ];
 
   return (
@@ -327,6 +330,10 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
               client?.getRun(runId).then(setDetail).catch(() => {});
             }}
           />
+        )}
+
+        {activeTab === "result" && isCompleted && (
+          <ResultPanel runId={runId} />
         )}
       </div>
 
