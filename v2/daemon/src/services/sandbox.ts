@@ -101,6 +101,8 @@ export interface SandboxService {
   ): Promise<ExecResult>;
   getEnvVars(sandboxName: string): Record<string, string>;
   stop(sandboxName: string, forceKillTimeout?: number): Promise<void>;
+  /** Stop a sandbox by name regardless of active tracking (for reconciliation/shutdown). */
+  forceStop(sandboxName: string): Promise<void>;
   list(): Promise<SandboxInfo[]>;
   isActive(sandboxName: string): boolean;
   getSandboxName(runId: string): string;
@@ -510,6 +512,26 @@ export function createSandboxService(deps: {
     }
   }
 
+  /** Stop a sandbox by name, bypassing active-map check (reconciliation/shutdown). */
+  async function forceStop(sandboxName: string): Promise<void> {
+    const log = logger.child({ sandboxName });
+    log.info('Force-stopping sandbox');
+
+    const stopResult = await execCommand(
+      'docker',
+      ['sandbox', 'stop', sandboxName],
+      { timeout: 15_000 },
+    );
+
+    if (stopResult.exitCode !== 0) {
+      log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
+      await execCommand('docker', ['sandbox', 'rm', '--force', sandboxName]);
+    }
+
+    activeSandboxes.delete(sandboxName);
+    log.info('Sandbox force-stopped');
+  }
+
   // ── Public interface ────────────────────────────────────────────
 
   return {
@@ -519,6 +541,7 @@ export function createSandboxService(deps: {
     execCommand: sandboxExecCommand,
     getEnvVars,
     stop,
+    forceStop,
     list: listSandboxes,
     isActive: (name) => activeSandboxes.has(name),
     getSandboxName,

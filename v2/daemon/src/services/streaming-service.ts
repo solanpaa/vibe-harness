@@ -543,3 +543,25 @@ export function cleanupRun(runId: string): void {
 export function getClientCount(): number {
   return clients.size;
 }
+
+/**
+ * Disconnect all clients and clean up all run buffers.
+ * Called during graceful shutdown.
+ */
+export function disconnectAll(): void {
+  // Flush and clean up all run buffers
+  for (const [runId, buf] of runBuffers) {
+    flushDbWrites(runId, buf);
+    if (buf.flushTimer) {
+      clearInterval(buf.flushTimer);
+    }
+    if (buf.acpUnsubscribe) {
+      buf.acpUnsubscribe();
+    }
+  }
+  runBuffers.clear();
+
+  // Clear all clients (WS close is handled by the server shutting down)
+  clients.clear();
+  log.info('All streaming clients disconnected and buffers flushed');
+}

@@ -1,26 +1,35 @@
 // ---------------------------------------------------------------------------
-// Hook Resume Outbox Replayer (CDD-workflow §8)
+// Startup Reconciliation (SAD §2.1.3, CDD-workflow §8)
 //
-// On startup, replays any pending hookResumes rows that were written to the
-// outbox but never successfully delivered (crash between write and resume).
+// On daemon start, reconciles in-flight state left by a previous crash:
+//   1. Enumerate Docker sandboxes (vibe-*)
+//   2. Mark running/provisioning workflow runs as stage_failed
+//   3. Stop matching sandboxes
+//   4. Stop orphaned sandboxes (no matching active run)
+//   5. Replay pending hookResumes (outbox pattern)
+//   6. Log reconciliation summary
 // ---------------------------------------------------------------------------
 
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { resumeHook } from 'workflow/api';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
+import type { SandboxService } from '../services/sandbox.js';
 import { logger } from './logger.js';
 
-export async function replayPendingHookResumes(): Promise<void> {
+// ── Hook Resume Outbox Replayer ──────────────────────────────────────
+
+export async function replayPendingHookResumes(): Promise<number> {
   const db = getDb();
   const pending = db.select().from(schema.hookResumes).all();
 
   if (pending.length === 0) {
     logger.debug('No pending hook resumes to replay');
-    return;
+    return 0;
   }
 
   logger.info({ count: pending.length }, 'Replaying pending hook resumes');
+  let replayed = 0;
 
   for (const row of pending) {
     try {
@@ -32,6 +41,7 @@ export async function replayPendingHookResumes(): Promise<void> {
         .run();
 
       logger.info({ hookToken: row.hookToken }, 'Hook resume replayed successfully');
+      replayed++;
     } catch (err) {
       logger.warn(
         { err, hookToken: row.hookToken, id: row.id },
@@ -39,4 +49,122 @@ export async function replayPendingHookResumes(): Promise<void> {
       );
     }
   }
+
+  return replayed;
+}
+
+// ── Main reconciliation ──────────────────────────────────────────────
+
+export interface ReconcileResult {
+  runsReconciled: number;
+  sandboxesStopped: number;
+  hooksReplayed: number;
+}
+
+export async function reconcileOnStartup(
+  sandboxService: SandboxService,
+): Promise<ReconcileResult> {
+  const log = logger.child({ operation: 'startup-reconcile' });
+  log.info('Starting startup reconciliation');
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  let runsReconciled = 0;
+  let sandboxesStopped = 0;
+
+  // Step 1: Enumerate Docker sandboxes
+  const liveSandboxes = await sandboxService.list();
+  const liveSandboxNames = new Set(liveSandboxes.map((s) => s.name));
+  log.info({ count: liveSandboxes.length }, 'Live Docker sandboxes found');
+
+  // Step 2: Query running/provisioning workflow runs
+  const activeRuns = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(inArray(schema.workflowRuns.status, ['running', 'provisioning']))
+    .all();
+
+  log.info({ count: activeRuns.length }, 'Active workflow runs found in DB');
+
+  // Track which sandbox names are accounted for by active runs
+  const accountedSandboxes = new Set<string>();
+
+  // Step 3: For each running/provisioning run
+  for (const run of activeRuns) {
+    const runLog = log.child({ runId: run.id, status: run.status });
+
+    // Find current running stageExecution
+    const runningStage = db
+      .select()
+      .from(schema.stageExecutions)
+      .where(eq(schema.stageExecutions.workflowRunId, run.id))
+      .all()
+      .find((se) => se.status === 'running');
+
+    if (runningStage) {
+      // Mark stageExecution as failed
+      db.update(schema.stageExecutions)
+        .set({
+          status: 'failed',
+          failureReason: 'daemon_restart',
+          completedAt: now,
+        })
+        .where(eq(schema.stageExecutions.id, runningStage.id))
+        .run();
+
+      runLog.info(
+        { stageId: runningStage.id, stageName: runningStage.stageName },
+        'Marked running stage execution as failed (daemon_restart)',
+      );
+    }
+
+    // Transition workflowRun to stage_failed
+    db.update(schema.workflowRuns)
+      .set({ status: 'stage_failed' })
+      .where(eq(schema.workflowRuns.id, run.id))
+      .run();
+
+    runLog.info('Transitioned workflow run to stage_failed');
+    runsReconciled++;
+
+    // Stop matching sandbox if it exists
+    const sandboxName = sandboxService.getSandboxName(run.id);
+    accountedSandboxes.add(sandboxName);
+
+    if (liveSandboxNames.has(sandboxName)) {
+      try {
+        await sandboxService.forceStop(sandboxName);
+        sandboxesStopped++;
+        runLog.info({ sandboxName }, 'Stopped sandbox for reconciled run');
+      } catch (err) {
+        runLog.warn({ err, sandboxName }, 'Failed to stop sandbox during reconciliation');
+      }
+    }
+  }
+
+  // Step 4: Stop orphaned sandboxes (vibe-* with no matching active run)
+  for (const sandbox of liveSandboxes) {
+    if (!accountedSandboxes.has(sandbox.name)) {
+      log.warn({ sandboxName: sandbox.name }, 'Stopping orphaned sandbox');
+      try {
+        await sandboxService.forceStop(sandbox.name);
+        sandboxesStopped++;
+      } catch (err) {
+        log.warn({ err, sandboxName: sandbox.name }, 'Failed to stop orphaned sandbox');
+      }
+    }
+  }
+
+  // Step 5: Replay pending hook resumes
+  const hooksReplayed = await replayPendingHookResumes();
+
+  // Step 6: Log summary
+  const result: ReconcileResult = {
+    runsReconciled,
+    sandboxesStopped,
+    hooksReplayed,
+  };
+
+  log.info(result, 'Startup reconciliation complete');
+  return result;
 }

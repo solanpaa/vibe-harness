@@ -91,10 +91,15 @@ function App() {
     });
 
     wsRef.current = ws;
+    // Expose WS ref for child pages (e.g. Workspace → RunDetail streaming)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__vibeWsRef = ws;
 
     return () => {
       ws.disconnect();
       wsRef.current = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__vibeWsRef = null;
     };
   }, [port, handleMessage, setWsState]);
 

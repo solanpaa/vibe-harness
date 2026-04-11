@@ -24,6 +24,10 @@ import type {
   CredentialAuditResponse,
   CredentialSet,
   CredentialEntry,
+  CreateWorkflowRunRequest,
+  WorkflowRun,
+  SendInterventionResponse,
+  CancelRunResponse,
 } from "@vibe-harness/shared";
 
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
@@ -128,6 +132,26 @@ export class DaemonClient {
 
   async getRunMessages(id: string): Promise<WorkflowRunMessagesResponse> {
     return this.fetch<WorkflowRunMessagesResponse>(`/api/runs/${id}/messages`);
+  }
+
+  async createRun(data: CreateWorkflowRunRequest): Promise<WorkflowRun> {
+    return this.fetch<WorkflowRun>("/api/runs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async cancelRun(id: string): Promise<CancelRunResponse> {
+    return this.fetch<CancelRunResponse>(`/api/runs/${id}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  async sendIntervention(runId: string, message: string): Promise<SendInterventionResponse> {
+    return this.fetch<SendInterventionResponse>(`/api/runs/${runId}/message`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
   }
 
   // ── Projects ──────────────────────────────────────────────────────

@@ -11,7 +11,9 @@ import {
 import { getOrCreateToken } from "./lib/auth.js";
 import { logger } from "./lib/logger.js";
 import { getDb, closeDb } from "./db/index.js";
-import { replayPendingHookResumes } from "./lib/reconcile.js";
+import { reconcileOnStartup } from "./lib/reconcile.js";
+import { createSandboxService, type SandboxService } from "./services/sandbox.js";
+import * as streamingService from "./services/streaming-service.js";
 
 // ── Single-instance guard ───────────────────────────────────────────
 
@@ -46,9 +48,13 @@ logger.info("Auth token ready");
 const db = getDb(getDbPath());
 logger.info("Database initialized");
 
-// Replay any pending hook resumes from the outbox (crash recovery)
-replayPendingHookResumes().catch((err) => {
-  logger.error({ err }, "Failed to replay pending hook resumes");
+// Create sandbox service for reconciliation and shutdown
+const sandboxService: SandboxService = createSandboxService({ logger });
+
+// Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
+// stop orphaned sandboxes, replay pending hook resumes
+reconcileOnStartup(sandboxService).catch((err) => {
+  logger.error({ err }, "Startup reconciliation failed");
 });
 
 writePidFile();
@@ -76,10 +82,29 @@ async function cleanup(): Promise<void> {
   if (cleanedUp) return;
   cleanedUp = true;
 
-  // TODO: Stop accepting new connections
-  // TODO: Close WebSocket connections
-  // TODO: Stop running sandboxes
+  // Stop all active sandboxes
+  try {
+    const liveSandboxes = await sandboxService.list();
+    for (const sandbox of liveSandboxes) {
+      try {
+        await sandboxService.forceStop(sandbox.name);
+      } catch (err) {
+        logger.warn({ err, sandbox: sandbox.name }, "Failed to stop sandbox during shutdown");
+      }
+    }
+    logger.info({ count: liveSandboxes.length }, "Active sandboxes stopped");
+  } catch (err) {
+    logger.error({ err }, "Error stopping sandboxes during shutdown");
+  }
 
+  // Disconnect all WebSocket clients and flush streaming buffers
+  try {
+    streamingService.disconnectAll();
+  } catch (err) {
+    logger.error({ err }, "Error disconnecting streaming clients");
+  }
+
+  // Close database
   try {
     closeDb();
     logger.info("Database closed");
