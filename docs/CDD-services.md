@@ -18,8 +18,9 @@
 8. [Credential Vault](#8-credential-vault)
 9. [Branch Namer](#9-branch-namer)
 10. [Diff Parser](#10-diff-parser)
-11. [Error Types](#11-error-types)
-12. [Initialization & Dependency Injection](#12-initialization--dependency-injection)
+11. [Proposal Service](#11-proposal-service)
+12. [Error Types](#12-error-types)
+13. [Initialization & Dependency Injection](#13-initialization--dependency-injection)
 
 ---
 
@@ -29,7 +30,7 @@ From SAD §5.1 — services form a strict DAG with no circular dependencies:
 
 ```
                     ┌──────────────────┐
-                    │  session-manager  │  (workflow layer — NOT in this CDD)
+                    │  session-manager  │  (workflow layer — see §1.1 below)
                     └───┬───┬───┬───┬──┘
                         │   │   │   │
            ┌────────────┘   │   │   └────────────┐
@@ -42,15 +43,29 @@ From SAD §5.1 — services form a strict DAG with no circular dependencies:
                                │ streaming-service  │
                                └───────────────────┘
 
-    ┌────────────────┐         ┌──────────┐
-    │ review-service │────────►│ worktree │
-    │                │────────►│branch-namer│
-    └────────────────┘         └──────────┘
+    ┌────────────────┐
+    │ review-service │────────►  worktree (diffs)
+    │                │────────►  sandbox  (plan.md capture)
+    └────────────────┘
 
-    ┌──────────┐   ┌──────────────┐   ┌─────────────────┐
-    │diff-parser│   │ branch-namer │   │credential-vault │
-    │(standalone)│   │ (standalone) │   │  (standalone)   │
-    └──────────┘   └──────────────┘   └─────────────────┘
+    ┌──────────────────┐   ┌──────────┐   ┌──────────────┐   ┌─────────────────┐
+    │proposal-service  │   │diff-parser│   │ branch-namer │   │credential-vault │
+    │  (standalone)    │   │(standalone)│   │ (standalone) │   │  (standalone)   │
+    └──────────────────┘   └──────────┘   └──────────────┘   └─────────────────┘
+```
+
+**Service dependency DAG (no circular dependencies):**
+```
+session-manager → sandbox, worktree, acp-client, credential-vault, streaming-service
+review-service  → worktree (for diffs), sandbox (for plan.md capture)
+streaming-service → acp-client (reads events)
+proposal-service → (standalone, reads DB only)
+branch-namer    → (standalone, calls LLM)
+credential-vault → (standalone, reads DB + encryption)
+sandbox         → (standalone, shells out to Docker)
+worktree        → (standalone, shells out to git)
+acp-client      → (standalone, manages stdio streams)
+diff-parser     → (standalone, pure function)
 ```
 
 **Initialization order** (reverse topological sort of dependencies):
@@ -58,13 +73,40 @@ From SAD §5.1 — services form a strict DAG with no circular dependencies:
 1. `diff-parser` — pure, no dependencies
 2. `branch-namer` — standalone, calls LLM
 3. `credential-vault` — standalone, reads DB + encryption
-4. `sandbox` — standalone, shells out to Docker
-5. `worktree` — standalone, shells out to git
-6. `acp-client` — standalone, manages stdio streams
-7. `streaming-service` — depends on acp-client event types
-8. `review-service` — depends on worktree, branch-namer, diff-parser
+4. `proposal-service` — standalone, reads DB only
+5. `sandbox` — standalone, shells out to Docker
+6. `worktree` — standalone, shells out to git
+7. `acp-client` — standalone, manages stdio streams
+8. `streaming-service` — depends on acp-client event types
+9. `review-service` — depends on worktree, sandbox
 
-Services above this line are instantiated by the daemon startup sequence and injected into workflow steps. The `session-manager` (workflow layer) is documented in a separate CDD.
+Services above this line are instantiated by the daemon startup sequence and injected into workflow steps.
+
+### 1.1 Session Manager Cross-Reference
+
+The `session-manager` lives in the workflow layer, not the services layer. It is documented in **CDD-workflow.md**. For context, its interface summary:
+
+```typescript
+// workflows/session-manager.ts — interface summary (see CDD-workflow.md for full design)
+
+interface SessionManager {
+  /** Provision sandbox + worktree + ACP session for a new workflow run */
+  create(runId: string, options: SessionCreateOptions): Promise<void>;
+  /** Send prompt into existing ACP session (--continue semantics) */
+  continue(runId: string, prompt: string): Promise<void>;
+  /** Start fresh ACP session in same sandbox/worktree, inject prior context */
+  fresh(runId: string, prompt: string, context: FreshSessionContext): Promise<void>;
+  /** Graceful stop → force kill after timeout */
+  stop(runId: string): Promise<void>;
+  /** Send intervention message to running agent */
+  intervene(runId: string, message: string): Promise<void>;
+
+  // Per-run mutex serializes all stdin writes (SAD §5.4)
+  withSession<T>(runId: string, fn: () => Promise<T>): Promise<T>;
+}
+```
+
+The session-manager is the **only caller** of sandbox.create(), acp-client.connect(), and worktree.create() during workflow execution. It holds the per-run session locks (SAD §5.4) and is responsible for passing persisted `envVars` on every `acp-client.connect()` call.
 
 ---
 
@@ -191,11 +233,16 @@ export async function execCommand(
  * SessionManager (per-run ACP stdin lock, SAD §5.4).
  */
 export class Mutex {
-  private queue: Array<() => void> = [];
+  private queue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   private locked = false;
 
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire();
+  /**
+   * @param timeoutMs - Maximum time to wait for lock acquisition.
+   *   Default 60_000ms. Rejects with MutexTimeoutError if exceeded.
+   *   Prevents deadlocks from leaked locks or hung operations.
+   */
+  async runExclusive<T>(fn: () => Promise<T>, timeoutMs = 60_000): Promise<T> {
+    await this.acquire(timeoutMs);
     try {
       return await fn();
     } finally {
@@ -203,21 +250,41 @@ export class Mutex {
     }
   }
 
-  private acquire(): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private acquire(timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       if (!this.locked) {
         this.locked = true;
         resolve();
-      } else {
-        this.queue.push(resolve);
+        return;
       }
+
+      const entry = { resolve, reject };
+      this.queue.push(entry);
+
+      const timer = setTimeout(() => {
+        const idx = this.queue.indexOf(entry);
+        if (idx !== -1) {
+          this.queue.splice(idx, 1);
+          reject(new Error(
+            `Mutex acquisition timed out after ${timeoutMs}ms. ` +
+            `This may indicate a deadlock or a hung operation holding the lock.`
+          ));
+        }
+      }, timeoutMs);
+
+      // Attach timer cleanup to the resolve path
+      const origResolve = entry.resolve;
+      entry.resolve = () => {
+        clearTimeout(timer);
+        origResolve();
+      };
     });
   }
 
   private release(): void {
     if (this.queue.length > 0) {
       const next = this.queue.shift()!;
-      next();
+      next.resolve();
     } else {
       this.locked = false;
     }
@@ -238,7 +305,7 @@ export class Mutex {
 // services/sandbox.ts
 
 export interface SandboxCreateOptions {
-  /** Workflow run ID — used to derive sandbox name: vibe-<first8chars> */
+  /** Workflow run ID — used to derive sandbox name: vibe-<first12chars> */
   runId: string;
   /** Docker image to use (from agent definition) */
   image: string;
@@ -265,13 +332,28 @@ export interface SandboxCredentials {
   hostDirMounts: Array<{ hostPath: string; containerPath: string }>;
 }
 
+/**
+ * Tracked state for a running sandbox.
+ * Persisted in-memory for the lifetime of the sandbox.
+ */
+export interface SandboxState {
+  runId: string;
+  sandboxName: string;
+  pid?: number;
+  /**
+   * Env vars from credential injection (env_var + command_extract types).
+   * Persisted here so that session-manager can pass them on EVERY
+   * execInteractive() / execCommand() call — not just on create().
+   * Docker sandbox exec does not inherit env vars from create().
+   */
+  envVars: Array<{ key: string; value: string }>;
+}
+
 export interface SandboxExecOptions {
   /** Command and arguments to run inside the sandbox */
   command: string[];
   /** Environment variables to set for this exec invocation */
   env?: Record<string, string>;
-  /** If true, spawn with stdin/stdout piped (for ACP) */
-  interactive?: boolean;
   /** Working directory inside the sandbox */
   workdir?: string;
 }
@@ -295,12 +377,13 @@ export interface SandboxService {
    * Create and start a Docker sandbox for a workflow run.
    *
    * Steps:
-   *   1. Derive sandbox name: vibe-<runId.slice(0,8)>
+   *   1. Derive sandbox name: vibe-<runId.slice(0,12)>
    *   2. docker sandbox create --image <image> --name <name>
    *   3. docker sandbox network proxy (configure based on networkPolicy)
    *   4. Mount workdir and any host directory mounts
-   *   5. Inject credentials (env vars, file mounts, docker logins)
-   *   6. Register in activeSandboxes map
+   *   5. Inject credentials (file mounts, docker logins)
+   *   6. Persist envVars in SandboxState for subsequent exec calls
+   *   7. Register in activeSandboxes map
    *
    * @throws SandboxProvisionError if Docker command fails
    * @throws SandboxAlreadyExistsError if sandbox name is taken
@@ -308,21 +391,56 @@ export interface SandboxService {
   create(options: SandboxCreateOptions): Promise<string>;
 
   /**
-   * Execute a command inside a running sandbox.
+   * Get or create a sandbox — idempotent version of create().
    *
-   * For ACP sessions (interactive=true), returns a SandboxProcess
-   * with piped stdin/stdout for NDJSON communication.
+   * On workflow replay/restart, the sandbox may already exist in Docker.
+   * This method checks Docker state first:
+   *   1. If sandbox exists in activeSandboxes map → return name
+   *   2. If sandbox exists in Docker (via list()) → populate SandboxState, return name
+   *   3. Otherwise → call create()
    *
-   * For non-interactive commands (credential injection, file operations),
-   * waits for completion and returns stdout/stderr.
-   *
-   * @throws SandboxNotFoundError if sandbox doesn't exist
-   * @throws SandboxExecError if command exits non-zero (non-interactive only)
+   * Used by session-manager to safely handle workflow step replay (SAD §4.1).
    */
-  exec(
+  getOrCreate(options: SandboxCreateOptions): Promise<string>;
+
+  /**
+   * Execute an interactive command inside a sandbox (piped stdin/stdout).
+   *
+   * Used for ACP sessions where the caller needs stdin/stdout access.
+   * Automatically injects persisted envVars from SandboxState.
+   *
+   * @param sandboxName - Target sandbox
+   * @param options - Command, additional env vars, workdir
+   * @returns SandboxProcess with piped stdio
+   * @throws SandboxNotFoundError if sandbox doesn't exist
+   */
+  execInteractive(
     sandboxName: string,
     options: SandboxExecOptions
-  ): Promise<SandboxProcess | ExecResult>;
+  ): Promise<SandboxProcess>;
+
+  /**
+   * Execute a non-interactive command inside a sandbox (wait for completion).
+   *
+   * Used for credential injection, file operations, plan.md capture.
+   * Automatically injects persisted envVars from SandboxState.
+   *
+   * @param sandboxName - Target sandbox
+   * @param options - Command, additional env vars, workdir
+   * @returns ExecResult with stdout/stderr/exitCode
+   * @throws SandboxNotFoundError if sandbox doesn't exist
+   * @throws SandboxExecError if command exits non-zero
+   */
+  execCommand(
+    sandboxName: string,
+    options: SandboxExecOptions
+  ): Promise<ExecResult>;
+
+  /**
+   * Get the persisted env vars for a sandbox.
+   * Used by session-manager to pass env vars to ACP connect calls.
+   */
+  getEnvVars(sandboxName: string): Record<string, string>;
 
   /**
    * Stop a sandbox — graceful stop then force kill.
@@ -351,8 +469,16 @@ export interface SandboxService {
 
   /**
    * Derive the sandbox name from a workflow run ID.
+   * Uses 12 characters to reduce collision probability.
    */
   getSandboxName(runId: string): string;
+
+  /**
+   * Reconcile activeSandboxes map from Docker state.
+   * Called during daemon startup (SAD §2.1.3).
+   * Populates SandboxState for any live vibe-* sandboxes.
+   */
+  reconcileFromDocker(): Promise<void>;
 }
 ```
 
@@ -362,7 +488,7 @@ export interface SandboxService {
 // services/sandbox.ts — implementation sketch
 
 import { Mutex } from '../lib/mutex.js';
-import { execCommand, type ExecResult } from '../lib/shell.js';
+import { execCommand as execCmd, type ExecResult } from '../lib/shell.js';
 import { spawn } from 'node:child_process';
 import type { Logger } from 'pino';
 
@@ -373,12 +499,36 @@ export function createSandboxService(deps: {
 
   /**
    * In-memory map of active sandboxes. Survives hot-reload via globalThis
-   * in dev, but NOT daemon restart — reconciliation rebuilds from Docker.
+   * in dev, but NOT daemon restart — reconcileFromDocker() rebuilds from Docker.
    */
-  const activeSandboxes = new Map<string, { runId: string; pid?: number }>();
+  const activeSandboxes = new Map<string, SandboxState>();
 
   function getSandboxName(runId: string): string {
-    return `vibe-${runId.slice(0, 8)}`;
+    // 12 chars for lower collision probability across concurrent runs
+    return `vibe-${runId.slice(0, 12)}`;
+  }
+
+  /** Build -e KEY=VALUE args from SandboxState.envVars + caller overrides */
+  function buildEnvArgs(
+    sandboxName: string,
+    extraEnv?: Record<string, string>
+  ): string[] {
+    const state = activeSandboxes.get(sandboxName);
+    const allEnv: Record<string, string> = {};
+
+    // Persisted env vars from credential injection (base layer)
+    if (state) {
+      for (const { key, value } of state.envVars) {
+        allEnv[key] = value;
+      }
+    }
+
+    // Caller-provided env vars (override layer)
+    if (extraEnv) {
+      Object.assign(allEnv, extraEnv);
+    }
+
+    return Object.entries(allEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   }
 
   async function create(options: SandboxCreateOptions): Promise<string> {
@@ -391,7 +541,7 @@ export function createSandboxService(deps: {
 
     // Step 1: Create sandbox
     log.info('Creating Docker sandbox');
-    const createResult = await execCommand('docker', [
+    const createResult = await execCmd('docker', [
       'sandbox', 'create',
       '--name', sandboxName,
       '--image', options.image,
@@ -414,53 +564,84 @@ export function createSandboxService(deps: {
       await injectCredentials(sandboxName, options.credentials, log);
     }
 
-    activeSandboxes.set(sandboxName, { runId: options.runId });
+    // Step 4: Register sandbox with persisted env vars
+    const envVars = options.credentials?.envVars ?? [];
+    activeSandboxes.set(sandboxName, { runId: options.runId, sandboxName, envVars });
     log.info('Sandbox created successfully');
     return sandboxName;
   }
 
-  async function exec(
+  async function getOrCreate(options: SandboxCreateOptions): Promise<string> {
+    const sandboxName = getSandboxName(options.runId);
+    const log = logger.child({ sandboxName, runId: options.runId });
+
+    // 1. Already tracked in memory
+    if (activeSandboxes.has(sandboxName)) {
+      log.debug('Sandbox already active (in-memory), reusing');
+      return sandboxName;
+    }
+
+    // 2. Exists in Docker (e.g., after daemon restart + workflow replay)
+    const liveSandboxes = await listSandboxes();
+    const existing = liveSandboxes.find((s) => s.name === sandboxName);
+    if (existing && existing.status === 'running') {
+      log.info('Sandbox found in Docker (reconciliation), populating state');
+      const envVars = options.credentials?.envVars ?? [];
+      activeSandboxes.set(sandboxName, { runId: options.runId, sandboxName, envVars });
+      return sandboxName;
+    }
+
+    // 3. Does not exist — create fresh
+    return create(options);
+  }
+
+  async function execInteractive(
     sandboxName: string,
     options: SandboxExecOptions
-  ): Promise<SandboxProcess | ExecResult> {
-    if (!activeSandboxes.has(sandboxName)) {
-      // Allow exec on sandboxes found during reconciliation
-      const sandboxes = await list();
-      if (!sandboxes.find((s) => s.name === sandboxName)) {
-        throw new SandboxNotFoundError(sandboxName);
-      }
-    }
+  ): Promise<SandboxProcess> {
+    assertSandboxExists(sandboxName);
 
-    if (options.interactive) {
-      // Spawn with piped stdin/stdout for ACP communication
-      const envArgs = Object.entries(options.env ?? {}).flatMap(
-        ([k, v]) => ['-e', `${k}=${v}`]
-      );
+    const envArgs = buildEnvArgs(sandboxName, options.env);
 
-      const child = spawn('docker', [
-        'sandbox', 'exec',
-        '-i',
-        ...envArgs,
-        sandboxName,
-        ...options.command,
-      ], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+    const child = spawn('docker', [
+      'sandbox', 'exec',
+      '-i',
+      ...envArgs,
+      sandboxName,
+      ...options.command,
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
-      return { process: child, sandboxName };
-    }
+    return { process: child, sandboxName };
+  }
 
-    // Non-interactive: run and wait
-    const envArgs = Object.entries(options.env ?? {}).flatMap(
-      ([k, v]) => ['-e', `${k}=${v}`]
-    );
+  async function execCommand(
+    sandboxName: string,
+    options: SandboxExecOptions
+  ): Promise<ExecResult> {
+    assertSandboxExists(sandboxName);
 
-    return execCommand('docker', [
+    const envArgs = buildEnvArgs(sandboxName, options.env);
+
+    return execCmd('docker', [
       'sandbox', 'exec',
       ...envArgs,
       sandboxName,
       ...options.command,
     ]);
+  }
+
+  function assertSandboxExists(sandboxName: string): void {
+    if (!activeSandboxes.has(sandboxName)) {
+      throw new SandboxNotFoundError(sandboxName);
+    }
+  }
+
+  function getEnvVars(sandboxName: string): Record<string, string> {
+    const state = activeSandboxes.get(sandboxName);
+    if (!state) return {};
+    return Object.fromEntries(state.envVars.map(({ key, value }) => [key, value]));
   }
 
   async function stop(
@@ -470,13 +651,13 @@ export function createSandboxService(deps: {
     const log = logger.child({ sandboxName });
 
     log.info('Stopping sandbox');
-    const stopResult = await execCommand('docker', [
+    const stopResult = await execCmd('docker', [
       'sandbox', 'stop', sandboxName,
     ], { timeout: forceKillTimeout });
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      await execCommand('docker', [
+      await execCmd('docker', [
         'sandbox', 'rm', '--force', sandboxName,
       ]);
     }
@@ -486,7 +667,7 @@ export function createSandboxService(deps: {
   }
 
   async function listSandboxes(): Promise<SandboxInfo[]> {
-    const result = await execCommand('docker', [
+    const result = await execCmd('docker', [
       'sandbox', 'ls',
       '--filter', 'name=vibe-',
       '--format', 'json',
@@ -504,13 +685,38 @@ export function createSandboxService(deps: {
       .map((line) => JSON.parse(line) as SandboxInfo);
   }
 
+  async function reconcileFromDocker(): Promise<void> {
+    const log = logger.child({ operation: 'reconcile' });
+    const liveSandboxes = await listSandboxes();
+
+    for (const info of liveSandboxes) {
+      if (!activeSandboxes.has(info.name)) {
+        // Sandbox exists in Docker but not tracked — add to map.
+        // runId is extracted from the sandbox name (vibe-<runIdPrefix>).
+        // envVars cannot be recovered from Docker; they will be re-populated
+        // if the workflow replays the create step via getOrCreate().
+        const runIdPrefix = info.name.replace('vibe-', '');
+        activeSandboxes.set(info.name, {
+          runId: runIdPrefix,
+          sandboxName: info.name,
+          envVars: [],
+        });
+        log.info({ sandboxName: info.name }, 'Reconciled sandbox from Docker');
+      }
+    }
+  }
+
   return {
     create,
-    exec,
+    getOrCreate,
+    execInteractive,
+    execCommand,
+    getEnvVars,
     stop,
     list: listSandboxes,
     isActive: (name) => activeSandboxes.has(name),
     getSandboxName,
+    reconcileFromDocker,
   };
 }
 
@@ -617,7 +823,11 @@ async function injectCredentials(
 ## 4. Worktree Service
 
 **File:** `services/worktree.ts`
-**Responsibility:** Git worktree lifecycle — create, remove, diff, commit, rebase, merge. Per-repository mutex for write operations. (SAD §5.5, SRD FR-W18, FR-R10)
+**Responsibility:** Git worktree lifecycle — create, remove, diff, commit, rebase, merge. Per-repository mutex for write operations. (SAD §5.5, SRD FR-W18, FR-R10, FR-S9)
+
+> **Git operations journal:** Multi-step git operations (finalize, consolidate) use a durable journal
+> tracked at the workflow step layer (see CDD-workflow.md §finalize and §consolidate steps).
+> The worktree service provides atomic primitives; the workflow steps compose them with journaling.
 
 ### 4.1 Interface
 
@@ -643,6 +853,12 @@ export interface DiffResult {
 export interface RebaseResult {
   success: boolean;
   /** If rebase failed due to conflicts, lists conflicted file paths */
+  conflictFiles?: string[];
+}
+
+export interface MergeResult {
+  success: boolean;
+  /** If merge failed due to conflicts, lists conflicted file paths */
   conflictFiles?: string[];
 }
 
@@ -707,27 +923,69 @@ export interface WorktreeService {
    * Stage all changes and create a commit.
    *
    * Steps:
-   *   1. Acquire repo lock
+   *   1. Acquire repo lock (keyed on projectPath)
    *   2. git add -A (in worktree)
    *   3. git status --porcelain — if empty, return (nothing to commit)
    *   4. git commit -m <message>
    *
    * Idempotent: no-op if working tree is clean.
+   *
+   * @param projectPath - Absolute path to the project repository root (used for repo lock)
+   * @param worktreePath - Absolute path to the worktree
+   * @param message - Commit message
    */
-  commitAll(worktreePath: string, message: string): Promise<{ committed: boolean; sha?: string }>;
+  commitAll(
+    projectPath: string,
+    worktreePath: string,
+    message: string
+  ): Promise<{ committed: boolean; sha?: string }>;
 
   /**
    * Rebase the worktree branch onto a target branch.
    *
    * Steps:
-   *   1. Acquire repo lock
+   *   1. Acquire repo lock (keyed on projectPath)
    *   2. Check if already rebased: git merge-base --is-ancestor <target> HEAD
    *   3. git rebase <targetBranch> (in worktree)
    *   4. On conflict: git rebase --abort, return { success: false, conflictFiles }
    *
+   * @param projectPath - Absolute path to the project repository root (used for repo lock)
+   * @param worktreePath - Absolute path to the worktree
+   * @param targetBranch - Branch to rebase onto
    * @returns RebaseResult indicating success or conflict details
    */
-  rebase(worktreePath: string, targetBranch: string): Promise<RebaseResult>;
+  rebase(
+    projectPath: string,
+    worktreePath: string,
+    targetBranch: string
+  ): Promise<RebaseResult>;
+
+  /**
+   * Merge a source branch into a target branch.
+   *
+   * Used by the consolidation workflow step (FR-S9) to merge child branches
+   * into the consolidation branch with --no-ff.
+   *
+   * Steps:
+   *   1. assertSafeRef(sourceBranch), assertSafeRef(targetBranch)
+   *   2. Acquire repo lock
+   *   3. git checkout <targetBranch> (in worktreePath)
+   *   4. git merge <sourceBranch> [--no-ff]
+   *   5. On conflict: git merge --abort, return { success: false, conflictFiles }
+   *
+   * @param projectPath - Absolute path to the project repository root (used for repo lock)
+   * @param worktreePath - Worktree to perform the merge in
+   * @param sourceBranch - Branch to merge from
+   * @param targetBranch - Branch to merge into (must be checked out in worktree)
+   * @param options.noFf - Use --no-ff to force a merge commit (default: false)
+   */
+  mergeBranch(
+    projectPath: string,
+    worktreePath: string,
+    sourceBranch: string,
+    targetBranch: string,
+    options?: { noFf?: boolean }
+  ): Promise<MergeResult>;
 
   /**
    * Fast-forward merge a branch into the target branch.
@@ -738,6 +996,12 @@ export interface WorktreeService {
    *   3. git checkout <targetBranch> (in project repo, not worktree)
    *   4. git merge --ff-only <branch>
    *   5. Return to previous branch
+   *
+   * **⚠️ Safety note:** This method does `git checkout` in the user's main
+   * working tree, which can disrupt uncommitted changes. For post-MVP,
+   * consider replacing with `git update-ref` to avoid touching the working tree:
+   *   `git update-ref refs/heads/<targetBranch> <branch-sha>`
+   * This would be a safer alternative that only updates the branch pointer.
    *
    * @throws MergeError if fast-forward is not possible
    */
@@ -922,10 +1186,11 @@ export function createWorktreeService(deps: {
   }
 
   async function commitAll(
+    projectPath: string,
     worktreePath: string,
     message: string
   ): Promise<{ committed: boolean; sha?: string }> {
-    return getRepoLock(path.resolve(worktreePath, '..')).runExclusive(async () => {
+    return getRepoLock(projectPath).runExclusive(async () => {
       // Stage everything
       await git(['add', '-A'], worktreePath);
 
@@ -952,13 +1217,11 @@ export function createWorktreeService(deps: {
   }
 
   async function rebase(
+    projectPath: string,
     worktreePath: string,
     targetBranch: string
   ): Promise<RebaseResult> {
     assertSafeRef(targetBranch, 'targetBranch');
-
-    // Derive projectPath from worktree parent (for repo lock)
-    const projectPath = path.resolve(worktreePath, '..', '..');
 
     return getRepoLock(projectPath).runExclusive(async () => {
       // Check if already rebased
@@ -1014,6 +1277,12 @@ export function createWorktreeService(deps: {
       );
       const currentBranch = currentBranchResult.stdout.trim();
 
+      // TODO (post-MVP): Replace git checkout + merge with git update-ref
+      // to avoid disturbing the user's working tree:
+      //   const sha = (await git(['rev-parse', branch], projectPath)).stdout.trim();
+      //   await git(['update-ref', `refs/heads/${targetBranch}`, sha], projectPath);
+      // This is safe because we've already verified ff-only is possible.
+
       try {
         // Checkout target branch
         const checkoutResult = await git(
@@ -1039,6 +1308,58 @@ export function createWorktreeService(deps: {
     });
   }
 
+  async function mergeBranch(
+    projectPath: string,
+    worktreePath: string,
+    sourceBranch: string,
+    targetBranch: string,
+    options?: { noFf?: boolean }
+  ): Promise<MergeResult> {
+    assertSafeRef(sourceBranch, 'sourceBranch');
+    assertSafeRef(targetBranch, 'targetBranch');
+
+    return getRepoLock(projectPath).runExclusive(async () => {
+      // Ensure we're on the target branch in the worktree
+      const checkoutResult = await git(['checkout', targetBranch], worktreePath);
+      if (checkoutResult.exitCode !== 0) {
+        throw new GitOperationError('checkout', checkoutResult.stderr);
+      }
+
+      // Build merge command
+      const mergeArgs = ['merge', sourceBranch];
+      if (options?.noFf) {
+        mergeArgs.splice(1, 0, '--no-ff');
+      }
+
+      const mergeResult = await git(mergeArgs, worktreePath);
+
+      if (mergeResult.exitCode !== 0) {
+        // Detect conflict
+        if (
+          mergeResult.stderr.includes('CONFLICT') ||
+          mergeResult.stdout.includes('CONFLICT') ||
+          mergeResult.stderr.includes('Automatic merge failed')
+        ) {
+          // Get list of conflicted files
+          const conflictResult = await git(
+            ['diff', '--name-only', '--diff-filter=U'],
+            worktreePath
+          );
+          const conflictFiles = conflictResult.stdout.trim().split('\n').filter(Boolean);
+
+          // Abort the failed merge
+          await git(['merge', '--abort'], worktreePath);
+
+          return { success: false, conflictFiles };
+        }
+
+        throw new GitOperationError('merge', mergeResult.stderr);
+      }
+
+      return { success: true };
+    });
+  }
+
   async function listBranches(projectPath: string): Promise<string[]> {
     const result = await git(
       ['branch', '--list', '--format=%(refname:short)'],
@@ -1056,7 +1377,7 @@ export function createWorktreeService(deps: {
     }
   }
 
-  return { create, remove, getDiff, commitAll, rebase, fastForwardMerge, listBranches, exists };
+  return { create, remove, getDiff, commitAll, rebase, mergeBranch, fastForwardMerge, listBranches, exists };
 }
 
 /** Parse git diff --stat output into structured stats */
@@ -1392,7 +1713,14 @@ export function createAcpClient(deps: {
     }
 
     const payload = JSON.stringify({ type: 'user_message', content: message });
-    conn.process.stdin!.write(payload + '\n');
+    const canWrite = conn.process.stdin!.write(payload + '\n');
+
+    // Handle backpressure: if the write buffer is full, wait for drain
+    if (!canWrite) {
+      await new Promise<void>((resolve) => {
+        conn.process.stdin!.once('drain', resolve);
+      });
+    }
   }
 
   async function sendStop(sandboxName: string): Promise<void> {
@@ -1400,7 +1728,13 @@ export function createAcpClient(deps: {
     if (!conn || !conn.isActive) return; // Idempotent
 
     const payload = JSON.stringify({ type: 'stop' });
-    conn.process.stdin!.write(payload + '\n');
+    const canWrite = conn.process.stdin!.write(payload + '\n');
+
+    if (!canWrite) {
+      await new Promise<void>((resolve) => {
+        conn.process.stdin!.once('drain', resolve);
+      });
+    }
   }
 
   function onEvent(sandboxName: string, callback: AcpEventCallback): () => void {
@@ -1511,14 +1845,15 @@ export interface StreamingService {
    * @param runId - Workflow run ID
    * @param sandboxName - Sandbox to listen to
    * @param stageName - Current stage name
+   * @param round - Current round number (increments on request_changes)
    */
-  startStream(runId: string, sandboxName: string, stageName: string): void;
+  startStream(runId: string, sandboxName: string, stageName: string, round: number): void;
 
   /**
-   * Update the current stage name for a run's stream.
+   * Update the current stage name and round for a run's stream.
    * Called when advancing to a new stage within the same sandbox.
    */
-  setStage(runId: string, stageName: string): void;
+  setStage(runId: string, stageName: string, round: number): void;
 
   /**
    * Subscribe to a run's event stream.
@@ -1559,6 +1894,8 @@ interface RunStream {
   runId: string;
   sandboxName: string;
   currentStageName: string;
+  /** Current stage round (increments on request_changes, passed to DB writes) */
+  currentRound: number;
   /** Monotonically increasing sequence counter */
   nextSeq: number;
   /** Circular buffer of recent events for replay on reconnection */
@@ -1584,19 +1921,24 @@ const DB_FLUSH_BATCH_SIZE = 50;
 export function createStreamingService(deps: {
   logger: Logger;
   acpClient: AcpClient;
-  /** Callback to persist events to runMessages table */
-  persistEvents: (runId: string, stageName: string, events: AcpEvent[]) => Promise<void>;
+  /**
+   * Callback to persist events to runMessages table.
+   * @param round - Current stage round number (increments on request_changes)
+   */
+  persistEvents: (runId: string, stageName: string, round: number, events: AcpEvent[]) => Promise<void>;
 }): StreamingService {
   const { logger, acpClient, persistEvents } = deps;
   const streams = new Map<string, RunStream>();
 
-  function startStream(runId: string, sandboxName: string, stageName: string): void {
-    const log = logger.child({ runId, sandboxName, stageName });
+  function startStream(runId: string, sandboxName: string, stageName: string, round: number): void {
+    const log = logger.child({ runId, sandboxName, stageName, round });
 
     // Idempotent: reuse existing stream if already started
     if (streams.has(runId)) {
       log.debug('Stream already started, updating stage');
-      streams.get(runId)!.currentStageName = stageName;
+      const existing = streams.get(runId)!;
+      existing.currentStageName = stageName;
+      existing.currentRound = round;
       return;
     }
 
@@ -1604,6 +1946,7 @@ export function createStreamingService(deps: {
       runId,
       sandboxName,
       currentStageName: stageName,
+      currentRound: round,
       nextSeq: 1,
       buffer: [],
       maxBufferSize: 10_000,
@@ -1632,7 +1975,10 @@ export function createStreamingService(deps: {
       // Queue for DB persistence
       stream.pendingDbWrites.push(event);
       if (stream.pendingDbWrites.length >= DB_FLUSH_BATCH_SIZE) {
-        flushToDb(stream);
+        // Threshold-triggered flush — fire-and-forget with error logging
+        flushToDb(stream).catch((err) => {
+          log.error({ runId: stream.runId, err }, 'Threshold-triggered DB flush failed');
+        });
       }
 
       // Fan out to all active subscribers
@@ -1653,10 +1999,11 @@ export function createStreamingService(deps: {
     log.info('Stream started');
   }
 
-  function setStage(runId: string, stageName: string): void {
+  function setStage(runId: string, stageName: string, round: number): void {
     const stream = streams.get(runId);
     if (stream) {
       stream.currentStageName = stageName;
+      stream.currentRound = round;
     }
   }
 
@@ -1750,7 +2097,7 @@ export function createStreamingService(deps: {
 
     const batch = stream.pendingDbWrites.splice(0);
     try {
-      await persistEvents(stream.runId, stream.currentStageName, batch);
+      await persistEvents(stream.runId, stream.currentStageName, stream.currentRound, batch);
     } catch (err) {
       logger.error({ runId: stream.runId, batchSize: batch.length, err }, 'Failed to flush events to DB');
       // Re-queue failed batch at the front (will retry on next flush)
@@ -1907,20 +2254,36 @@ export function createReviewService(deps: {
 
     // Step 2: Generate diff
     log.info('Generating diff for review');
-    const diff = await worktreeService.getDiff(options.worktreePath, options.baseBranch);
+    let diff: DiffResult;
+    try {
+      diff = await worktreeService.getDiff(options.worktreePath, options.baseBranch);
+    } catch (err) {
+      throw new ReviewCreateError(
+        options.runId,
+        `Diff generation failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
-    // Step 3: Capture plan.md (best-effort)
+    // Step 3: Capture plan.md (best-effort — never fails the review)
     let planMarkdown: string | null = null;
     if (options.sandboxName) {
       planMarkdown = await capturePlanMarkdown(options.sandboxName);
     }
 
-    // Step 4: Generate AI summary
-    const aiSummary = await generateAiSummary(diff, log);
+    // Step 4: Generate AI summary (best-effort — falls back to stats)
+    let aiSummary: string;
+    try {
+      aiSummary = await generateAiSummary(diff, log);
+    } catch (err) {
+      log.warn({ err }, 'AI summary generation failed, using statistical fallback');
+      aiSummary = `${diff.stats.filesChanged} files changed, ${diff.stats.insertions} insertions(+), ${diff.stats.deletions} deletions(-)`;
+    }
 
     // Step 5: Insert review record
-    const reviewId = crypto.randomUUID();
-    await db.insert(reviews).values({
+    let reviewId: string;
+    try {
+      reviewId = crypto.randomUUID();
+      await db.insert(reviews).values({
       id: reviewId,
       workflowRunId: options.runId,
       stageName: options.stageName,
@@ -1932,12 +2295,28 @@ export function createReviewService(deps: {
       planMarkdown,
       createdAt: new Date().toISOString(),
     });
+    } catch (err) {
+      if (err instanceof ReviewCreateError) throw err;
+      throw new ReviewCreateError(
+        options.runId,
+        `DB insert failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     log.info({ reviewId }, 'Review created');
     return { reviewId, alreadyExisted: false };
   }
 
   async function bundleCommentsAsPrompt(reviewId: string): Promise<BundledComments> {
+    // Look up the review to get the actual round number
+    const review = await db.query.reviews.findFirst({
+      where: (r, { eq }) => eq(r.id, reviewId),
+    });
+
+    if (!review) throw new ReviewNotFoundError(reviewId);
+
+    const round = review.round;
+
     const comments = await db.query.reviewComments.findMany({
       where: (c, { eq }) => eq(c.reviewId, reviewId),
       orderBy: (c, { asc }) => [asc(c.filePath), asc(c.lineNumber)],
@@ -1962,7 +2341,7 @@ export function createReviewService(deps: {
     }
 
     // Build markdown
-    const lines: string[] = [`## Review Feedback (Round ${comments.length > 0 ? 'N' : '1'})`, ''];
+    const lines: string[] = [`## Review Feedback (Round ${round})`, ''];
 
     if (generalComments.length > 0) {
       lines.push('### General Comments', '');
@@ -2004,9 +2383,9 @@ export function createReviewService(deps: {
 
   async function capturePlanMarkdown(sandboxName: string): Promise<string | null> {
     try {
-      const result = await sandboxService.exec(sandboxName, {
+      const result = await sandboxService.execCommand(sandboxName, {
         command: ['cat', '/home/user/plan.md'],
-      }) as import('../lib/shell.js').ExecResult;
+      });
 
       if (result.exitCode === 0 && result.stdout.trim()) {
         return result.stdout;
@@ -2257,16 +2636,25 @@ export function createCredentialVault(deps: {
       details: { entryCount: entries.length },
     });
 
-    return entries.map((entry) => ({
-      id: entry.id,
-      credentialSetId: entry.credentialSetId,
-      key: entry.key,
-      value: decrypt(entry.value, key),
-      type: entry.type as CredentialEntryType,
-      mountPath: entry.mountPath,
-      command: entry.command,
-      createdAt: entry.createdAt,
-    }));
+    return entries.map((entry) => {
+      try {
+        return {
+          id: entry.id,
+          credentialSetId: entry.credentialSetId,
+          key: entry.key,
+          value: decrypt(entry.value, key),
+          type: entry.type as CredentialEntryType,
+          mountPath: entry.mountPath,
+          command: entry.command,
+          createdAt: entry.createdAt,
+        };
+      } catch (err) {
+        throw new CredentialDecryptionError(
+          entry.id,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    });
   }
 
   async function buildSandboxCredentials(
@@ -2320,6 +2708,18 @@ export function createCredentialVault(deps: {
 
         case 'command_extract': {
           // Execute command on HOST, capture output as env var (SAD §6.2)
+          //
+          // ⚠️ SECURITY: The `command` field is trusted admin-only input.
+          // It is executed via `sh -c` on the HOST (not in the sandbox).
+          // This is inherently a shell injection surface — it is intentional.
+          // The credential vault UI must clearly communicate that command_extract
+          // entries run arbitrary shell commands on the host machine.
+          // Only the local user can create credential entries (requires auth token),
+          // so this is equivalent to the user running the command themselves.
+          //
+          // Future hardening: consider validating against a restrictive pattern
+          // (e.g., allowlist of known token-fetching commands) or requiring
+          // explicit user confirmation per workflow run.
           if (!entry.command) {
             log.warn({ entryId: entry.id }, 'command_extract entry missing command, skipping');
             break;
@@ -2883,14 +3283,242 @@ function parseHunk(
 
 ---
 
-## 11. Error Types
+## 11. Proposal Service
+
+**File:** `services/proposal-service.ts`
+**Responsibility:** CRUD operations for split proposals. Standalone service with no service dependencies — reads/writes DB only. (SAD §5.1, SRD §2.5 FR-S1–S4)
+
+### 11.1 Interface
+
+```typescript
+// services/proposal-service.ts
+
+export interface ProposalInput {
+  workflowRunId: string;
+  stageName: string;
+  title: string;
+  description: string;
+  affectedFiles?: string[];
+  dependsOn?: string[];
+  workflowTemplateOverride?: string;
+  sortOrder?: number;
+}
+
+export interface ProposalUpdate {
+  title?: string;
+  description?: string;
+  affectedFiles?: string[];
+  dependsOn?: string[];
+  workflowTemplateOverride?: string | null;
+  sortOrder?: number;
+  status?: 'proposed' | 'approved' | 'discarded';
+}
+
+export interface Proposal {
+  id: string;
+  workflowRunId: string;
+  stageName: string;
+  parallelGroupId: string | null;
+  title: string;
+  description: string;
+  affectedFiles: string[];
+  dependsOn: string[];
+  workflowTemplateOverride: string | null;
+  status: 'proposed' | 'approved' | 'launched' | 'discarded';
+  launchedWorkflowRunId: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProposalService {
+  /**
+   * Create a proposal for a split stage.
+   *
+   * Idempotent: UNIQUE(workflowRunId, stageName, title) — returns
+   * existing proposal if it already exists (for workflow replay safety).
+   */
+  createProposal(input: ProposalInput): Promise<Proposal>;
+
+  /**
+   * List proposals for a workflow run, optionally filtered by stage.
+   * Ordered by sortOrder ascending.
+   */
+  listProposals(
+    workflowRunId: string,
+    options?: { stageName?: string; status?: string }
+  ): Promise<Proposal[]>;
+
+  /**
+   * Get a single proposal by ID.
+   * @throws ProposalNotFoundError if not found
+   */
+  getProposal(proposalId: string): Promise<Proposal>;
+
+  /**
+   * Get all proposals for a specific workflow run.
+   * Convenience alias for listProposals with just runId.
+   */
+  getProposalsByRun(workflowRunId: string): Promise<Proposal[]>;
+
+  /**
+   * Update a proposal (edit title, description, reorder, change status).
+   * Only allowed when status is 'proposed' (not yet launched).
+   *
+   * @throws ProposalNotFoundError if not found
+   * @throws ValidationError if proposal is already launched
+   */
+  updateProposal(proposalId: string, update: ProposalUpdate): Promise<Proposal>;
+
+  /**
+   * Delete a proposal.
+   * Only allowed when status is 'proposed' (not yet launched).
+   *
+   * @throws ProposalNotFoundError if not found
+   * @throws ValidationError if proposal is already launched
+   */
+  deleteProposal(proposalId: string): Promise<void>;
+}
+```
+
+### 11.2 Implementation Notes
+
+```typescript
+// services/proposal-service.ts — implementation sketch
+
+import type { DrizzleDb } from '../db/index.js';
+import type { Logger } from 'pino';
+
+export function createProposalService(deps: {
+  logger: Logger;
+  db: DrizzleDb;
+}): ProposalService {
+  const { logger, db } = deps;
+
+  async function createProposal(input: ProposalInput): Promise<Proposal> {
+    // Idempotent: check for existing (UNIQUE constraint on runId + stageName + title)
+    const existing = await db.query.proposals.findFirst({
+      where: (p, { and, eq }) => and(
+        eq(p.workflowRunId, input.workflowRunId),
+        eq(p.stageName, input.stageName),
+        eq(p.title, input.title),
+      ),
+    });
+
+    if (existing) {
+      return mapRow(existing);
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await db.insert(proposals).values({
+      id,
+      workflowRunId: input.workflowRunId,
+      stageName: input.stageName,
+      parallelGroupId: null,
+      title: input.title,
+      description: input.description,
+      affectedFiles: JSON.stringify(input.affectedFiles ?? []),
+      dependsOn: JSON.stringify(input.dependsOn ?? []),
+      workflowTemplateOverride: input.workflowTemplateOverride ?? null,
+      status: 'proposed',
+      launchedWorkflowRunId: null,
+      sortOrder: input.sortOrder ?? 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return getProposal(id);
+  }
+
+  async function listProposals(
+    workflowRunId: string,
+    options?: { stageName?: string; status?: string }
+  ): Promise<Proposal[]> {
+    const rows = await db.query.proposals.findMany({
+      where: (p, { and, eq }) => {
+        const conditions = [eq(p.workflowRunId, workflowRunId)];
+        if (options?.stageName) conditions.push(eq(p.stageName, options.stageName));
+        if (options?.status) conditions.push(eq(p.status, options.status));
+        return and(...conditions);
+      },
+      orderBy: (p, { asc }) => [asc(p.sortOrder)],
+    });
+
+    return rows.map(mapRow);
+  }
+
+  async function getProposal(proposalId: string): Promise<Proposal> {
+    const row = await db.query.proposals.findFirst({
+      where: (p, { eq }) => eq(p.id, proposalId),
+    });
+    if (!row) throw new ProposalNotFoundError(proposalId);
+    return mapRow(row);
+  }
+
+  async function getProposalsByRun(workflowRunId: string): Promise<Proposal[]> {
+    return listProposals(workflowRunId);
+  }
+
+  async function updateProposal(proposalId: string, update: ProposalUpdate): Promise<Proposal> {
+    const existing = await getProposal(proposalId);
+
+    if (existing.status === 'launched') {
+      throw new ValidationError(
+        `Cannot update proposal ${proposalId}: already launched`,
+        { proposalId, status: existing.status }
+      );
+    }
+
+    await db.update(proposals)
+      .set({
+        ...update,
+        affectedFiles: update.affectedFiles ? JSON.stringify(update.affectedFiles) : undefined,
+        dependsOn: update.dependsOn ? JSON.stringify(update.dependsOn) : undefined,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(proposals.id, proposalId));
+
+    return getProposal(proposalId);
+  }
+
+  async function deleteProposal(proposalId: string): Promise<void> {
+    const existing = await getProposal(proposalId);
+
+    if (existing.status === 'launched') {
+      throw new ValidationError(
+        `Cannot delete proposal ${proposalId}: already launched`,
+        { proposalId, status: existing.status }
+      );
+    }
+
+    await db.delete(proposals).where(eq(proposals.id, proposalId));
+  }
+
+  /** Map a DB row to the Proposal interface (parse JSON fields) */
+  function mapRow(row: any): Proposal {
+    return {
+      ...row,
+      affectedFiles: JSON.parse(row.affectedFiles ?? '[]'),
+      dependsOn: JSON.parse(row.dependsOn ?? '[]'),
+    };
+  }
+
+  return { createProposal, listProposals, getProposal, getProposalsByRun, updateProposal, deleteProposal };
+}
+```
+
+---
+
+## 12. Error Types
 
 **File:** `lib/errors.ts`
 **Reference:** SAD §10.2
 
 All errors extend a base `AppError` class that includes an error code for HTTP mapping.
 
-### 11.1 Base Error
+### 12.1 Base Error
 
 ```typescript
 // lib/errors.ts
@@ -2932,7 +3560,7 @@ export class FatalError extends AppError {
 }
 ```
 
-### 11.2 Entity Not Found Errors (404)
+### 12.2 Entity Not Found Errors (404)
 
 ```typescript
 export class RunNotFoundError extends AppError {
@@ -2984,7 +3612,7 @@ export class ProposalNotFoundError extends AppError {
 }
 ```
 
-### 11.3 State Validation Errors (409 Conflict)
+### 12.3 State Validation Errors (409 Conflict)
 
 ```typescript
 export class WorkflowNotRunningError extends AppError {
@@ -3036,7 +3664,7 @@ export class BranchAlreadyExistsError extends AppError {
 }
 ```
 
-### 11.4 Provisioning / Infrastructure Errors (502/503)
+### 12.4 Provisioning / Infrastructure Errors (502/503)
 
 ```typescript
 export class SandboxProvisionError extends AppError {
@@ -3088,7 +3716,7 @@ export class AcpConnectionNotFoundError extends AppError {
 }
 ```
 
-### 11.5 Git Operation Errors
+### 12.5 Git Operation Errors
 
 ```typescript
 export class GitOperationError extends AppError {
@@ -3135,7 +3763,7 @@ export class RebaseConflictError extends AppError {
 }
 ```
 
-### 11.6 Input Validation Errors (400)
+### 12.6 Input Validation Errors (400)
 
 ```typescript
 export class InvalidGitRefError extends AppError {
@@ -3193,9 +3821,20 @@ export class ReviewCreateError extends AppError {
     super(`Failed to create review for run ${runId}: ${reason}`, { runId, reason });
   }
 }
+
+export class CredentialDecryptionError extends AppError {
+  readonly code = 'CREDENTIAL_DECRYPTION_ERROR';
+  readonly httpStatus = 500;
+  constructor(entryId: string, reason: string) {
+    super(
+      `Failed to decrypt credential entry ${entryId}: ${reason}`,
+      { entryId, reason }
+    );
+  }
+}
 ```
 
-### 11.7 Error-to-HTTP-Status Mapping
+### 12.7 Error-to-HTTP-Status Mapping
 
 ```typescript
 // routes/error-handler.ts
@@ -3229,7 +3868,7 @@ export function errorHandler(err: Error, c: Context) {
 
 ---
 
-## 12. Initialization & Dependency Injection
+## 13. Initialization & Dependency Injection
 
 **File:** `index.ts` (daemon entry point)
 **Pattern:** Constructor injection with a factory function per service. Services are created in DAG order during daemon startup.
@@ -3244,6 +3883,7 @@ import { createStreamingService } from './services/streaming-service.js';
 import { createReviewService } from './services/review-service.js';
 import { createCredentialVault } from './services/credential-vault.js';
 import { createBranchNamer } from './services/branch-namer.js';
+import { createProposalService } from './services/proposal-service.js';
 import { parseUnifiedDiff } from './services/diff-parser.js';
 import { getOrCreateEncryptionKey } from './lib/encryption.js';
 import { getDb } from './db/index.js';
@@ -3257,6 +3897,7 @@ export interface ServiceContainer {
   review: ReviewService;
   credentials: CredentialVault;
   branchNamer: BranchNamer;
+  proposals: ProposalService;
   diffParser: { parseUnifiedDiff: typeof parseUnifiedDiff };
 }
 
@@ -3287,6 +3928,11 @@ export async function initializeServices(): Promise<ServiceContainer> {
     getEncryptionKey: getOrCreateEncryptionKey,
   });
 
+  const proposals = createProposalService({
+    logger: logger.child({ service: 'proposals' }),
+    db,
+  });
+
   const sandbox = createSandboxService({
     logger: logger.child({ service: 'sandbox' }),
   });
@@ -3305,13 +3951,13 @@ export async function initializeServices(): Promise<ServiceContainer> {
   const streaming = createStreamingService({
     logger: logger.child({ service: 'streaming' }),
     acpClient,
-    persistEvents: async (runId, stageName, events) => {
+    persistEvents: async (runId, stageName, round, events) => {
       // Batch insert into runMessages table
       const values = events.map((e) => ({
         id: crypto.randomUUID(),
         workflowRunId: runId,
         stageName,
-        round: 1, // Set by caller context
+        round,
         sessionBoundary: 0,
         role: mapAcpEventToRole(e),
         content: JSON.stringify(e.data),
@@ -3343,6 +3989,7 @@ export async function initializeServices(): Promise<ServiceContainer> {
     review,
     credentials,
     branchNamer,
+    proposals,
     diffParser,
   };
 }
@@ -3380,5 +4027,6 @@ function mapAcpEventToRole(event: AcpEvent): string {
 | Credential Vault | §6 | FR-C1–C8 |
 | Branch Namer | §5.5.2 | FR-W18, FR-S5 |
 | Diff Parser | — | FR-R2, FR-R3 |
+| Proposal Service | §5.1 | FR-S1–S4 |
 | Error Types | §10.2 | NFR-R5 (idempotency) |
 | Initialization | §5.1, §2.1.2 | — |

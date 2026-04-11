@@ -27,6 +27,33 @@ The Rust layer is minimal — it manages the daemon sidecar lifecycle and expose
 - Restart sidecar if the daemon process dies
 - Provide file-system access to `~/.vibe-harness/auth.token`
 
+**Sidecar detach policy (SAD §2.2.3):** The daemon sidecar is spawned in detached mode so that it **survives GUI close**. The daemon is a long-running background service — closing the Tauri window must NOT kill it. Users can explicitly stop the daemon from Settings or system tray.
+
+- On spawn: call `sidecar.detach()` (Tauri 2.0 `CommandChild::detach()`) immediately after `Command::new_sidecar("daemon").spawn()`. This releases the child process from Tauri's process group.
+- On Tauri exit: register a `RunEvent::ExitRequested` handler that does **not** send SIGTERM to the sidecar PID. Default Tauri behavior kills child processes — detach prevents this.
+- The daemon writes its own PID to `~/.vibe-harness/daemon.pid` and cleans it up on graceful shutdown (SIGTERM/SIGINT).
+
+```rust
+// In tauri::Builder setup:
+.setup(|app| {
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        let info = start_daemon(app_handle.clone()).await.unwrap();
+        // Start background health monitor
+        monitor_daemon(app_handle, info.port).await;
+    });
+    Ok(())
+})
+.on_event(|_app, event| {
+    // Do NOT kill the daemon sidecar on window close.
+    // The daemon survives GUI close for background workflow execution.
+    if let tauri::RunEvent::ExitRequested { .. } = event {
+        // No-op: daemon continues running.
+        // Sidecar was detached at spawn time — Tauri won't kill it.
+    }
+})
+```
+
 **Tauri commands exposed to frontend:**
 
 ```rust
@@ -35,10 +62,12 @@ The Rust layer is minimal — it manages the daemon sidecar lifecycle and expose
 ///
 /// Lifecycle (SAD §2.2.3):
 ///   1. Check daemon.pid — if alive, read daemon.port and return
-///   2. Spawn sidecar: `Command::new_sidecar("daemon")`
-///   3. Poll ~/.vibe-harness/daemon.port every 200ms, timeout 30s
-///   4. HTTP GET http://localhost:<port>/health — confirm ready
-///   5. Return port
+///   2. Spawn sidecar via Command::new_sidecar("daemon").spawn()
+///   3. Immediately call child.detach() — daemon survives GUI close
+///   4. Poll ~/.vibe-harness/daemon.port every 200ms, timeout 30s
+///   5. HTTP GET http://localhost:<port>/health — confirm ready
+///   6. Store port in app state (for pop-out windows to read)
+///   7. Return port
 #[tauri::command]
 async fn start_daemon(app: AppHandle) -> Result<DaemonInfo, String>;
 
@@ -59,23 +88,38 @@ async fn open_popout_window(
     route: String,
     title: String,
 ) -> Result<(), String>;
+
+/// Read the current daemon port from Tauri app state.
+/// Used by pop-out windows to avoid calling start_daemon() (which could race).
+/// Returns Err if no daemon has been started yet (main window hasn't booted).
+#[tauri::command]
+async fn get_daemon_port(state: State<'_, DaemonPortState>) -> Result<u16, String> {
+    Ok(state.get())
+}
 ```
 
 **Daemon crash detection & restart:**
 
 ```rust
-// Spawned as a background task after initial sidecar start
-async fn monitor_daemon(app: AppHandle, port: u16) {
+// Spawned as a background task after initial sidecar start.
+// IMPORTANT: After restart, the daemon may listen on a DIFFERENT port
+// and may have regenerated its auth token. The Connected event carries
+// the new port so the frontend can reconnect WS and re-read the token.
+async fn monitor_daemon(app: AppHandle, mut current_port: u16) {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        match check_daemon_health(port).await {
+        match check_daemon_health(current_port).await {
             Ok(_) => continue,
             Err(_) => {
                 // Daemon unreachable — emit event to frontend
                 app.emit("daemon-status", DaemonEvent::Disconnected).ok();
-                // Attempt restart
+                // Attempt restart (spawns new sidecar, detached)
                 match start_daemon(app.clone()).await {
                     Ok(info) => {
+                        // Port may have changed after restart
+                        current_port = info.port;
+                        // Store new port in Tauri app state for pop-out windows
+                        app.state::<DaemonPortState>().set(info.port);
                         app.emit("daemon-status", DaemonEvent::Connected {
                             port: info.port,
                         }).ok();
@@ -114,6 +158,16 @@ enum DaemonEvent {
     Connected { port: u16 },
     Disconnected,
     RestartFailed { error: String },
+}
+
+/// Shared state for daemon port, readable by pop-out windows via Tauri command.
+/// Updated by monitor_daemon on restart. Avoids pop-out windows calling
+/// start_daemon() themselves (which could race with the main window).
+struct DaemonPortState(Mutex<u16>);
+
+impl DaemonPortState {
+    fn set(&self, port: u16) { *self.0.lock().unwrap() = port; }
+    fn get(&self) -> u16 { *self.0.lock().unwrap() }
 }
 ```
 
@@ -359,23 +413,52 @@ interface WorkspaceState {
   setLoadingProjects: (loading: boolean) => void;
 }
 
+// ── Last-Viewed Run Persistence (NFR-U8) ──
+
+const LAST_RUN_KEY = 'vibe-harness:lastViewedRunId';
+
+// selectRun implementation persists to localStorage:
+// selectRun: (runId) => {
+//   set({ selectedRunId: runId });
+//   if (runId) localStorage.setItem(LAST_RUN_KEY, runId);
+//   else localStorage.removeItem(LAST_RUN_KEY);
+// }
+//
+// On bootstrap, restore last-viewed run:
+// const lastRunId = localStorage.getItem(LAST_RUN_KEY);
+// if (lastRunId) useWorkspaceStore.getState().selectRun(lastRunId);
+//
+// NOTE: This is "last-viewed run" (which run to re-select on restart).
+// It is separate from lastRunConfig (which remembers form field values
+// for the New Run modal — project, template, credential set, etc.).
+
 // ── Selectors ──
 
-/** Returns runs matching current filters, sorted by current sort config. */
+/**
+ * Returns runs matching current filters, sorted by current sort config.
+ *
+ * Uses individual Zustand selectors + useMemo to avoid recomputing on
+ * every unrelated store change. The inline-filtering-in-selector pattern
+ * creates a new array reference on every call, causing unnecessary re-renders.
+ */
 function useFilteredRuns(): WorkflowRun[] {
-  return useWorkspaceStore((state) => {
-    let runs = state.runs;
+  const runs = useWorkspaceStore((s) => s.runs);
+  const filters = useWorkspaceStore((s) => s.filters);
+  const sort = useWorkspaceStore((s) => s.sort);
+
+  return useMemo(() => {
+    let result = runs;
 
     // Apply filters
-    if (state.filters.status) {
-      runs = runs.filter((r) => state.filters.status!.includes(r.status));
+    if (filters.status) {
+      result = result.filter((r) => filters.status!.includes(r.status));
     }
-    if (state.filters.projectId) {
-      runs = runs.filter((r) => r.projectId === state.filters.projectId);
+    if (filters.projectId) {
+      result = result.filter((r) => r.projectId === filters.projectId);
     }
-    if (state.filters.searchText) {
-      const q = state.filters.searchText.toLowerCase();
-      runs = runs.filter(
+    if (filters.searchText) {
+      const q = filters.searchText.toLowerCase();
+      result = result.filter(
         (r) =>
           r.title?.toLowerCase().includes(q) ||
           r.description?.toLowerCase().includes(q)
@@ -383,8 +466,8 @@ function useFilteredRuns(): WorkflowRun[] {
     }
 
     // Apply sort
-    const { field, direction } = state.sort;
-    runs = [...runs].sort((a, b) => {
+    const { field, direction } = sort;
+    result = [...result].sort((a, b) => {
       const av = a[field] ?? '';
       const bv = b[field] ?? '';
       return direction === 'asc'
@@ -392,12 +475,12 @@ function useFilteredRuns(): WorkflowRun[] {
         : String(bv).localeCompare(String(av));
     });
 
-    return runs;
-  });
+    return result;
+  }, [runs, filters, sort]);
 }
 ```
 
-### 3.2 `stores/streaming.ts` — Per-Run Output Buffer
+### 3.2 `stores/streaming.ts` — Per-Run Output Buffer & Transform Layer
 
 ```typescript
 import type { AgentOutputEvent, RunMessage } from '@vibe-harness/shared';
@@ -427,17 +510,43 @@ interface SessionBoundary {
   timestamp: string;
 }
 
+/**
+ * A conversation block is the renderable unit in RunConversation.
+ * The transform layer converts raw AgentOutputEvents into these blocks.
+ */
+type ConversationBlock =
+  | { type: 'user_message'; content: string; stageName: string; isIntervention: boolean; timestamp: string }
+  | { type: 'assistant_message'; content: string; isStreaming: boolean; stageName: string; timestamp: string }
+  | { type: 'tool_group'; calls: ToolCallWithResult[]; stageName: string; timestamp: string }
+  | { type: 'agent_thought'; content: string; stageName: string; timestamp: string }
+  | { type: 'system_message'; content: string; timestamp: string }
+  | { type: 'session_boundary'; sessionIndex: number; stageName: string; timestamp: string };
+
+interface ToolCallWithResult {
+  id: string;
+  name: string;
+  arguments: string;           // JSON string
+  result?: string;             // filled when tool_result arrives
+  status?: 'pending' | 'success' | 'error';
+}
+
 // ── Store Shape ──
 
 interface StreamingState {
-  // Per-run buffers (Map<runId, buffer>)
+  // Per-run raw event buffers (Map<runId, buffer>)
   buffers: Record<string, RunStreamBuffer>;
 
   // Conversation history (fetched from REST, augmented by stream)
   conversations: Record<string, RunMessage[]>;
 
+  // Transformed conversation blocks for rendering
+  conversationBlocks: Record<string, ConversationBlock[]>;
+
   // Session boundaries for rendering
   sessionBoundaries: Record<string, SessionBoundary[]>;
+
+  // Currently streaming assistant message (per run) — the "tail"
+  streamingTail: Record<string, { content: string; stageName: string } | null>;
 
   // Actions
   /** Initialize buffer when subscribing to a run's stream. */
@@ -470,6 +579,148 @@ interface StreamingState {
 /** Max events in a single run buffer before oldest are evicted. */
 const MAX_BUFFER_SIZE = 10_000;
 ```
+
+#### 3.2.1 Transform Layer: AgentOutputEvent → ConversationBlock[]
+
+The streaming store does not expose raw events to components. Instead, `appendEvent` triggers a transform step that maintains `conversationBlocks` — the renderable conversation.
+
+**Transform rules:**
+
+```typescript
+// Invoked by appendEvent() after buffering the raw event.
+function transformEvent(
+  blocks: ConversationBlock[],
+  tail: { content: string; stageName: string } | null,
+  event: StreamEvent,
+): { blocks: ConversationBlock[]; tail: typeof tail } {
+  const { data, stage } = event;
+
+  switch (data.type) {
+    case 'agent_message': {
+      // Agent message events may arrive as a stream of partial chunks
+      // (data.partial === true) or as a complete message (data.partial === false).
+      if (data.partial) {
+        // Append to streaming tail (Streamdown renders this incrementally)
+        const current = tail ?? { content: '', stageName: stage };
+        return {
+          blocks,
+          tail: { ...current, content: current.content + data.content },
+        };
+      }
+      // Complete message: finalize tail into a block
+      const finalContent = tail ? tail.content + (data.content ?? '') : data.content;
+      return {
+        blocks: [...blocks, {
+          type: 'assistant_message',
+          content: finalContent,
+          isStreaming: false,
+          stageName: stage,
+          timestamp: data.timestamp,
+        }],
+        tail: null,
+      };
+    }
+
+    case 'tool_call': {
+      // Start a new tool group or append to the last one
+      const lastBlock = blocks[blocks.length - 1];
+      const toolEntry: ToolCallWithResult = {
+        id: data.id,
+        name: data.name,
+        arguments: data.arguments,
+        status: 'pending',
+      };
+
+      if (lastBlock?.type === 'tool_group' && lastBlock.stageName === stage) {
+        // Append to existing group (consecutive tool calls are grouped)
+        const updated = { ...lastBlock, calls: [...lastBlock.calls, toolEntry] };
+        return { blocks: [...blocks.slice(0, -1), updated], tail };
+      }
+      // New tool group
+      return {
+        blocks: [...blocks, {
+          type: 'tool_group',
+          calls: [toolEntry],
+          stageName: stage,
+          timestamp: data.timestamp,
+        }],
+        tail,
+      };
+    }
+
+    case 'tool_result': {
+      // Find the tool_call in the most recent tool_group and attach result
+      const updated = [...blocks];
+      for (let i = updated.length - 1; i >= 0; i--) {
+        const block = updated[i];
+        if (block.type === 'tool_group') {
+          const callIdx = block.calls.findIndex((c) => c.id === data.callId);
+          if (callIdx >= 0) {
+            const calls = [...block.calls];
+            calls[callIdx] = {
+              ...calls[callIdx],
+              result: data.content,
+              status: data.isError ? 'error' : 'success',
+            };
+            updated[i] = { ...block, calls };
+            break;
+          }
+        }
+      }
+      return { blocks: updated, tail };
+    }
+
+    case 'agent_thought': {
+      return {
+        blocks: [...blocks, {
+          type: 'agent_thought',
+          content: data.content,
+          stageName: stage,
+          timestamp: data.timestamp,
+        }],
+        tail,
+      };
+    }
+
+    case 'session_update': {
+      // Session boundary (freshSession reset)
+      return {
+        blocks: [...blocks, {
+          type: 'session_boundary',
+          sessionIndex: data.sessionIndex,
+          stageName: stage,
+          timestamp: data.timestamp,
+        }],
+        tail: null,  // reset tail on session boundary
+      };
+    }
+
+    case 'result': {
+      // Usage stats — not rendered as a block, but finalizes any open tail
+      if (tail) {
+        return {
+          blocks: [...blocks, {
+            type: 'assistant_message',
+            content: tail.content,
+            isStreaming: false,
+            stageName: tail.stageName,
+            timestamp: data.timestamp,
+          }],
+          tail: null,
+        };
+      }
+      return { blocks, tail };
+    }
+
+    default:
+      return { blocks, tail };
+  }
+}
+```
+
+**How Streamdown consumes this:** Only the `streamingTail` (the live, incomplete assistant message) is rendered with Streamdown. All finalized `assistant_message` blocks are rendered as static markdown (see §8.1). This avoids creating Streamdown instances for completed messages.
+
+**REST resync (`resyncFromRest`):** When resync is needed, the full `RunMessage[]` from REST is bulk-converted to `ConversationBlock[]` using the same transform rules (applied sequentially). The `streamingTail` is cleared since the REST response contains only finalized messages.
 
 ### 3.3 `stores/daemon.ts` — Connection Status
 
@@ -570,6 +821,12 @@ interface ClientConfig {
 
 class ApiClient {
   constructor(private config: ClientConfig) {}
+
+  /** Update the base URL (e.g., after daemon restarts on a new port). */
+  updateBaseUrl(newBaseUrl: string): void {
+    const oldGetBaseUrl = this.config.getBaseUrl;
+    this.config = { ...this.config, getBaseUrl: () => newBaseUrl };
+  }
 
   private async request<T>(
     method: string,
@@ -963,6 +1220,8 @@ Single WebSocket connection per window. Manages subscription, reconnection, and 
 
 ### 5.1 Connection Lifecycle
 
+**WS authentication via query parameter:** The auth token is passed as a query parameter (`?token=...`) on the WebSocket upgrade request. This is acceptable because the daemon binds to localhost only (NFR-S4) — the token never traverses a network. The alternative — sending the token as the first message after connection — would require the daemon to buffer events until auth completes, adding complexity. If localhost-only changes in the future, switch to a first-message auth handshake or use the `Sec-WebSocket-Protocol` header.
+
 ```typescript
 import type {
   ClientMessage,
@@ -971,6 +1230,19 @@ import type {
   StageStatus,
   AgentOutputEvent,
 } from '@vibe-harness/shared';
+
+// ── ServerMessage Extension ──
+// The shared types define the base ServerMessage union (SAD §3.2).
+// resync_required is an additional event type sent when the daemon's
+// per-run event buffer overflows (SAD §2.2.4):
+//
+// type ServerMessage =
+//   | { type: 'run_output'; runId: string; seq: number; stage: string; data: AgentOutputEvent }
+//   | { type: 'run_status'; runId: string; status: WorkflowRunStatus; stage?: string }
+//   | { type: 'stage_status'; runId: string; stage: string; status: StageStatus }
+//   | { type: 'review_created'; reviewId: string; runId: string; stage: string }
+//   | { type: 'notification'; level: 'info' | 'warning' | 'error'; message: string }
+//   | { type: 'resync_required'; runId: string }
 
 // ── Config ──
 
@@ -994,6 +1266,7 @@ type WebSocketState = 'connecting' | 'open' | 'closing' | 'closed' | 'reconnecti
 class WebSocketManager {
   private ws: WebSocket | null = null;
   private state: WebSocketState = 'closed';
+  private shouldReconnect = true;     // false on intentional disconnect()
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private subscriptions = new Map<string, number>();  // runId → lastSeq
@@ -1006,6 +1279,7 @@ class WebSocketManager {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     this.state = 'connecting';
+    this.shouldReconnect = true;  // reset on every intentional connect
     const url = `${this.config.getUrl()}?token=${this.config.getAuthToken()}`;
     this.ws = new WebSocket(url);
 
@@ -1024,7 +1298,9 @@ class WebSocketManager {
     this.ws.onclose = () => {
       this.state = 'closed';
       this.emit('_connection', { type: 'disconnected' } as any);
-      this.attemptReconnect();
+      if (this.shouldReconnect) {
+        this.attemptReconnect();
+      }
     };
 
     this.ws.onerror = () => {
@@ -1032,12 +1308,24 @@ class WebSocketManager {
     };
   }
 
-  /** Close connection permanently (app shutdown). */
+  /** Close connection permanently (app shutdown or intentional port change). */
   disconnect(): void {
+    this.shouldReconnect = false;  // prevent onclose from triggering reconnect
     this.state = 'closing';
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.ws?.close();
     this.ws = null;
+  }
+
+  /**
+   * Reconnect to a new URL (e.g., after daemon restart on a different port).
+   * Disconnects the old WS cleanly, updates config, and connects fresh.
+   */
+  reconnectToNewUrl(getUrl: () => string, getAuthToken: () => string): void {
+    this.disconnect();
+    this.config = { ...this.config, getUrl, getAuthToken };
+    this.reconnectAttempts = 0;
+    this.connect();
   }
 
   // ── Subscriptions ──
@@ -1131,24 +1419,67 @@ class WebSocketManager {
 // Bridges WebSocket events into Zustand stores.
 
 import { useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useWorkspaceStore } from '../stores/workspace';
 import { useStreamingStore } from '../stores/streaming';
 import { useDaemonStore } from '../stores/daemon';
+import { clearCachedToken, getAuthToken } from '../api/auth';
+import { debouncedGetRun } from '../hooks/useDaemonApi';
 
 /**
  * Connects WebSocket events to Zustand stores.
+ * Also listens for Tauri daemon-status events (from Rust sidecar monitor)
+ * to handle port changes after daemon restart.
+ *
  * Mounted once at the root layout level.
  */
-function useWebSocketBridge(ws: WebSocketManager): void {
+function useWebSocketBridge(ws: WebSocketManager, apiClient: ApiClient): void {
   const upsertRun = useWorkspaceStore((s) => s.upsertRun);
   const appendEvent = useStreamingStore((s) => s.appendEvent);
   const markResyncRequired = useStreamingStore((s) => s.markResyncRequired);
   const setDaemonStatus = useDaemonStore((s) => s.setStatus);
+  const setDaemonPort = useDaemonStore((s) => s.setPort);
+  const setAuthToken = useDaemonStore((s) => s.setAuthToken);
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
 
-    // Connection status → daemon store
+    // ── Tauri sidecar events → handle port/token changes on daemon restart ──
+    const unlisten = listen<DaemonEvent>('daemon-status', async (event) => {
+      const payload = event.payload;
+
+      if (payload.type === 'Connected') {
+        const newPort = payload.port;
+        const currentPort = useDaemonStore.getState().port;
+
+        // Daemon may have restarted on a different port and/or regenerated
+        // its auth token. Clear the cached token and re-read from disk.
+        clearCachedToken();
+        const newToken = await getAuthToken();
+
+        // Update stores
+        setDaemonPort(newPort);
+        setAuthToken(newToken);
+        setDaemonStatus('connected');
+
+        // If port changed, reconnect WS to new URL with fresh token
+        if (newPort !== currentPort) {
+          ws.reconnectToNewUrl(
+            () => `ws://localhost:${newPort}/ws`,
+            () => newToken,
+          );
+          // Update API client base URL
+          apiClient.updateBaseUrl(`http://localhost:${newPort}`);
+        }
+      } else if (payload.type === 'Disconnected') {
+        setDaemonStatus('disconnected');
+      } else if (payload.type === 'RestartFailed') {
+        setDaemonStatus('failed');
+      }
+    });
+    unlisten.then((fn) => unsubs.push(fn));
+
+    // ── WS connection status → daemon store ──
     unsubs.push(
       ws.on('_connection', (msg: any) => {
         if (msg.type === 'connected') setDaemonStatus('connected');
@@ -1157,18 +1488,21 @@ function useWebSocketBridge(ws: WebSocketManager): void {
       }),
     );
 
-    // Global events → workspace store
+    // ── WS server messages → workspace + streaming stores ──
     unsubs.push(
       ws.on('_global', (msg) => {
         switch (msg.type) {
           case 'run_status':
-            // Fetch updated run data and upsert
-            apiClient.getRun(msg.runId).then((run) => upsertRun(run));
+            // Debounced: rapid WS events for the same runId are coalesced
+            debouncedGetRun(apiClient, msg.runId).then((run) => {
+              if (run) upsertRun(run);
+            });
             break;
 
           case 'review_created':
-            // Refresh run to pick up new review
-            apiClient.getRun(msg.runId).then((run) => upsertRun(run));
+            debouncedGetRun(apiClient, msg.runId).then((run) => {
+              if (run) upsertRun(run);
+            });
             break;
 
           case 'run_output':
@@ -1185,15 +1519,61 @@ function useWebSocketBridge(ws: WebSocketManager): void {
             toast[msg.level](msg.message);
             break;
 
-          case 'resync_required' as any:
-            markResyncRequired((msg as any).runId);
+          case 'resync_required':
+            markResyncRequired(msg.runId);
             break;
         }
       }),
     );
 
     return () => unsubs.forEach((fn) => fn());
-  }, [ws]);
+  }, [ws, apiClient]);
+}
+```
+
+### 5.2.1 `useDaemonApi` — Debounced Data Fetching Hook
+
+Rapid WS events (e.g., multiple `run_status` events within milliseconds during stage transitions) can trigger parallel `getRun` calls for the same runId. This hook deduplicates and debounces those fetches.
+
+```typescript
+// hooks/useDaemonApi.ts
+
+const pendingFetches = new Map<string, Promise<WorkflowRunDetail | null>>();
+const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Debounce interval for coalescing rapid getRun calls per runId. */
+const DEBOUNCE_MS = 200;
+
+/**
+ * Debounced getRun: if called multiple times for the same runId within
+ * DEBOUNCE_MS, only the last call executes. Concurrent in-flight requests
+ * for the same runId are deduplicated (return the same promise).
+ */
+export function debouncedGetRun(
+  client: ApiClient,
+  runId: string,
+): Promise<WorkflowRunDetail | null> {
+  // If there's already an in-flight request, return it
+  const existing = pendingFetches.get(runId);
+  if (existing) return existing;
+
+  // Debounce: cancel previous timer, start new one
+  const prev = debounceTimers.get(runId);
+  if (prev) clearTimeout(prev);
+
+  return new Promise((resolve) => {
+    debounceTimers.set(
+      runId,
+      setTimeout(async () => {
+        debounceTimers.delete(runId);
+        const promise = client.getRun(runId).catch(() => null);
+        pendingFetches.set(runId, promise);
+        const result = await promise;
+        pendingFetches.delete(runId);
+        resolve(result);
+      }, DEBOUNCE_MS),
+    );
+  });
 }
 ```
 
@@ -1476,6 +1856,8 @@ interface InterventionInputProps {
 
 #### `StageTimeline` — Visual Pipeline
 
+> **Note:** SAD §2.2.1 lists this component as `StageVisualization.tsx`. Renamed to `StageTimeline` in the CDD to better describe the horizontal pipeline UI pattern. The file will be `components/run/StageTimeline.tsx`.
+
 ```typescript
 interface StageTimelineProps {
   stages: StageExecution[];
@@ -1707,8 +2089,9 @@ interface StatusBadgeProps {
   showLabel?: boolean;               // default: true
 }
 
-// Color mapping:
+// Color mapping (exhaustive for all status enums from SAD §4.3):
 const statusColors: Record<string, { bg: string; text: string; dot: string }> = {
+  // WorkflowRunStatus
   pending:           { bg: 'bg-muted',        text: 'text-muted-foreground', dot: 'bg-gray-400' },
   provisioning:      { bg: 'bg-blue-950',     text: 'text-blue-400',        dot: 'bg-blue-400' },
   running:           { bg: 'bg-green-950',     text: 'text-green-400',       dot: 'bg-green-400 animate-pulse' },
@@ -1722,12 +2105,16 @@ const statusColors: Record<string, { bg: string; text: string; dot: string }> = 
   completed:         { bg: 'bg-green-950',     text: 'text-green-400',       dot: 'bg-green-400' },
   failed:            { bg: 'bg-red-950',       text: 'text-red-400',         dot: 'bg-red-400' },
   cancelled:         { bg: 'bg-muted',         text: 'text-muted-foreground', dot: 'bg-gray-500' },
-  // Review statuses
+  // ReviewStatus
   pending_review:    { bg: 'bg-yellow-950',    text: 'text-yellow-400',      dot: 'bg-yellow-400' },
   approved:          { bg: 'bg-green-950',     text: 'text-green-400',       dot: 'bg-green-400' },
   changes_requested: { bg: 'bg-orange-950',    text: 'text-orange-400',      dot: 'bg-orange-400' },
-  // Stage statuses
+  // StageStatus
   skipped:           { bg: 'bg-muted',         text: 'text-muted-foreground', dot: 'bg-gray-500' },
+  // ParallelGroupStatus (SAD §4.3)
+  children_completed:{ bg: 'bg-blue-950',      text: 'text-blue-400',        dot: 'bg-blue-400' },
+  children_mixed:    { bg: 'bg-amber-950',     text: 'text-amber-400',       dot: 'bg-amber-400' },
+  consolidating:     { bg: 'bg-purple-950',    text: 'text-purple-400',      dot: 'bg-purple-400 animate-pulse' },
 };
 ```
 
@@ -1807,8 +2194,13 @@ interface PrerequisiteCheckProps {
 
 [Streamdown](https://github.com/anthropics/streamdown) renders markdown from incomplete streaming chunks, handling unclosed bold, partial code blocks, and unterminated links (NFR-U4).
 
+**Key design decision:** Streamdown is used **only for the actively-streaming tail message** (the current incomplete assistant response). All finalized messages are rendered as static markdown using a lightweight markdown renderer (e.g., `react-markdown`). This avoids creating Streamdown instances for every historical message and reduces memory usage.
+
 ```typescript
 // components/run/StreamdownRenderer.tsx
+
+import { useRef, useEffect } from 'react';
+import Streamdown from 'streamdown';
 
 interface StreamdownRendererProps {
   /** Raw markdown text (may be incomplete during streaming). */
@@ -1817,19 +2209,76 @@ interface StreamdownRendererProps {
   isStreaming: boolean;
 }
 
-// Uses Streamdown's incremental rendering:
-// 1. Create a Streamdown instance per message
-// 2. Feed chunks as they arrive from WS events
-// 3. Streamdown handles:
-//    - Incomplete **bold** markers
-//    - Unterminated ```code blocks
-//    - Partial [links](
-//    - Incomplete HTML tags
-// 4. On stream end: final render pass to close any open syntax
+/**
+ * Renders streaming markdown using Streamdown's incremental DOM output.
+ *
+ * Streamdown outputs DOM nodes directly — we attach them to a ref-based
+ * container, bypassing React's virtual DOM for streaming performance.
+ * A new Streamdown instance is created per streaming message and destroyed
+ * when the message finalizes (isStreaming → false).
+ */
+function StreamdownRenderer({ content, isStreaming }: StreamdownRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const streamdownRef = useRef<Streamdown | null>(null);
+  const lastLengthRef = useRef(0);
+
+  // Create Streamdown instance when streaming starts
+  useEffect(() => {
+    if (isStreaming && !streamdownRef.current && containerRef.current) {
+      streamdownRef.current = new Streamdown({
+        target: containerRef.current,
+        theme: 'dark',
+      });
+      lastLengthRef.current = 0;
+    }
+
+    // Cleanup: destroy instance when streaming ends or component unmounts
+    return () => {
+      if (!isStreaming && streamdownRef.current) {
+        streamdownRef.current.finish();
+        streamdownRef.current = null;
+      }
+    };
+  }, [isStreaming]);
+
+  // Feed new chunks to Streamdown as content grows
+  useEffect(() => {
+    if (streamdownRef.current && content.length > lastLengthRef.current) {
+      const newChunk = content.slice(lastLengthRef.current);
+      streamdownRef.current.push(newChunk);
+      lastLengthRef.current = content.length;
+    }
+  }, [content]);
+
+  // Finalize on stream end
+  useEffect(() => {
+    if (!isStreaming && streamdownRef.current) {
+      streamdownRef.current.finish();
+      streamdownRef.current = null;
+    }
+  }, [isStreaming]);
+
+  // During streaming: Streamdown writes directly to containerRef
+  // After streaming ends: fall through to static markdown (handled by parent)
+  return <div ref={containerRef} className="streamdown-container" />;
+}
+```
+
+**Usage in RunConversation:**
+
+```typescript
+// In VirtualizedConversation, the streaming tail is rendered separately:
 //
-// Implementation detail: Streamdown outputs DOM nodes. We wrap it in a
-// React ref-based container that appends Streamdown's output DOM directly,
-// bypassing React's virtual DOM for streaming performance.
+// 1. Finalized assistant_message blocks → <StaticMarkdown content={...} />
+//    (uses react-markdown, no Streamdown overhead)
+//
+// 2. streamingTail (from streaming store) → <StreamdownRenderer
+//      content={tail.content} isStreaming={true} />
+//    (only ONE instance exists at any time — the current live message)
+//
+// When the agent finishes the message (tool_call starts, or result arrives),
+// the transform layer finalizes the tail into an assistant_message block,
+// clears streamingTail, and the StreamdownRenderer unmounts.
 ```
 
 ### 8.2 Chunking & Virtualization
@@ -1892,7 +2341,7 @@ interface SessionBoundaryProps {
 
 ```typescript
 interface PopOutButtonProps {
-  /** Route to open in the new window (e.g., "/workspace/abc-123"). */
+  /** Route to open in the new window. Uses pop-out route format. */
   route: string;
   /** Window title. */
   title: string;
@@ -1903,6 +2352,40 @@ interface PopOutButtonProps {
 // Renders a small icon button (external-link icon).
 // On click: invokes Tauri command to create a new WebviewWindow.
 // Available on: RunDetail header, ReviewPanel header, streaming output.
+```
+
+**Pop-out route definitions:**
+
+Pop-out windows use dedicated routes that render only the content (no sidebar). These are separate from the main app routes to allow independent layout:
+
+```typescript
+// routes (added to router.ts)
+
+// Pop-out: full run detail (conversation + stages + review)
+const popoutRunRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/run/$runId',
+  component: PopoutRunDetail,
+});
+
+// Pop-out: specific review for a run
+const popoutReviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/run/$runId/review/$reviewId',
+  component: PopoutReviewPanel,
+});
+
+// Pop-out: specific stage conversation
+const popoutStageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/run/$runId/stage/$stageName',
+  component: PopoutStageConversation,
+});
+
+// Pop-out components render their content in a minimal layout
+// (no sidebar, no navigation — just the content + DaemonStatus banner).
+// They use the same core components (RunDetail, ReviewPanel, etc.)
+// but wrapped in a PopoutLayout shell.
 ```
 
 ### 9.2 Window Creation via Tauri API
@@ -1931,39 +2414,65 @@ async function openPopoutWindow(route: string, title: string): Promise<void> {
 
 Each Tauri window is a separate webview with its own JavaScript context (SAD §2.2.2). No cross-window shared state — the daemon is the consistency layer.
 
+**Pop-out bootstrap race prevention:** Pop-out windows must NOT call `start_daemon()` — that could race with the main window's sidecar monitor. Instead, pop-outs read the daemon port from Tauri app state (set by the main window's `start_daemon` and `monitor_daemon`). The main window is always responsible for sidecar lifecycle.
+
 ```typescript
 // main.tsx (runs in every window, including pop-outs)
 
+/** Check if this is a pop-out window (route starts with /run/). */
+function isPopoutWindow(): boolean {
+  return window.location.pathname.startsWith('/run/');
+}
+
 async function bootstrap(): Promise<void> {
-  // 1. Read daemon port + auth token from Tauri
-  const daemonInfo = await invoke<DaemonInfo>('start_daemon');
-  const authToken = await invoke<string>('read_auth_token');
+  let port: number;
+  let authToken: string;
+
+  if (isPopoutWindow()) {
+    // Pop-out: read daemon port from Tauri app state (set by main window).
+    // Do NOT call start_daemon() — the main window manages the sidecar.
+    port = await invoke<number>('get_daemon_port');
+    authToken = await invoke<string>('read_auth_token');
+  } else {
+    // Main window: start daemon sidecar if needed, get port
+    const daemonInfo = await invoke<DaemonInfo>('start_daemon');
+    port = daemonInfo.port;
+    authToken = await invoke<string>('read_auth_token');
+  }
 
   // 2. Initialize API client
   const client = new ApiClient({
-    getBaseUrl: () => `http://localhost:${daemonInfo.port}`,
-    getAuthToken: () => authToken,
+    getBaseUrl: () => `http://localhost:${useDaemonStore.getState().port ?? port}`,
+    getAuthToken: () => useDaemonStore.getState().authToken ?? authToken,
   });
+
+  // Store initial values
+  useDaemonStore.getState().setPort(port);
+  useDaemonStore.getState().setAuthToken(authToken);
 
   // 3. Initialize WebSocket
   const ws = new WebSocketManager({
-    getUrl: () => `ws://localhost:${daemonInfo.port}/ws`,
-    getAuthToken: () => authToken,
+    getUrl: () => `ws://localhost:${useDaemonStore.getState().port ?? port}/ws`,
+    getAuthToken: () => useDaemonStore.getState().authToken ?? authToken,
   });
 
   // 4. Determine initial route
-  //    Main window: "/" (workspace)
-  //    Pop-out window: route from URL (e.g., "/workspace/abc-123")
   const route = window.location.pathname;
 
   // 5. Hydrate stores from REST
   if (route === '/' || route.startsWith('/workspace')) {
     const runs = await client.listRuns();
     useWorkspaceStore.getState().setRuns(runs);
+
+    // Restore last-viewed run (NFR-U8)
+    const lastRunId = localStorage.getItem('vibe-harness:lastViewedRunId');
+    if (lastRunId) {
+      useWorkspaceStore.getState().selectRun(lastRunId);
+    }
   }
 
-  // If this is a run detail pop-out, subscribe to that run's stream
-  const runIdMatch = route.match(/\/workspace\/(.+)/);
+  // If this is a run detail (main or pop-out), subscribe to stream
+  const runIdMatch = route.match(/(?:\/workspace\/|\/run\/)([^/]+)/);
   if (runIdMatch) {
     const runId = runIdMatch[1];
     useWorkspaceStore.getState().selectRun(runId);
@@ -1978,7 +2487,7 @@ async function bootstrap(): Promise<void> {
   ws.connect();
 
   // 7. Check prerequisites on main window only
-  if (route === '/') {
+  if (route === '/' && !isPopoutWindow()) {
     useDaemonStore.getState().setPrerequisitesLoading(true);
     const prereqs = await client.prerequisites();
     useDaemonStore.getState().setPrerequisites(prereqs);
@@ -2040,7 +2549,7 @@ interface ShortcutMap {
 | NFR-U5 Unified diff view | §7.2 DiffViewer |
 | NFR-U6 Daemon status + reconnect | §5 WebSocket Manager, §7.4 DaemonStatus |
 | NFR-U7 Daemon discovery via port file | §1.1 Sidecar Management |
-| NFR-U8 Restore last-viewed run | §6.1 Workspace (lastRunConfig) |
+| NFR-U8 Restore last-viewed run | §3.1 WorkspaceStore (localStorage persistence), §9.3 Bootstrap |
 | NFR-P1 < 100ms streaming latency | §8 Streaming Integration |
 | NFR-P3 GUI responsiveness | §8.2 Virtualization |
 | NFR-I3 Auto-start daemon | §1.1 Sidecar Management |

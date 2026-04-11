@@ -18,6 +18,8 @@ foreign key from SAD §4.2 is represented below.
 - JSON fields: stored as text, serialized/deserialized in the application layer
 - Booleans: SQLite integer (0/1) via Drizzle `integer(..., { mode: 'boolean' })`
 - Foreign keys declared inline via `.references()`
+- Sentinel values used where SQLite NULL-in-UNIQUE semantics are problematic (see `reviews.stageName`)
+- Cross-field invariants that Drizzle cannot express are documented as `CHECK` comments for raw SQL migrations
 
 ```typescript
 // daemon/src/db/schema.ts
@@ -49,6 +51,8 @@ export const projects = sqliteTable('projects', {
   gitUrl: text('git_url'),
   localPath: text('local_path').notNull(),
   description: text('description'),
+  // CDD design decision: onDelete 'set null' chosen so deleting a credential set
+  // does not cascade to project deletion — it merely clears the default.
   defaultCredentialSetId: text('default_credential_set_id')
     .references(() => credentialSets.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
@@ -68,6 +72,7 @@ export const agentDefinitions = sqliteTable('agent_definitions', {
   supportsContinue: integer('supports_continue', { mode: 'boolean' }).notNull().default(true),
   supportsIntervention: integer('supports_intervention', { mode: 'boolean' }).notNull().default(true),
   outputFormat: text('output_format').notNull().default('acp'), // 'acp' | 'jsonl' | 'text'
+  isBuiltIn: integer('is_built_in', { mode: 'boolean' }).notNull().default(false), // seed data protection
   createdAt: createdAt(),
 });
 
@@ -78,11 +83,17 @@ export const workflowTemplates = sqliteTable('workflow_templates', {
   name: text('name').notNull(),
   description: text('description'),
   stages: text('stages').notNull(),                 // JSON: WorkflowStage[]
+  isBuiltIn: integer('is_built_in', { mode: 'boolean' }).notNull().default(false), // seed data protection
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
 // ─── workflowRuns (SAD §4.2, SRD FR-W3–W4, FR-W9–W10, FR-W17–W18) ───
+// CHECK invariants (enforce via raw SQL migration or service layer):
+//   - parentRunId IS NOT NULL implies parallelGroupId IS NOT NULL (split children belong to a group)
+//   - status IN ('pending','provisioning','running','stage_failed','awaiting_review',
+//     'awaiting_proposals','waiting_for_children','children_completed_with_failures',
+//     'awaiting_conflict_resolution','finalizing','completed','failed','cancelled')
 
 export const workflowRuns = sqliteTable(
   'workflow_runs',
@@ -125,6 +136,10 @@ export const workflowRuns = sqliteTable(
 );
 
 // ─── stageExecutions (SAD §4.2, SRD FR-W4–W9, FR-W14) ────────────────
+// CHECK invariants (enforce via raw SQL migration or service layer):
+//   - status IN ('pending','running','completed','failed','skipped')
+//   - round >= 1
+//   - freshSession IN (0, 1)
 
 export const stageExecutions = sqliteTable(
   'stage_executions',
@@ -140,8 +155,8 @@ export const stageExecutions = sqliteTable(
     freshSession: integer('fresh_session', { mode: 'boolean' }).notNull().default(false),
     startedAt: text('started_at'),
     completedAt: text('completed_at'),
-    failureReason: text('failure_reason'),            // 'daemon_restart' | 'agent_error' | ...
-    usageStats: text('usage_stats'),                  // JSON: UsageStats
+    failureReason: text('failure_reason'),            // StageFailureReason enum value
+    usageStats: text('usage_stats'),                  // JSON: UsageStats (durationMs in milliseconds)
   },
   (table) => [
     // Idempotency constraint (SAD §4.2)
@@ -176,6 +191,10 @@ export const runMessages = sqliteTable(
 );
 
 // ─── reviews (SAD §4.2, SRD FR-R1–R11) ────────────────────────────────
+// DESIGN NOTE: SQLite treats each NULL as distinct in UNIQUE indexes, which would
+// allow duplicate consolidation reviews for the same (runId, round, type). To fix this,
+// we use the sentinel value '__consolidation__' instead of NULL for consolidation
+// reviews. The application layer maps this sentinel to/from `null` in entity types.
 
 export const reviews = sqliteTable(
   'reviews',
@@ -184,7 +203,7 @@ export const reviews = sqliteTable(
     workflowRunId: text('workflow_run_id')
       .notNull()
       .references(() => workflowRuns.id),
-    stageName: text('stage_name'),                   // NULL for consolidation reviews
+    stageName: text('stage_name').notNull(),          // '__consolidation__' for consolidation reviews
     round: integer('round').notNull().default(1),
     type: text('type').notNull().default('stage'),   // ReviewType: 'stage' | 'consolidation'
     status: text('status').notNull().default('pending_review'), // ReviewStatus
@@ -194,7 +213,7 @@ export const reviews = sqliteTable(
     createdAt: createdAt(),
   },
   (table) => [
-    // Idempotency constraint (SAD §4.2) — stageName NULL for consolidation
+    // Idempotency constraint (SAD §4.2) — uses sentinel for consolidation, so UNIQUE works correctly
     uniqueIndex('uq_review_run_stage_round_type')
       .on(table.workflowRunId, table.stageName, table.round, table.type),
     index('idx_reviews_run').on(table.workflowRunId),
@@ -232,7 +251,7 @@ export const proposals = sqliteTable(
       .references(() => workflowRuns.id, { onDelete: 'cascade' }),
     stageName: text('stage_name').notNull(),
     parallelGroupId: text('parallel_group_id')
-      .references(() => parallelGroups.id),
+      .references(() => parallelGroups.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     description: text('description').notNull(),
     affectedFiles: text('affected_files'),           // JSON: string[]
@@ -293,6 +312,10 @@ export const credentialSets = sqliteTable(
 );
 
 // ─── credentialEntries (SAD §4.2, SRD FR-C2–C4, SAD §6.2) ─────────────
+// DESIGN NOTE: `value` is NOT NULL but may be empty string for command_extract entries,
+// where the extracted token is computed at runtime from the `command` field.
+// CHECK invariant (service layer): type='file_mount'|'host_dir_mount' → mountPath IS NOT NULL
+// CHECK invariant (service layer): type='command_extract' → command IS NOT NULL
 
 export const credentialEntries = sqliteTable(
   'credential_entries',
@@ -302,11 +325,12 @@ export const credentialEntries = sqliteTable(
       .notNull()
       .references(() => credentialSets.id, { onDelete: 'cascade' }),
     key: text('key').notNull(),
-    value: text('value').notNull(),                  // AES-256 encrypted (SRD FR-C3)
+    value: text('value').notNull().default(''),      // AES-256 encrypted (SRD FR-C3); empty for command_extract
     type: text('type').notNull(),                    // CredentialEntryType
     mountPath: text('mount_path'),                   // for file_mount, host_dir_mount
     command: text('command'),                        // for command_extract
     createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [
     index('idx_credential_entries_set').on(table.credentialSetId),
@@ -333,9 +357,11 @@ export const credentialAuditLog = sqliteTable(
 );
 
 // ─── lastRunConfig (SAD §4.2) — singleton ──────────────────────────────
+// CHECK constraint for raw SQL migration: CHECK(id = 1)
+// Drizzle cannot express this; enforce via migration or service layer.
 
 export const lastRunConfig = sqliteTable('last_run_config', {
-  id: integer('id').primaryKey().default(1),         // singleton row
+  id: integer('id').primaryKey().default(1),         // singleton row — always id=1
   projectId: text('project_id'),
   agentDefinitionId: text('agent_definition_id'),
   credentialSetId: text('credential_set_id'),
@@ -350,7 +376,7 @@ export const hookResumes = sqliteTable(
   {
     id: uuid(),
     hookToken: text('hook_token').notNull().unique(),
-    action: text('action').notNull(),                // JSON payload sent to resumeHook
+    action: text('action').notNull(),                // JSON: serialized Record<string, unknown> payload
     createdAt: createdAt(),
   },
 );
@@ -581,7 +607,7 @@ These are what services return and routes serialize.
 // shared/types/entities.ts
 
 import type {
-  WorkflowRunStatus, StageStatus, ReviewType, ReviewStatus,
+  WorkflowRunStatus, StageStatus, StageFailureReason, ReviewType, ReviewStatus,
   ParallelGroupStatus, ProposalStatus, CredentialEntryType,
   MessageRole, AgentOutputFormat, AgentType, DiffSide,
   GitOperationType, GitOperationPhase, StageType,
@@ -626,6 +652,7 @@ export interface AgentDefinition {
   supportsContinue: boolean;
   supportsIntervention: boolean;
   outputFormat: AgentOutputFormat;
+  isBuiltIn: boolean;
   createdAt: string;
 }
 
@@ -636,6 +663,7 @@ export interface WorkflowTemplate {
   name: string;
   description: string | null;
   stages: WorkflowStage[];                         // parsed from JSON text column
+  isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -668,7 +696,7 @@ export interface WorkflowRun {
 
 export interface UsageStats {
   tokens?: number;
-  duration?: number;                               // milliseconds
+  durationMs?: number;                             // milliseconds
   cost?: number;                                   // USD
   model?: string;
 }
@@ -683,7 +711,7 @@ export interface StageExecution {
   freshSession: boolean;
   startedAt: string | null;
   completedAt: string | null;
-  failureReason: string | null;
+  failureReason: StageFailureReason | null;
   usageStats: UsageStats | null;                   // parsed from JSON
 }
 
@@ -713,10 +741,16 @@ export interface RunMessage {
 
 // ─── reviews ───────────────────────────────────────────────────────────
 
+/**
+ * Sentinel value stored in reviews.stageName for consolidation reviews.
+ * Maps to `null` in the Review entity type for API consumers.
+ */
+export const CONSOLIDATION_STAGE_SENTINEL = '__consolidation__' as const;
+
 export interface Review {
   id: string;
   workflowRunId: string;
-  stageName: string | null;
+  stageName: string | null;                          // null for consolidation reviews (DB stores sentinel)
   round: number;
   type: ReviewType;
   status: ReviewStatus;
@@ -790,6 +824,7 @@ export interface CredentialEntry {
   mountPath: string | null;
   command: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -797,7 +832,7 @@ export interface CredentialEntry {
  * NEVER returned from API routes (SRD FR-C7, NFR-S7).
  */
 export interface CredentialEntryWithValue extends CredentialEntry {
-  value: string;
+  value: string;                                    // may be empty for command_extract
 }
 
 /** Credential entry shapes per type (SAD §6.2). */
@@ -831,6 +866,7 @@ export interface CommandExtractCredential {
   type: 'command_extract';
   key: string;       // env var name to store result
   command: string;   // host command to run at sandbox boot
+  value?: undefined; // not used — token is extracted at runtime from `command`
 }
 
 export type TypedCredentialEntry =
@@ -868,7 +904,7 @@ export interface LastRunConfig {
 export interface HookResume {
   id: string;
   hookToken: string;
-  action: string;                                   // JSON payload
+  action: Record<string, unknown>;                  // parsed from JSON
   createdAt: string;
 }
 
@@ -897,57 +933,41 @@ export interface GitOperation {
 
 ### 2.3 WebSocket Event Types (`shared/types/events.ts`)
 
-From SAD §3.2 WebSocket protocol.
+From SAD §3.2 WebSocket protocol, reconciled with CDD-api §12.
 
 ```typescript
 // shared/types/events.ts
 
-import type { WorkflowRunStatus, StageStatus, ReviewStatus, ParallelGroupStatus } from './enums';
+import type {
+  WorkflowRunStatus, StageStatus, StageFailureReason,
+  ReviewStatus, ReviewType, ParallelGroupStatus,
+} from './enums';
 
 // ─── Agent output events (ACP → daemon → WebSocket) ───────────────────
 
-export interface AcpAgentMessage {
-  type: 'agent_message';
+export interface AgentOutputEvent {
+  role: 'assistant' | 'tool' | 'system' | 'user';
   content: string;
+  eventType:
+    | 'agent_message'
+    | 'agent_thought'
+    | 'tool_call'
+    | 'tool_result'
+    | 'session_update'
+    | 'result'
+    | 'intervention'
+    | 'system_prompt';
+  metadata?: {
+    toolName?: string;
+    toolCallId?: string;
+    toolArgs?: Record<string, unknown>;
+    isStreaming?: boolean;                          // true for partial messages during streaming
+    usageStats?: { tokens?: number; durationMs?: number; cost?: number; model?: string };
+  };
+  timestamp: string;
 }
 
-export interface AcpAgentThought {
-  type: 'agent_thought';
-  content: string;
-}
-
-export interface AcpToolCall {
-  type: 'tool_call';
-  toolCallId: string;
-  name: string;
-  arguments: string;
-}
-
-export interface AcpToolResult {
-  type: 'tool_result';
-  toolCallId: string;
-  content: string;
-}
-
-export interface AcpSessionUpdate {
-  type: 'session_update';
-  sessionId: string;
-}
-
-export interface AcpResult {
-  type: 'result';
-  usage?: { tokens?: number; duration?: number; cost?: number; model?: string };
-}
-
-export type AgentOutputEvent =
-  | AcpAgentMessage
-  | AcpAgentThought
-  | AcpToolCall
-  | AcpToolResult
-  | AcpSessionUpdate
-  | AcpResult;
-
-// ─── Client → Daemon messages (SAD §3.2) ──────────────────────────────
+// ─── Client → Server messages (SAD §3.2) ──────────────────────────────
 
 export interface SubscribeMessage {
   type: 'subscribe';
@@ -960,15 +980,25 @@ export interface UnsubscribeMessage {
   runId: string;
 }
 
-export type ClientMessage = SubscribeMessage | UnsubscribeMessage;
+export interface PingMessage {
+  type: 'ping';
+}
 
-// ─── Daemon → Client messages (SAD §3.2) ──────────────────────────────
+export type ClientMessage = SubscribeMessage | UnsubscribeMessage | PingMessage;
+
+// ─── Server → Client messages (SAD §3.2, CDD-api §12.3) ──────────────
+
+export interface ConnectedMessage {
+  type: 'connected';
+  serverVersion: string;
+}
 
 export interface RunOutputMessage {
   type: 'run_output';
   runId: string;
   seq: number;
-  stage: string;
+  stageName: string;
+  round: number;
   data: AgentOutputEvent;
 }
 
@@ -976,21 +1006,27 @@ export interface RunStatusMessage {
   type: 'run_status';
   runId: string;
   status: WorkflowRunStatus;
-  stage?: string;
+  currentStage: string | null;
+  title: string | null;
+  projectId: string;
 }
 
 export interface StageStatusMessage {
   type: 'stage_status';
   runId: string;
-  stage: string;
+  stageName: string;
+  round: number;
   status: StageStatus;
+  failureReason: StageFailureReason | null;
 }
 
 export interface ReviewCreatedMessage {
   type: 'review_created';
   reviewId: string;
   runId: string;
-  stage: string;
+  stageName: string | null;
+  round: number;
+  reviewType: ReviewType;
 }
 
 export interface ReviewStatusMessage {
@@ -998,6 +1034,20 @@ export interface ReviewStatusMessage {
   reviewId: string;
   runId: string;
   status: ReviewStatus;
+}
+
+export interface ProposalsReadyMessage {
+  type: 'proposals_ready';
+  runId: string;
+  stageName: string;
+  proposalCount: number;
+}
+
+export interface ConflictDetectedMessage {
+  type: 'conflict_detected';
+  runId: string;
+  conflictType: 'rebase' | 'merge';
+  conflictDetails: string;
 }
 
 export interface ParallelGroupStatusMessage {
@@ -1011,6 +1061,7 @@ export interface NotificationMessage {
   type: 'notification';
   level: 'info' | 'warning' | 'error';
   message: string;
+  runId?: string;
 }
 
 export interface ResyncRequiredMessage {
@@ -1019,21 +1070,29 @@ export interface ResyncRequiredMessage {
   reason: string;
 }
 
+export interface PongMessage {
+  type: 'pong';
+}
+
 export type ServerMessage =
+  | ConnectedMessage
   | RunOutputMessage
   | RunStatusMessage
   | StageStatusMessage
   | ReviewCreatedMessage
   | ReviewStatusMessage
+  | ProposalsReadyMessage
+  | ConflictDetectedMessage
   | ParallelGroupStatusMessage
   | NotificationMessage
-  | ResyncRequiredMessage;
+  | ResyncRequiredMessage
+  | PongMessage;
 ```
 
 ### 2.4 API Request/Response Types (`shared/types/api.ts`)
 
-Request and response shapes for every API endpoint group (SAD §8.2).
-These types form the contract between daemon routes and GUI/CLI clients.
+Request and response shapes for every API endpoint group (SAD §8.2),
+reconciled with CDD-api.md for GUI-oriented richness.
 
 ```typescript
 // shared/types/api.ts
@@ -1044,7 +1103,10 @@ import type {
   ParallelGroup, CredentialSet, CredentialEntry, LastRunConfig,
   WorkflowStage, UsageStats,
 } from './entities';
-import type { WorkflowRunStatus, ProposalStatus } from './enums';
+import type {
+  WorkflowRunStatus, StageStatus, StageFailureReason,
+  ProposalStatus, ReviewType,
+} from './enums';
 
 // ─── Standard error response (SAD §3.1) ────────────────────────────────
 
@@ -1159,21 +1221,87 @@ export interface WorkflowRunListQuery {
   parentRunId?: string;
 }
 
+/** Lightweight summary for run list views — includes denormalized names. */
+export interface WorkflowRunSummary {
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: WorkflowRunStatus;
+  currentStage: string | null;
+  projectId: string;
+  projectName: string;                             // denormalized from projects
+  workflowTemplateName: string;                    // denormalized from workflowTemplates
+  branch: string | null;
+  parentRunId: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface WorkflowRunListResponse {
-  runs: WorkflowRun[];
+  runs: WorkflowRunSummary[];
+  total: number;
+}
+
+/** Stage execution with cross-referenced review ID for detail views. */
+export interface StageExecutionDetail extends StageExecution {
+  reviewId: string | null;                         // most recent review for this stage+round
 }
 
 export interface WorkflowRunDetailResponse {
-  run: WorkflowRun;
-  stages: StageExecution[];
-  template: WorkflowTemplate;
-  project: Project;
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: WorkflowRunStatus;
+  currentStage: string | null;
+  projectId: string;
+  projectName: string;
+  workflowTemplateId: string;
+  workflowTemplateName: string;
+  agentDefinitionId: string;
+  parentRunId: string | null;
+  parallelGroupId: string | null;
+  sandboxId: string | null;
+  worktreePath: string | null;
+  branch: string | null;
+  baseBranch: string | null;
+  targetBranch: string | null;
+  credentialSetId: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  stages: StageExecutionDetail[];
+  activeReviewId: string | null;                   // review currently pending, if any
+  childRunIds: string[];                           // IDs of split-child runs
+}
+
+// ─── Diff types (shared between runs and reviews) ──────────────────────
+
+export interface DiffChunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  content: string;
+}
+
+export interface DiffFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  oldPath?: string;                                // for renames
+  additions: number;
+  deletions: number;
+  chunks: DiffChunk[];
+}
+
+export interface DiffStats {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
 }
 
 export interface WorkflowRunDiffResponse {
-  diff: string;
-  baseBranch: string;
-  branch: string;
+  diff: string;                                    // raw unified diff text
+  files: DiffFile[];                               // structured parsed diff
+  stats: DiffStats;
 }
 
 export interface WorkflowRunMessagesResponse {
@@ -1350,7 +1478,7 @@ export interface CredentialSetDetailResponse {
 
 export interface CreateCredentialEntryRequest {
   key: string;
-  value: string;                                   // plaintext — encrypted on server
+  value?: string;                                  // plaintext — encrypted on server; optional for command_extract
   type: string;
   mountPath?: string;
   command?: string;
@@ -1369,10 +1497,12 @@ export interface CredentialAuditResponse {
     id: string;
     action: string;
     credentialSetId: string | null;
+    credentialEntryId: string | null;
     workflowRunId: string | null;
     details: Record<string, unknown> | null;
     createdAt: string;
   }>;
+  total: number;
 }
 
 // ─── Last Run Config ───────────────────────────────────────────────────
@@ -1381,13 +1511,20 @@ export interface LastRunConfigResponse {
   config: LastRunConfig;
 }
 
-// ─── Stats (SAD §8.1, SRD FR-D1–D3) ───────────────────────────────────
+// ─── Stats (SAD §8.1, SRD FR-D1–D3, CDD-api §11.1) ───────────────────
+
+export interface RecentActivity {
+  type: 'run_completed' | 'run_failed' | 'review_created' | 'run_started';
+  runId: string;
+  title: string | null;
+  timestamp: string;
+}
 
 export interface WorkspaceSummaryResponse {
-  runningWorkflows: number;
-  pendingReviews: number;
-  recentRuns: WorkflowRun[];
-  projectCount: number;
+  running: number;                                 // workflow runs currently running
+  pendingReviews: number;                          // reviews in pending_review status
+  awaitingAction: number;                          // runs in stage_failed, awaiting_proposals, etc.
+  recentActivity: RecentActivity[];
 }
 
 // ─── Health (SAD §10.7, SRD NFR-O3) ───────────────────────────────────
@@ -1442,16 +1579,18 @@ import { z } from 'zod';
  * Git ref validator — blocks injection characters (SAD §10.1, SRD NFR-S5).
  * Allows: a-z A-Z 0-9 . _ / -
  * Blocks: backticks, $, ;, |, <>, (), {}, \, newlines, ..
+ * Also disallows: leading/trailing slashes, consecutive slashes.
  */
 export const gitRefSchema = z
   .string()
   .min(1)
   .max(256)
   .regex(
-    /^[a-zA-Z0-9._\/-]+$/,
-    'Invalid git ref: only alphanumerics, dots, underscores, slashes, and hyphens allowed',
+    /^[a-zA-Z0-9._-]([a-zA-Z0-9._\/-]*[a-zA-Z0-9._-])?$/,
+    'Invalid git ref: must not start/end with slash, only alphanumerics, dots, underscores, slashes, and hyphens allowed',
   )
-  .refine((val) => !val.includes('..'), 'Git ref must not contain ".."');
+  .refine((val) => !val.includes('..'), 'Git ref must not contain ".."')
+  .refine((val) => !val.includes('//'), 'Git ref must not contain consecutive slashes');
 
 /** UUID string. */
 export const uuidSchema = z.string().uuid();
@@ -1687,17 +1826,25 @@ const credentialEntryTypeEnum = z.enum([
  * - file_mount:      key = identifier, value = file content, mountPath required
  * - docker_login:    key = registry, value = JSON { username, password }
  * - host_dir_mount:  key = identifier, value = host path, mountPath required
- * - command_extract: key = env var name, command required
+ * - command_extract: key = env var name, value optional (empty string), command required
  */
 export const createCredentialEntrySchema = z
   .object({
     key: nonEmptyString.max(500),
-    value: nonEmptyString.max(1_000_000),            // file mounts can be large
+    value: z.string().max(1_000_000).optional().default(''), // optional for command_extract
     type: credentialEntryTypeEnum,
     mountPath: z.string().max(1024).optional(),
     command: z.string().max(2000).optional(),
   })
   .superRefine((entry, ctx) => {
+    // value is required (non-empty) for all types except command_extract
+    if (entry.type !== 'command_extract' && (!entry.value || entry.value.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `value is required for ${entry.type} entries`,
+        path: ['value'],
+      });
+    }
     if ((entry.type === 'file_mount' || entry.type === 'host_dir_mount') && !entry.mountPath) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1712,15 +1859,73 @@ export const createCredentialEntrySchema = z
         path: ['command'],
       });
     }
+    // docker_login value must be valid JSON with username and password
+    if (entry.type === 'docker_login' && entry.value) {
+      try {
+        const parsed = JSON.parse(entry.value);
+        if (typeof parsed.username !== 'string' || typeof parsed.password !== 'string') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'docker_login value must be JSON with "username" and "password" string fields',
+            path: ['value'],
+          });
+        }
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'docker_login value must be valid JSON: { "username": "...", "password": "..." }',
+          path: ['value'],
+        });
+      }
+    }
   });
 
-export const updateCredentialEntrySchema = z.object({
-  key: nonEmptyString.max(500).optional(),
-  value: nonEmptyString.max(1_000_000).optional(),
-  type: credentialEntryTypeEnum.optional(),
-  mountPath: z.string().max(1024).optional(),
-  command: z.string().max(2000).optional(),
-});
+export const updateCredentialEntrySchema = z
+  .object({
+    key: nonEmptyString.max(500).optional(),
+    value: z.string().max(1_000_000).optional(),
+    type: credentialEntryTypeEnum.optional(),
+    mountPath: z.string().max(1024).optional(),
+    command: z.string().max(2000).optional(),
+  })
+  .superRefine((entry, ctx) => {
+    // When type is provided, validate type-specific constraints
+    if (entry.type) {
+      if ((entry.type === 'file_mount' || entry.type === 'host_dir_mount') && entry.mountPath === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `mountPath is required for ${entry.type} entries`,
+          path: ['mountPath'],
+        });
+      }
+      if (entry.type === 'command_extract' && entry.command === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'command is required for command_extract entries',
+          path: ['command'],
+        });
+      }
+      // docker_login JSON validation on update
+      if (entry.type === 'docker_login' && entry.value) {
+        try {
+          const parsed = JSON.parse(entry.value);
+          if (typeof parsed.username !== 'string' || typeof parsed.password !== 'string') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'docker_login value must be JSON with "username" and "password" string fields',
+              path: ['value'],
+            });
+          }
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'docker_login value must be valid JSON: { "username": "...", "password": "..." }',
+            path: ['value'],
+          });
+        }
+      }
+    }
+  });
 
 export type CreateCredentialSetInput = z.infer<typeof createCredentialSetSchema>;
 export type UpdateCredentialSetInput = z.infer<typeof updateCredentialSetSchema>;
@@ -1749,28 +1954,30 @@ export * from './credentials';
 
 | SAD/SRD Reference | CDD Section | Implementation |
 |---|---|---|
-| SAD §4.2 `projects` | §1 `projects` table | Drizzle schema with FK to credentialSets |
-| SAD §4.2 `agentDefinitions` | §1 `agentDefinitions` table | Capability booleans, outputFormat enum |
-| SAD §4.2 `workflowTemplates` | §1 `workflowTemplates` table | JSON `stages` column with `WorkflowStage[]` |
-| SAD §4.2 `workflowRuns` | §1 `workflowRuns` table | All FKs, status indexes, parent/child links |
-| SAD §4.2 `stageExecutions` | §1 `stageExecutions` table | UNIQUE(runId, stageName, round) |
+| SAD §4.2 `projects` | §1 `projects` table | Drizzle schema with FK to credentialSets; onDelete design note |
+| SAD §4.2 `agentDefinitions` | §1 `agentDefinitions` table | Capability booleans, outputFormat enum, `isBuiltIn` for seed protection |
+| SAD §4.2 `workflowTemplates` | §1 `workflowTemplates` table | JSON `stages` column with `WorkflowStage[]`, `isBuiltIn` for seed protection |
+| SAD §4.2 `workflowRuns` | §1 `workflowRuns` table | All FKs, status indexes, parent/child links, CHECK invariant comments |
+| SAD §4.2 `stageExecutions` | §1 `stageExecutions` table | UNIQUE(runId, stageName, round), CHECK invariant comments |
 | SAD §4.2 `runMessages` | §1 `runMessages` table | ON DELETE CASCADE, session boundary marker |
-| SAD §4.2 `reviews` | §1 `reviews` table | UNIQUE(runId, stageName, round, type) |
+| SAD §4.2 `reviews` | §1 `reviews` table | Sentinel `'__consolidation__'` for NULL-safe UNIQUE; UNIQUE(runId, stageName, round, type) |
 | SAD §4.2 `reviewComments` | §1 `reviewComments` table | ON DELETE CASCADE from reviews |
-| SAD §4.2 `proposals` | §1 `proposals` table | UNIQUE(runId, stageName, title) |
+| SAD §4.2 `proposals` | §1 `proposals` table | UNIQUE(runId, stageName, title), parallelGroupId FK onDelete: set null |
 | SAD §4.2 `parallelGroups` | §1 `parallelGroups` table | Status enum, completedAt |
 | SAD §4.2 `credentialSets` | §1 `credentialSets` table | ON DELETE SET NULL for projectId |
-| SAD §4.2 `credentialEntries` | §1 `credentialEntries` table | ON DELETE CASCADE, type-specific fields |
+| SAD §4.2 `credentialEntries` | §1 `credentialEntries` table | ON DELETE CASCADE, value default '' for command_extract, updatedAt added, CHECK comments |
 | SAD §4.2 `credentialAuditLog` | §1 `credentialAuditLog` table | Indexed by set and run |
-| SAD §4.2 `lastRunConfig` | §1 `lastRunConfig` table | Singleton (id=1) |
-| SAD §4.2 `hookResumes` | §1 `hookResumes` table | UNIQUE hookToken, outbox pattern |
+| SAD §4.2 `lastRunConfig` | §1 `lastRunConfig` table | Singleton (id=1), CHECK(id=1) comment for raw migration |
+| SAD §4.2 `hookResumes` | §1 `hookResumes` table | UNIQUE hookToken, outbox pattern, action as JSON |
 | SAD §4.2 `gitOperations` | §1 `gitOperations` table | UNIQUE(runId, type), phase journal |
-| SAD §4.3 Status enums | §2.1 `enums.ts` | Const objects + extracted union types |
-| SAD §3.2 WebSocket protocol | §2.3 `events.ts` | ClientMessage / ServerMessage unions |
-| SAD §8.2 API patterns | §2.4 `api.ts` | Full req/res types per endpoint group |
-| SAD §6.2 Credential types | §2.2 TypedCredentialEntry | Discriminated union by type |
-| SAD §10.1 Input validation | §3 Zod schemas | Git ref regex, type-specific refinements |
+| SAD §4.3 Status enums | §2.1 `enums.ts` | Const objects + extracted union types, StageFailureReason typed |
+| SAD §3.2 WebSocket protocol | §2.3 `events.ts` | ClientMessage / ServerMessage unions, connected/ping/pong/proposals_ready/conflict_detected added |
+| SAD §8.2 API patterns | §2.4 `api.ts` | WorkflowRunSummary with denormalized names, DiffFile[]/DiffStats, WorkspaceSummaryResponse reconciled |
+| SAD §6.2 Credential types | §2.2 TypedCredentialEntry | Discriminated union by type, command_extract value optional |
+| SAD §10.1 Input validation | §3 Zod schemas | Tightened gitRefSchema, docker_login JSON validation, update schema with superRefine |
 | SRD FR-W2 Stage definition | §3.4 workflowStageSchema | reviewRequired ⊕ autoAdvance refinement |
-| SRD FR-C2 Credential types | §3.8 createCredentialEntrySchema | mountPath/command conditional requirements |
-| SRD NFR-S5 Injection prevention | §3.1 gitRefSchema | Allowlist regex, `..` blocked |
+| SRD FR-C2 Credential types | §3.8 createCredentialEntrySchema | mountPath/command/value conditional requirements |
+| SRD NFR-S5 Injection prevention | §3.1 gitRefSchema | Allowlist regex, `..` blocked, no leading/trailing/consecutive slashes |
 | SRD FR-C7 Value masking | §2.2 CredentialEntry vs WithValue | API type excludes `value` field |
+| CDD-api §11.1 Stats | §2.4 WorkspaceSummaryResponse | running, pendingReviews, awaitingAction, recentActivity[] |
+| CDD-api §12 WebSocket | §2.3 events.ts | stageName (not stage), round, connected, pong, proposals_ready, conflict_detected |

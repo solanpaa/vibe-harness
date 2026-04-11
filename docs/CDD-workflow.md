@@ -25,12 +25,17 @@ import {
   conflictResolutionHook,
 } from "./hooks";
 
+// sleep is a durable workflow primitive — the runtime persists its state at
+// each call, so if the daemon crashes mid-sleep the workflow resumes from the
+// correct point without re-executing prior steps. Do NOT use setTimeout.
+import { sleep } from "workflow";
+
 import { executeStage } from "./steps/execute-stage";
 import { createReview } from "./steps/create-review";
-import { injectComments } from "./steps/inject-comments";
 import { extractProposals } from "./steps/extract-proposals";
 import { launchChildren } from "./steps/launch-children";
 import { consolidate } from "./steps/consolidate";
+import { consolidateFinish } from "./steps/consolidate-finish";
 import { finalize } from "./steps/finalize";
 
 // --- Types --------------------------------------------------------------- //
@@ -70,6 +75,25 @@ interface StageResult {
   error?: string;
 }
 
+/**
+ * Returned by handleStageFailure. Extends StageResult with an explicit
+ * skip action so the main loop can distinguish "retry succeeded" from
+ * "user chose skip" without the old `null as any` sentinel.  (Fix #1)
+ */
+interface FailureDecisionResult extends StageResult {
+  action?: "skip";
+}
+
+/**
+ * Returned by handleSplitStage — consolidation summary for post-split
+ * freshSession context injection (Fix #6, SRD FR-S11).
+ * Persisted to the consolidation review record so replay recovers it.
+ */
+interface SplitResult {
+  consolidationSummary: string;
+  mergedDiffStats: string | null;
+}
+
 // --- Pipeline ------------------------------------------------------------ //
 
 export const runWorkflowPipeline = defineWorkflow(
@@ -81,6 +105,9 @@ export const runWorkflowPipeline = defineWorkflow(
     await updateRunStatus(ctx.runId, "provisioning");
 
     let previousResult: StageResult | null = null;
+    // Tracks the last split consolidation result. When non-null, the next
+    // stage is forced to freshSession=true with consolidation context (Fix #6).
+    let splitResult: SplitResult | null = null;
 
     for (let i = 0; i < ctx.stages.length; i++) {
       const stage = ctx.stages[i];
@@ -93,10 +120,17 @@ export const runWorkflowPipeline = defineWorkflow(
       // The step is idempotent: if a stageExecution record already exists
       // with status='completed' for this (runId, stageName, round), it
       // returns the cached result without re-sending the prompt (SAD §5.3).
+      //
+      // Fix #6: After a split stage, force freshSession=true for the next
+      // stage and pass the consolidation summary as context (SRD FR-S11).
+      const effectiveFreshSession = splitResult != null
+        ? true
+        : stage.freshSession;
+      const effectiveStage = { ...stage, freshSession: effectiveFreshSession };
 
       let result = await executeStage({
         runId: ctx.runId,
-        stage,
+        stage: effectiveStage,
         stageIndex: i,
         round: 1,
         isFirstStage: i === 0,
@@ -106,35 +140,51 @@ export const runWorkflowPipeline = defineWorkflow(
 
       // ── 2. Handle stage failure ─────────────────────────────────────
       // SAD §5.3.2: user can retry, skip, or cancel.
+      // Fix #1: handleStageFailure returns FailureDecisionResult with an
+      // explicit action='skip' field instead of the old `null as any` hack.
       if (result.status === "failed") {
-        result = await handleStageFailure(ctx, stage, result, i);
-        if (result.status === "failed") {
-          // User chose 'cancel' or exhausted retries
+        const decision = await handleStageFailure(ctx, stage, result, i);
+
+        if (decision.action === "skip") {
+          previousResult = null;
+          splitResult = null;
+          continue;
+        }
+        if (decision.status === "failed") {
+          // User chose 'cancel'
           await updateRunStatus(ctx.runId, "failed");
           await stopSession(ctx.runId);
           return;
         }
-        if (result === null as any) {
-          // User chose 'skip' → proceed with null result
-          previousResult = null;
-          continue;
-        }
+        // Retry succeeded
+        result = decision;
       }
 
       // ── 3. Split stage handling ─────────────────────────────────────
-      // SAD §5.3.3, §5.3.4, §5.3.5
+      // SAD §5.3.3, §5.3.4, §5.3.5.
+      // Fix #10: handleSplitStage returns SplitResult (consolidation summary),
+      // not the split-generation result. This flows into post-split context.
       if (stage.type === "split") {
-        await handleSplitStage(ctx, stage, result, isFinal);
-        // After consolidation, subsequent stages get freshSession=true
-        // with consolidation summary as context (SRD FR-S11).
-        previousResult = result;
+        splitResult = await handleSplitStage(ctx, stage, result, isFinal);
+        previousResult = {
+          status: "completed",
+          lastAssistantMessage: splitResult.consolidationSummary,
+          planMarkdown: null,
+        };
         continue;
       }
 
       // ── 4. Review gate (standard stages) ────────────────────────────
       // SAD §5.3.1: reviewRequired stages suspend for human review.
+      // Fix #2: Comments are now embedded directly in the stage prompt by
+      // buildStagePrompt — no separate injectComments step.
       if (stage.reviewRequired) {
         result = await handleReviewGate(ctx, stage, result);
+        if (result.status === "failed") {
+          await updateRunStatus(ctx.runId, "failed");
+          await stopSession(ctx.runId);
+          return;
+        }
       }
 
       // ── 5. Finalization (last stage approval) ───────────────────────
@@ -144,6 +194,7 @@ export const runWorkflowPipeline = defineWorkflow(
       }
 
       previousResult = result;
+      splitResult = null;
     }
 
     // ── 6. Terminal state ───────────────────────────────────────────────
@@ -156,15 +207,17 @@ export const runWorkflowPipeline = defineWorkflow(
 
 /**
  * Suspends the workflow via stageFailedHook until user decides (SAD §5.3.2).
- * Returns a new StageResult on retry success, or the original failure on
- * cancel. Returns null (typed as StageResult) for skip.
+ *
+ * Fix #1: Returns FailureDecisionResult — a StageResult extended with an
+ * explicit action='skip' field. The main loop checks `decision.action`
+ * instead of the old broken `result === null as any` sentinel.
  */
 async function handleStageFailure(
   ctx: PipelineContext,
   stage: WorkflowStage,
   failedResult: StageResult,
   stageIndex: number,
-): Promise<StageResult> {
+): Promise<FailureDecisionResult> {
   await updateRunStatus(ctx.runId, "stage_failed");
 
   const hookToken = `failed:${ctx.runId}:${stage.name}`;
@@ -201,9 +254,14 @@ async function handleStageFailure(
     }
 
     case "skip":
-      // Mark the stage as skipped in DB; return a sentinel value.
+      // Fix #1: Return explicit skip action for the main loop to check.
       await markStageSkipped(ctx.runId, stage.name);
-      return { status: "completed", lastAssistantMessage: null, planMarkdown: null } as any;
+      return {
+        status: "completed",
+        lastAssistantMessage: null,
+        planMarkdown: null,
+        action: "skip",
+      };
 
     case "cancel":
       return failedResult; // Caller checks status === 'failed' and terminates
@@ -247,14 +305,11 @@ async function handleReviewGate(
       return currentResult;
     }
 
-    // ── request_changes: inject comments, re-execute same stage ─────
-    // SAD §5.4: comments bundled as markdown, sent via sessionManager.continue()
-    await injectComments({
-      runId: ctx.runId,
-      reviewId: review.id,
-      comments: decision.comments,
-    });
-
+    // ── request_changes: comments embedded in next stage prompt ────────
+    // Fix #2: No separate injectComments step. Review comments are bundled
+    // directly into the stage prompt by buildStagePrompt (single ACP message,
+    // not two). This avoids the double-send where the agent would receive
+    // comments as one message and then a continuation prompt as another.
     round += 1;
 
     currentResult = await executeStage({
@@ -281,14 +336,26 @@ async function handleReviewGate(
 
 /**
  * Full split lifecycle: extract proposals → hook → launch children →
- * wait → consolidate → review (SAD §5.3.3–5.3.5, SRD §2.5).
+ * wait → consolidate (merge only) → review → on approve: ff_parent + cleanup.
+ *
+ * Fix #5: Consolidation is split into two steps:
+ *   (a) consolidate — merges child branches into consolidation branch
+ *   (b) consolidateFinish — ff_parent + cleanup, called ONLY after review approval
+ * This ensures the user reviews the consolidated diff BEFORE the parent
+ * worktree is modified.
+ *
+ * Fix #10: Returns SplitResult (consolidation summary) instead of void,
+ * so the main loop can use it as post-split freshSession context.
+ *
+ * Fix #14: Passes consolidation summary (child list + merged files) when
+ * creating the consolidation review so it has meaningful content.
  */
 async function handleSplitStage(
   ctx: PipelineContext,
   stage: WorkflowStage,
   splitResult: StageResult,
   isFinal: boolean,
-): Promise<void> {
+): Promise<SplitResult> {
   // ── 1. Extract proposals from agent output ──────────────────────────
   const proposalRecords = await extractProposals({
     runId: ctx.runId,
@@ -320,35 +387,49 @@ async function handleSplitStage(
   await updateRunStatus(ctx.runId, "waiting_for_children");
 
   // ── 4. Wait for all children to reach terminal state ────────────────
-  // Children are independent workflow runs started via start().
-  // We poll until all are done, or suspend if mixed results (SAD §5.3.4).
   await waitForChildren(ctx, groupId, childRunIds);
 
-  // ── 5. Consolidation: merge child branches ──────────────────────────
-  // SAD §5.5.3: journaled merge with conflict handling.
+  // ── 5. Consolidation phase 1: merge child branches ──────────────────
+  // Fix #5: consolidate() now ONLY performs snapshot_parent + merge_children.
+  // It does NOT ff_parent or cleanup — those happen after review approval.
   await updateRunStatus(ctx.runId, "running");
 
-  const consolidationResult = await consolidate({
+  const consolidationMerge = await consolidate({
     parentRunId: ctx.runId,
     parallelGroupId: groupId,
   });
 
-  if (consolidationResult.conflict) {
-    await handleConsolidationConflict(ctx, groupId, consolidationResult);
+  if (consolidationMerge.conflict) {
+    await handleConsolidationConflict(ctx, groupId, consolidationMerge);
   }
 
   // ── 6. Consolidation review (SAD §5.3.5) ────────────────────────────
+  // Fix #14: Pass consolidation context (child list + merge summary) so
+  // the review has meaningful content beyond just the raw diff.
+  const childTitles = await getChildTitles(childRunIds);
+  const consolidationContext = [
+    `Consolidated ${childTitles.length} child workflow branches:`,
+    ...childTitles.map((t, i) => `  ${i + 1}. ${t}`),
+    consolidationMerge.mergedFiles
+      ? `\nFiles modified: ${consolidationMerge.mergedFiles}`
+      : "",
+  ].join("\n");
+
   const consReview = await createReview({
     runId: ctx.runId,
     stageName: null as any, // consolidation reviews have NULL stageName
     round: 1,
     type: "consolidation",
-    lastAssistantMessage: null,
+    lastAssistantMessage: consolidationContext,
     planMarkdown: null,
   });
 
   await updateRunStatus(ctx.runId, "awaiting_review");
 
+  // Fix #11: Consolidation reviews only support 'approve'. Request-changes
+  // is not supported because there is no single agent conversation to send
+  // comments into — each child had its own session. Users should fix issues
+  // via child reruns, or cancel and re-split.
   const consDecision = await reviewDecisionHook.create({
     token: `review:${consReview.id}`,
     data: {
@@ -359,17 +440,41 @@ async function handleSplitStage(
   });
 
   if (consDecision.action !== "approve") {
-    // SAD §5.3.5: request_changes not supported for consolidation reviews.
-    // User should fix via child reruns. Cancellation path:
+    // Guard: reject request_changes for consolidation reviews.
+    // SAD §5.3.5: user should fix via child reruns.
     await updateRunStatus(ctx.runId, "cancelled");
     await stopSession(ctx.runId);
-    return;
+    throw new Error(
+      "request_changes is not supported for consolidation reviews. " +
+      "Cancel and re-run failed children, or start a new split."
+    );
   }
 
-  // ── 7. Finalize if this was the last stage ──────────────────────────
+  // ── 7. Consolidation phase 2: ff_parent + cleanup (ONLY after approval) ─
+  // Fix #5: This is a separate step that runs AFTER the review hook resumes.
+  await consolidateFinish({
+    parentRunId: ctx.runId,
+    parallelGroupId: groupId,
+  });
+
+  // ── 8. Build consolidation summary for post-split context ───────────
+  // Fix #6, #10: The consolidation summary flows into the next stage's
+  // freshSession context. It's persisted in the review record (aiSummary)
+  // so replay can recover it from durable data.
+  const consolidationSummary = [
+    consReview.aiSummary ?? "Consolidation completed.",
+    `\nMerged children: ${childTitles.join(", ")}`,
+  ].join("\n");
+
+  // ── 9. Finalize if this was the last stage ──────────────────────────
   if (isFinal) {
     await handleFinalization(ctx);
   }
+
+  return {
+    consolidationSummary,
+    mergedDiffStats: consolidationMerge.mergedFiles ?? null,
+  };
 }
 
 // --- Parallel completion sub-flow ---------------------------------------- //
@@ -391,8 +496,9 @@ async function waitForChildren(
     );
 
     if (!allTerminal) {
-      // Not all done yet. Sleep and re-check. The "use workflow" runtime
-      // persists state at each sleep call, making this crash-safe.
+      // Fix #9: sleep() is imported from 'workflow' — a durable primitive
+      // that persists state before sleeping. On daemon crash + restart,
+      // the workflow resumes from the sleep point, not from the beginning.
       await sleep(5_000);
       continue;
     }
@@ -442,12 +548,15 @@ async function waitForChildren(
 async function handleConsolidationConflict(
   ctx: PipelineContext,
   groupId: string,
-  consolidationResult: { conflict: boolean; conflictChildId?: string },
+  consolidationResult: { conflict: boolean; conflictChildId?: string; mergedFiles?: string },
 ): Promise<void> {
   await updateRunStatus(ctx.runId, "awaiting_conflict_resolution");
 
+  // Fix #13: Include operation type and timestamp in hook token to avoid
+  // collisions when the same workflow encounters multiple conflicts
+  // (e.g. consolidation conflict → retry → finalization conflict).
   const decision = await conflictResolutionHook.create({
-    token: `conflict:${ctx.runId}`,
+    token: `conflict:${ctx.runId}:consolidate:${Date.now()}`,
     data: {
       runId: ctx.runId,
       groupId,
@@ -491,8 +600,9 @@ async function handleFinalization(ctx: PipelineContext): Promise<void> {
     // SAD §5.3.6: suspend for user-driven conflict resolution
     await updateRunStatus(ctx.runId, "awaiting_conflict_resolution");
 
+    // Fix #13: Include operation type and timestamp in hook token.
     const decision = await conflictResolutionHook.create({
-      token: `conflict:${ctx.runId}`,
+      token: `conflict:${ctx.runId}:finalize:${Date.now()}`,
       data: {
         runId: ctx.runId,
         groupId: null,
@@ -607,11 +717,34 @@ async function getChildStatusMap(
 }
 
 async function retryChildRun(childRunId: string): Promise<void> {
-  // Reset the child run to pending, re-trigger its workflow pipeline.
+  // Fix #15: Clean up the existing child worktree before restarting.
+  // The child's sessionManager.create() will provision a fresh worktree
+  // branched from the parent's snapshot commit (stored on the run record).
+  const childRun = await db.query.workflowRuns.findFirst({
+    where: eq(workflowRuns.id, childRunId),
+    columns: { worktreePath: true, branch: true },
+    with: { project: { columns: { localPath: true } } },
+  });
+
+  if (childRun?.worktreePath) {
+    const { worktreeService } = await import("../services/worktree");
+    try {
+      await worktreeService.withRepoLock(childRun.project.localPath, async () => {
+        await worktreeService.remove(childRun.worktreePath!);
+        if (childRun.branch) {
+          await worktreeService.deleteBranch(childRun.project.localPath, childRun.branch);
+        }
+      });
+    } catch {
+      // Best-effort — worktree may already be gone
+    }
+  }
+
+  // Reset the child run to pending, clear worktree refs, re-trigger pipeline.
   const { start } = await import("workflow/api");
   await db
     .update(workflowRuns)
-    .set({ status: "pending" })
+    .set({ status: "pending", worktreePath: null, sandboxId: null })
     .where(eq(workflowRuns.id, childRunId));
   await start(runWorkflowPipeline, [{ runId: childRunId }]);
 }
@@ -631,8 +764,16 @@ async function cancelAllChildren(childRunIds: string[]): Promise<void> {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// sleep() is imported from 'workflow' at the top of this file (Fix #9).
+// Do NOT define a local sleep using setTimeout — the workflow runtime's
+// sleep is a durable primitive that persists state at each call.
+
+async function getChildTitles(childRunIds: string[]): Promise<string[]> {
+  const runs = await db.query.workflowRuns.findMany({
+    where: (wr, { inArray }) => inArray(wr.id, childRunIds),
+    columns: { title: true, description: true },
+  });
+  return runs.map((r) => r.title ?? r.description ?? "Untitled child");
 }
 ```
 
@@ -805,7 +946,7 @@ Sends a prompt into the ACP session and awaits agent completion. Manages session
 "use step";
 
 import { db } from "../../db";
-import { stageExecutions, workflowRuns, runMessages } from "../../db/schema";
+import { stageExecutions, workflowRuns, runMessages, reviews } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { sessionManager } from "../../services/session-manager";
 import { buildStagePrompt } from "../../services/prompt-builder";
@@ -856,6 +997,54 @@ export async function executeStage(input: ExecuteStageInput): Promise<ExecuteSta
       lastAssistantMessage: await getLastAssistantMessage(runId, stage.name, round),
       planMarkdown: null,
     };
+  }
+
+  // Fix #8: If a stageExecution exists with status='running', we are
+  // resuming after a daemon crash that happened mid-execution. Skip
+  // provisioning and prompt-sending — just re-attach to the ACP session
+  // (if still alive) and await completion.
+  if (existing?.status === "running") {
+    log.info("Stage already running, skipping to awaitCompletion (resume)");
+    try {
+      const result = await sessionManager.awaitCompletion(runId);
+
+      await db
+        .update(stageExecutions)
+        .set({
+          status: result.success ? "completed" : "failed",
+          completedAt: new Date().toISOString(),
+          failureReason: result.error ?? null,
+          usageStats: result.usage ? JSON.stringify(result.usage) : null,
+        })
+        .where(eq(stageExecutions.id, existing.id));
+
+      let planMarkdown: string | null = null;
+      try { planMarkdown = await sessionManager.readFile(runId, "plan.md"); } catch {}
+
+      return {
+        status: result.success ? "completed" : "failed",
+        lastAssistantMessage: await getLastAssistantMessage(runId, stage.name, round),
+        planMarkdown,
+        error: result.error,
+      };
+    } catch {
+      // Session no longer alive (daemon restarted) — mark failed
+      await db
+        .update(stageExecutions)
+        .set({
+          status: "failed",
+          completedAt: new Date().toISOString(),
+          failureReason: "daemon_restart",
+        })
+        .where(eq(stageExecutions.id, existing.id));
+
+      return {
+        status: "failed",
+        lastAssistantMessage: null,
+        planMarkdown: null,
+        error: "daemon_restart: stage was running when daemon stopped",
+      };
+    }
   }
 
   if (existing?.status === "failed") {
@@ -1048,10 +1237,14 @@ async function buildFreshSessionContext(
     contextParts.push(`## plan.md\n\n${previousResult.planMarkdown}`);
   }
 
-  // Latest approved review summary
+  // Fix #7: Query reviews table directly with correct column reference and
+  // filter to approved reviews only. This ensures context is rebuilt from
+  // durable data (DB records) — not from in-memory previousResult which
+  // may be lost on daemon restart.
   const lastReview = await db.query.reviews.findFirst({
     where: and(
-      eq(workflowRuns.id, runId), // joined via relation
+      eq(reviews.workflowRunId, runId),
+      eq(reviews.status, "approved"),
     ),
     orderBy: (r, { desc }) => [desc(r.createdAt)],
     columns: { aiSummary: true },
@@ -1157,108 +1350,142 @@ export async function createReview(input: CreateReviewInput): Promise<CreateRevi
 }
 ```
 
-### 3.3 `inject-comments.ts`
+### 3.3 `consolidate-finish.ts`
 
-Bundles review comments into a markdown user message and sends it into the existing ACP session (SAD §5.3.1, SRD FR-R7).
+Performs the post-review consolidation phases: fast-forward parent worktree to the consolidation branch and clean up child worktrees/branches. Called ONLY after the consolidation review hook resumes with `approve` (Fix #5, SAD §5.3.5, §5.5.3).
+
+> **Note:** The former `inject-comments.ts` step was removed (Fix #2). Review comments
+> are now embedded directly in the stage prompt by `buildStagePrompt()` — a single ACP
+> message instead of a separate inject + continuation double-send.
 
 ```typescript
-// workflows/steps/inject-comments.ts
+// workflows/steps/consolidate-finish.ts
 "use step";
 
 import { db } from "../../db";
-import { runMessages, stageExecutions, reviews } from "../../db/schema";
-import { eq } from "drizzle-orm";
-import { sessionManager } from "../../services/session-manager";
+import { gitOperations, workflowRuns, parallelGroups } from "../../db/schema";
+import { eq, and } from "drizzle-orm";
+import { worktreeService } from "../../services/worktree";
 import { logger } from "../../lib/logger";
-import type { ReviewComment } from "../hooks";
 
-interface InjectCommentsInput {
-  runId: string;
-  reviewId: string;
-  comments: ReviewComment[];
+interface ConsolidateFinishInput {
+  parentRunId: string;
+  parallelGroupId: string;
 }
 
-export async function injectComments(input: InjectCommentsInput): Promise<void> {
-  const { runId, reviewId, comments } = input;
-  const log = logger.child({ runId, reviewId });
+/**
+ * Fix #5: This step is the second half of the consolidation flow.
+ * consolidate() merges child branches and stops at phase='merged'.
+ * This step resumes from 'merged' and performs ff_parent + cleanup.
+ *
+ * It is called ONLY after the consolidation review hook resumes with
+ * 'approve'. This ensures the parent worktree is not modified until
+ * the user has reviewed the combined diff.
+ */
+export async function consolidateFinish(
+  input: ConsolidateFinishInput
+): Promise<void> {
+  const { parentRunId, parallelGroupId } = input;
+  const log = logger.child({ parentRunId, parallelGroupId, op: "consolidate-finish" });
 
-  if (comments.length === 0) {
-    log.warn("No comments to inject");
+  // ── Load journal — must exist and be in 'merged' phase ────────────
+  const journal = await db.query.gitOperations.findFirst({
+    where: and(
+      eq(gitOperations.workflowRunId, parentRunId),
+      eq(gitOperations.type, "consolidate"),
+    ),
+  });
+
+  if (!journal) {
+    throw new Error(`No consolidation journal found for run ${parentRunId}`);
+  }
+
+  if (journal.phase === "done") {
+    log.info("Consolidation finish already completed");
     return;
   }
 
-  // ── Build markdown message ────────────────────────────────────────
-  const message = formatCommentsAsMarkdown(comments);
-
-  // ── Send into the ACP session (same conversation) ─────────────────
-  // sessionManager.continue() serializes stdin writes via the per-run mutex
-  // (SAD §5.4, session command serialization).
-  await sessionManager.continue(runId, message);
-
-  // ── Record in runMessages (append-only, FR-W19) ───────────────────
-  const review = await db.query.reviews.findFirst({
-    where: eq(reviews.id, reviewId),
-    columns: { stageName: true, round: true },
-  });
-
-  await db.insert(runMessages).values({
-    id: crypto.randomUUID(),
-    workflowRunId: runId,
-    stageName: review?.stageName ?? "unknown",
-    round: review?.round ?? 1,
-    sessionBoundary: 0,
-    role: "user",
-    content: message,
-    isIntervention: 0,
-    metadata: JSON.stringify({ type: "review_comments", reviewId }),
-    createdAt: new Date().toISOString(),
-  });
-
-  log.info({ commentCount: comments.length }, "Review comments injected");
-}
-
-// --- Formatting ---------------------------------------------------------- //
-
-function formatCommentsAsMarkdown(comments: ReviewComment[]): string {
-  const parts: string[] = [
-    "# Review Feedback — Changes Requested\n",
-    "Please address the following review comments:\n",
-  ];
-
-  const generalComments = comments.filter((c) => !c.filePath);
-  const fileComments = comments.filter((c) => c.filePath);
-
-  if (generalComments.length > 0) {
-    parts.push("## General Comments\n");
-    for (const c of generalComments) {
-      parts.push(`- ${c.body}\n`);
-    }
+  if (journal.phase !== "merged" && journal.phase !== "ff_parent" && journal.phase !== "cleanup") {
+    throw new Error(
+      `Unexpected journal phase '${journal.phase}' for consolidate-finish. ` +
+      `Expected 'merged', 'ff_parent', or 'cleanup'.`
+    );
   }
 
-  if (fileComments.length > 0) {
-    // Group by file
-    const byFile = new Map<string, ReviewComment[]>();
-    for (const c of fileComments) {
-      const existing = byFile.get(c.filePath!) ?? [];
-      existing.push(c);
-      byFile.set(c.filePath!, existing);
-    }
+  const parentRun = await db.query.workflowRuns.findFirst({
+    where: eq(workflowRuns.id, parentRunId),
+    columns: { worktreePath: true, branch: true },
+    with: { project: { columns: { localPath: true } } },
+  });
 
-    parts.push("## File-Specific Comments\n");
-    for (const [filePath, fileComms] of byFile) {
-      parts.push(`### \`${filePath}\`\n`);
-      for (const c of fileComms) {
-        const lineRef = c.lineNumber ? ` (line ${c.lineNumber})` : "";
-        parts.push(`- ${lineRef}${lineRef ? " " : ""}${c.body}\n`);
+  if (!parentRun?.worktreePath) {
+    throw new Error(`Parent run ${parentRunId} has no worktree`);
+  }
+
+  const projectPath = parentRun.project.localPath;
+  const metadata = JSON.parse(journal.metadata ?? "{}");
+
+  // ── Phase: ff_parent ──────────────────────────────────────────────
+  if (journal.phase === "merged" || journal.phase === "ff_parent") {
+    await worktreeService.withRepoLock(projectPath, async () => {
+      await worktreeService.fastForward(
+        parentRun.worktreePath!,
+        parentRun.branch!,
+        metadata.consolidationBranch,
+      );
+    });
+
+    await advancePhase(journal.id, "cleanup", metadata);
+  }
+
+  // ── Phase: cleanup ────────────────────────────────────────────────
+  if (journal.phase === "cleanup") {
+    // Remove child worktrees and branches
+    for (const childRunId of metadata.mergedChildren ?? []) {
+      const childRun = await db.query.workflowRuns.findFirst({
+        where: eq(workflowRuns.id, childRunId),
+        columns: { worktreePath: true, branch: true },
+      });
+      if (childRun?.worktreePath) {
+        await worktreeService.withRepoLock(projectPath, async () => {
+          await worktreeService.remove(childRun.worktreePath!);
+          if (childRun.branch) {
+            await worktreeService.deleteBranch(projectPath, childRun.branch);
+          }
+        });
       }
     }
+
+    // Clean up consolidation branch
+    await worktreeService.withRepoLock(projectPath, async () => {
+      await worktreeService.deleteBranch(projectPath, metadata.consolidationBranch);
+    });
+
+    await advancePhase(journal.id, "done", metadata);
+
+    // Update parallel group status
+    await db
+      .update(parallelGroups)
+      .set({ status: "completed", completedAt: new Date().toISOString() })
+      .where(eq(parallelGroups.id, parallelGroupId));
   }
 
-  parts.push(
-    "\nPlease make the requested changes and let me know when you're done."
-  );
+  log.info("Consolidation finish completed");
+}
 
-  return parts.join("\n");
+async function advancePhase(
+  journalId: string,
+  phase: string,
+  metadata: any,
+): Promise<void> {
+  await db
+    .update(gitOperations)
+    .set({
+      phase,
+      metadata: JSON.stringify(metadata),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(gitOperations.id, journalId));
 }
 ```
 
@@ -1298,6 +1525,10 @@ export async function extractProposals(
   const log = logger.child({ runId, stageName });
 
   // ── Idempotency: check if proposals already exist for this stage ──
+  // Fix #3: Check both existence AND completeness. We store the expected
+  // count before inserting rows, and only consider the step complete when
+  // the actual row count matches the expected count. This handles crashes
+  // mid-insertion where only some rows were created.
   const existing = await db.query.proposals.findMany({
     where: and(
       eq(proposals.workflowRunId, runId),
@@ -1305,22 +1536,29 @@ export async function extractProposals(
     ),
   });
 
-  if (existing.length > 0) {
+  // Parse first to determine expected count (deterministic — same input
+  // always produces the same parsed output).
+  const parsed = await proposalService.parseProposals(agentOutput);
+
+  if (existing.length > 0 && existing.length === parsed.length) {
     log.info({ count: existing.length }, "Proposals already extracted, returning cached");
     return existing.map(mapToRecord);
   }
 
-  // ── Parse agent output ────────────────────────────────────────────
-  // The proposalService uses a structured extraction approach:
-  // 1. Try parsing JSON blocks (```json ... ```) from agent output
-  // 2. Fallback: use LLM to extract proposals from freeform text
-  const parsed = await proposalService.parseProposals(agentOutput);
+  // If we have a partial set (crash during previous insertion), we need
+  // to create only the missing proposals. Build a set of already-persisted
+  // titles for deduplication (titles are unique per run+stage).
+  const existingTitles = new Set(existing.map((e) => e.title));
 
-  // ── Persist each proposal ─────────────────────────────────────────
-  const records: ProposalRecord[] = [];
+  // ── Persist each proposal (skip already-created ones) ─────────────
+  const records: ProposalRecord[] = existing.map(mapToRecord);
 
   for (let i = 0; i < parsed.length; i++) {
     const p = parsed[i];
+    if (existingTitles.has(p.title)) {
+      continue; // Already persisted in a prior partial run
+    }
+
     const id = crypto.randomUUID();
 
     await db.insert(proposals).values({
@@ -1365,7 +1603,7 @@ function mapToRecord(row: any): ProposalRecord {
 
 ### 3.5 `launch-children.ts`
 
-Creates a parallel group and launches independent child workflow runs, each with its own sandbox + worktree branched off the parent's worktree HEAD (SAD §5.5.2, SRD FR-S4–S6).
+Creates a parallel group and launches independent child workflow runs. Each child gets its own sandbox + worktree; worktree creation is deferred to `sessionManager.create()` which uses the `parentWorktreeCommit` stored on the child run record to branch from the correct snapshot (Fix #4, SAD §5.5.2, SRD FR-S4–S6).
 
 ```typescript
 // workflows/steps/launch-children.ts
@@ -1378,7 +1616,7 @@ import {
   workflowRuns,
   workflowTemplates,
 } from "../../db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { start } from "workflow/api";
 import { runWorkflowPipeline } from "../pipeline";
 import { worktreeService } from "../../services/worktree";
@@ -1405,24 +1643,62 @@ export async function launchChildren(
   const log = logger.child({ parentRunId });
 
   // ── Idempotency: check if parallel group already exists ───────────
+  // Fix #3: On replay, we check which children were already created and
+  // only launch the missing ones (not all-or-nothing).
   const existingGroup = await db.query.parallelGroups.findFirst({
     where: eq(parallelGroups.sourceWorkflowRunId, parentRunId),
   });
 
   if (existingGroup) {
-    // Group already created — find child run IDs
+    // Group exists — check if ALL expected children were created.
     const children = await db.query.workflowRuns.findMany({
       where: eq(workflowRuns.parallelGroupId, existingGroup.id),
       columns: { id: true },
     });
-    log.info({ groupId: existingGroup.id }, "Parallel group already exists");
-    return {
-      groupId: existingGroup.id,
-      childRunIds: children.map((c) => c.id),
-    };
+
+    const existingChildProposals = await db.query.proposals.findMany({
+      where: and(
+        eq(proposals.parallelGroupId, existingGroup.id),
+        // Only count proposals that have a launched child
+        // (launchedWorkflowRunId is not null)
+      ),
+      columns: { id: true, launchedWorkflowRunId: true },
+    });
+
+    const launchedProposalIds = new Set(
+      existingChildProposals
+        .filter((p) => p.launchedWorkflowRunId != null)
+        .map((p) => p.id)
+    );
+
+    // Check if all selected proposals have been launched
+    const allLaunched = selectedProposalIds.every((id) => launchedProposalIds.has(id));
+
+    if (allLaunched) {
+      log.info({ groupId: existingGroup.id }, "All children already launched");
+      return {
+        groupId: existingGroup.id,
+        childRunIds: children.map((c) => c.id),
+      };
+    }
+
+    // Partial creation — fall through to create missing children
+    log.info("Partial children created, resuming launch for missing proposals");
+    return await launchMissingChildren(
+      existingGroup.id,
+      parentRunId,
+      selectedProposalIds,
+      launchedProposalIds,
+      projectId,
+      agentDefinitionId,
+      credentialSetId,
+      log,
+    );
   }
 
   // ── Snapshot parent worktree state (SAD §5.5.2) ───────────────────
+  // Fix #12: Wrap the snapshot commit in withRepoLock to prevent concurrent
+  // git write operations on the same repository.
   const parentRun = await db.query.workflowRuns.findFirst({
     where: eq(workflowRuns.id, parentRunId),
     columns: { worktreePath: true, branch: true },
@@ -1433,7 +1709,13 @@ export async function launchChildren(
     throw new Error(`Parent run ${parentRunId} has no worktree`);
   }
 
-  await worktreeService.commitAll(parentRun.worktreePath, "Snapshot before split");
+  const snapshotCommit = await worktreeService.withRepoLock(
+    parentRun.project.localPath,
+    async () => {
+      await worktreeService.commitAll(parentRun.worktreePath!, "Snapshot before split");
+      return worktreeService.getHeadCommit(parentRun.worktreePath!);
+    },
+  );
 
   // ── Create parallel group ─────────────────────────────────────────
   const groupId = crypto.randomUUID();
@@ -1444,22 +1726,80 @@ export async function launchChildren(
     createdAt: new Date().toISOString(),
   });
 
-  // ── Load selected proposals ───────────────────────────────────────
+  // ── Launch children ───────────────────────────────────────────────
+  return await launchMissingChildren(
+    groupId,
+    parentRunId,
+    selectedProposalIds,
+    new Set(), // no existing children
+    projectId,
+    agentDefinitionId,
+    credentialSetId,
+    log,
+    snapshotCommit,
+    parentRun.branch,
+  );
+}
+
+/**
+ * Creates child workflow run records and starts their pipelines.
+ *
+ * Fix #3: Only creates children for proposals not already launched (supports
+ * replay after partial creation).
+ *
+ * Fix #4: Does NOT create child worktrees here. Instead, stores
+ * `parentWorktreeCommit` on the child run record. The child's
+ * `sessionManager.create()` will use this commit to branch from when it
+ * provisions the child's sandbox + worktree. This avoids worktree creation
+ * here that conflicts with session-manager's responsibilities.
+ */
+async function launchMissingChildren(
+  groupId: string,
+  parentRunId: string,
+  selectedProposalIds: string[],
+  alreadyLaunchedProposalIds: Set<string>,
+  projectId: string,
+  agentDefinitionId: string,
+  credentialSetId: string | null,
+  log: any,
+  snapshotCommit?: string,
+  parentBranch?: string | null,
+): Promise<LaunchChildrenOutput> {
+  // Resolve snapshot commit if not provided (replay case)
+  if (!snapshotCommit) {
+    const parentRun = await db.query.workflowRuns.findFirst({
+      where: eq(workflowRuns.id, parentRunId),
+      columns: { worktreePath: true, branch: true },
+      with: { project: { columns: { localPath: true } } },
+    });
+    snapshotCommit = await worktreeService.getHeadCommit(parentRun!.worktreePath!);
+    parentBranch = parentRun!.branch;
+  }
+
   const selectedProposals = await db.query.proposals.findMany({
     where: inArray(proposals.id, selectedProposalIds),
     orderBy: (p, { asc }) => [asc(p.sortOrder)],
   });
 
-  // ── Resolve default template for children ─────────────────────────
   const defaultTemplate = await db.query.workflowTemplates.findFirst({
     where: eq(workflowTemplates.name, "Quick Run"),
     columns: { id: true },
   });
 
-  // ── Launch each child ─────────────────────────────────────────────
   const childRunIds: string[] = [];
 
+  // Collect already-created child IDs
+  const existingChildren = await db.query.workflowRuns.findMany({
+    where: eq(workflowRuns.parallelGroupId, groupId),
+    columns: { id: true },
+  });
+  childRunIds.push(...existingChildren.map((c) => c.id));
+
   for (const proposal of selectedProposals) {
+    if (alreadyLaunchedProposalIds.has(proposal.id)) {
+      continue; // Already launched in a prior attempt
+    }
+
     const templateId = proposal.workflowTemplateOverride ?? defaultTemplate?.id;
     if (!templateId) {
       throw new Error("No workflow template available for child run");
@@ -1471,14 +1811,8 @@ export async function launchChildren(
       `vibe-harness/split-${proposal.id.slice(0, 8)}`,
     );
 
-    // Create child worktree branched off parent's worktree HEAD
-    const childWorktreePath = await worktreeService.createFromWorktree(
-      parentRun.project.localPath,
-      parentRun.worktreePath,
-      childBranch,
-    );
-
-    // Create child workflow run record
+    // Fix #4: Do NOT create worktree here. Store the parentWorktreeCommit
+    // so sessionManager.create() can branch from it when provisioning.
     const childRunId = crypto.randomUUID();
 
     await db.insert(workflowRuns).values({
@@ -1492,10 +1826,11 @@ export async function launchChildren(
       title: proposal.title,
       status: "pending",
       branch: childBranch,
-      worktreePath: childWorktreePath,
+      worktreePath: null, // Created by sessionManager.create()
       credentialSetId,
-      baseBranch: parentRun.branch,
-      targetBranch: parentRun.branch, // merge back into parent branch
+      baseBranch: parentBranch ?? null,
+      targetBranch: parentBranch ?? null, // merge back into parent branch
+      parentWorktreeCommit: snapshotCommit, // NEW: for child worktree branching
       createdAt: new Date().toISOString(),
     });
 
@@ -1524,7 +1859,7 @@ export async function launchChildren(
 
 ### 3.6 `consolidate.ts`
 
-Merges completed child branches into a consolidation branch using the durable git operations journal (SAD §5.5.3, SRD FR-S8–S10).
+Merges completed child branches into a consolidation branch using the durable git operations journal. Fix #5: This step now ONLY performs `snapshot_parent` and `merge_children` phases — it stops at phase `'merged'` and returns. The `ff_parent` and `cleanup` phases are handled by the separate `consolidate-finish.ts` step, which runs ONLY after the consolidation review is approved (SAD §5.5.3, SRD FR-S8–S10).
 
 ```typescript
 // workflows/steps/consolidate.ts
@@ -1544,6 +1879,8 @@ interface ConsolidateInput {
 interface ConsolidateOutput {
   conflict: boolean;
   conflictChildId?: string;
+  /** Summary of merged files for the consolidation review (Fix #14). */
+  mergedFiles?: string;
 }
 
 export async function consolidate(input: ConsolidateInput): Promise<ConsolidateOutput> {
@@ -1558,8 +1895,8 @@ export async function consolidate(input: ConsolidateInput): Promise<ConsolidateO
     ),
   });
 
-  if (journal?.phase === "done") {
-    log.info("Consolidation already completed");
+  if (journal?.phase === "done" || journal?.phase === "merged") {
+    log.info("Consolidation merge already completed");
     return { conflict: false };
   }
 
@@ -1669,53 +2006,26 @@ export async function consolidate(input: ConsolidateInput): Promise<ConsolidateO
       await advanceJournalPhase(journal!.id, "merge_children", metadata);
     }
 
-    await advanceJournalPhase(journal!.id, "ff_parent", metadata);
+    // Fix #5: Advance to 'merged' phase — NOT ff_parent.
+    // The ff_parent and cleanup phases are handled by consolidate-finish.ts
+    // which runs ONLY after the consolidation review is approved.
+    await advanceJournalPhase(journal!.id, "merged", metadata);
   }
 
-  // ── Phase: ff_parent ──────────────────────────────────────────────
-  if (journal!.phase === "ff_parent") {
-    await worktreeService.withRepoLock(projectPath, async () => {
-      await worktreeService.fastForward(
-        parentRun.worktreePath!,
-        parentRun.branch!,
-        metadata.consolidationBranch,
-      );
-    });
-
-    await advanceJournalPhase(journal!.id, "cleanup", metadata);
+  // ── Collect merge summary for the consolidation review (Fix #14) ──
+  let mergedFiles: string | undefined;
+  try {
+    const diffSummary = await worktreeService.getDiffSummary(
+      parentRun.worktreePath!,
+      metadata.consolidationBranch,
+    );
+    mergedFiles = diffSummary;
+  } catch {
+    // Best-effort — diff summary is optional
   }
 
-  // ── Phase: cleanup ────────────────────────────────────────────────
-  if (journal!.phase === "cleanup") {
-    for (const childRunId of metadata.mergedChildren) {
-      const childRun = await db.query.workflowRuns.findFirst({
-        where: eq(workflowRuns.id, childRunId),
-        columns: { worktreePath: true, branch: true },
-      });
-      if (childRun?.worktreePath) {
-        await worktreeService.withRepoLock(projectPath, async () => {
-          await worktreeService.remove(childRun.worktreePath!);
-          await worktreeService.deleteBranch(projectPath, childRun.branch!);
-        });
-      }
-    }
-
-    // Clean up consolidation branch
-    await worktreeService.withRepoLock(projectPath, async () => {
-      await worktreeService.deleteBranch(projectPath, metadata.consolidationBranch);
-    });
-
-    await advanceJournalPhase(journal!.id, "done", metadata);
-
-    // Update parallel group status
-    await db
-      .update(parallelGroups)
-      .set({ status: "completed", completedAt: new Date().toISOString() })
-      .where(eq(parallelGroups.id, parallelGroupId));
-  }
-
-  log.info("Consolidation completed");
-  return { conflict: false };
+  log.info("Consolidation merge completed (awaiting review before ff_parent)");
+  return { conflict: false, mergedFiles };
 }
 
 // --- Helpers ------------------------------------------------------------- //
@@ -1964,6 +2274,14 @@ class SessionManager {
   // -------------------------------------------------------------------
   // 4.1  create(runId) — Provision sandbox + worktree + ACP session
   //      Called for the first stage of a workflow run (SAD §5.4, Stage 1).
+  //
+  //      Fix #4: If the workflowRun record has a `parentWorktreeCommit`
+  //      field (set by launch-children for split children), the worktree
+  //      is branched from that specific commit instead of the baseBranch.
+  //      This ensures child worktrees always start from the parent's
+  //      snapshot at split time, not from the repository's HEAD.
+  //      Child worktrees are NOT pre-created in launch-children — this
+  //      method is the single point of worktree creation for all runs.
   // -------------------------------------------------------------------
 
   async create(runId: string): Promise<void> {
@@ -1993,11 +2311,14 @@ class SessionManager {
     );
 
     // ── 1b. Create git worktree ─────────────────────────────────────
+    // Fix #4: If parentWorktreeCommit is set (split child), branch from
+    // that specific commit. Otherwise branch from baseBranch (normal run).
+    const branchFrom = run.parentWorktreeCommit ?? run.baseBranch ?? "main";
     const worktreePath = await worktreeService.withRepoLock(projectPath, async () => {
       return worktreeService.create(
         projectPath,
         branch,
-        run.baseBranch ?? "main",
+        branchFrom,
       );
     });
 
@@ -2301,11 +2622,12 @@ export function buildStagePrompt(input: StagePromptInput): string {
   }
 
   // ── 5.3  Request-changes with bundled comments (SAD §5.3.1) ───────
-  // This is injected by inject-comments step, not by buildStagePrompt.
-  // However, when executeStage re-runs with request_changes, the stage
-  // prompt is the continuation prompt (agent already has the comments).
+  // Fix #2: Comments are embedded directly in the prompt as a single ACP
+  // message. No separate injectComments step — this avoids a double-send
+  // where the agent would receive comments as one message and then a
+  // continuation prompt as another.
   if (requestChangesComments && requestChangesComments.length > 0) {
-    return formatRequestChangesPrompt(runDescription, stage, round);
+    return formatRequestChangesPrompt(runDescription, stage, round, requestChangesComments);
   }
 
   // ── 5.4  Retry after failure (SAD §5.3.2, FR-W14) ────────────────
@@ -2388,14 +2710,18 @@ function formatRequestChangesPrompt(
   runDescription: string,
   stage: { name: string; promptTemplate: string },
   round: number,
+  comments: ReviewComment[],
 ): string {
-  // The actual comments were already injected by inject-comments step.
-  // This prompt reminds the agent of the stage context for the new round.
+  // Fix #2: Include the actual review comments inline in the prompt.
+  // This is the ONLY message sent to the agent — no prior injectComments step.
+  const commentBlock = formatReviewComments(comments);
+
   return [
-    `## Continuation (Round ${round})`,
+    `## Review Feedback — Changes Requested (Round ${round})`,
     ``,
-    `Review comments were provided above. Please address all the feedback`,
-    `and continue working on the current stage.`,
+    `The reviewer has requested changes. Please address ALL of the following:`,
+    ``,
+    commentBlock,
     ``,
     `## Task`,
     ``,
@@ -2405,6 +2731,48 @@ function formatRequestChangesPrompt(
     ``,
     stage.promptTemplate,
   ].join("\n");
+}
+
+/**
+ * Format review comments as markdown for embedding in prompts (Fix #2).
+ * Used by formatRequestChangesPrompt — extracted as a reusable helper
+ * since the formatting logic was previously in the removed inject-comments step.
+ */
+function formatReviewComments(comments: ReviewComment[]): string {
+  const parts: string[] = [];
+
+  const generalComments = comments.filter((c) => !c.filePath);
+  const fileComments = comments.filter((c) => c.filePath);
+
+  if (generalComments.length > 0) {
+    parts.push("### General Comments\n");
+    for (const c of generalComments) {
+      parts.push(`- ${c.body}`);
+    }
+    parts.push("");
+  }
+
+  if (fileComments.length > 0) {
+    // Group by file
+    const byFile = new Map<string, ReviewComment[]>();
+    for (const c of fileComments) {
+      const existing = byFile.get(c.filePath!) ?? [];
+      existing.push(c);
+      byFile.set(c.filePath!, existing);
+    }
+
+    parts.push("### File-Specific Comments\n");
+    for (const [filePath, fileComms] of byFile) {
+      parts.push(`**\`${filePath}\`**`);
+      for (const c of fileComms) {
+        const lineRef = c.lineNumber ? ` (line ${c.lineNumber})` : "";
+        parts.push(`- ${lineRef}${lineRef ? " " : ""}${c.body}`);
+      }
+      parts.push("");
+    }
+  }
+
+  return parts.join("\n");
 }
 
 // ------------------------------------------------------------------------- //
@@ -2436,22 +2804,32 @@ function formatRequestChangesPrompt(
 | §2 Hooks | §5.3 Hook Architecture | FR-W5, FR-W14, FR-S3–S4, FR-S12, FR-R10 |
 | §3.1 execute-stage | §5.3 Stage Execution Model, §5.4 Session Continuity | FR-W4, FR-W7, FR-W8 |
 | §3.2 create-review | §5.3.1 Review Hook | FR-R1, FR-R2 |
-| §3.3 inject-comments | §5.3.1 (request_changes) | FR-R7 |
+| §3.3 consolidate-finish | §5.3.5, §5.5.3 Git Journal (post-review) | FR-S9, FR-S11, FR-S13 |
 | §3.4 extract-proposals | §5.3.3 Proposal Review Hook | FR-S1, FR-S2 |
 | §3.5 launch-children | §5.5.2 Worktree Lifecycle (split) | FR-S4, FR-S5, FR-S6 |
-| §3.6 consolidate | §5.5.3 Git Journal (consolidate) | FR-S8, FR-S9, FR-S10 |
+| §3.6 consolidate | §5.5.3 Git Journal (consolidate, merge only) | FR-S8, FR-S9, FR-S10 |
 | §3.7 finalize | §5.5.3 Git Journal (finalize) | FR-R10 |
 | §4 Session Manager | §5.4 ACP Session Continuity | FR-W7, FR-W10, FR-W17, FR-W19, FR-W21 |
-| §5 Prompt Builder | §5.3 step 4, §5.4 | FR-W8, FR-W14, FR-S5 |
+| §5 Prompt Builder | §5.3 step 4, §5.4 | FR-W8, FR-W14, FR-R7, FR-S5 |
 
 ## Appendix B: Key Design Decisions
 
 1. **Recursive failure handling.** `handleStageFailure` calls itself recursively if a retry also fails. This allows unlimited user retries without loop counters. The `"use workflow"` runtime persists hook state at each suspension, so even with 10 retries the workflow is crash-safe.
 
-2. **Consolidation does NOT merge to target.** Per SAD §5.5.3, consolidation only merges children into the parent worktree. The final `merge → targetBranch` happens in `finalize` at the very end of the pipeline.
+2. **Consolidation does NOT merge to target.** Per SAD §5.5.3, consolidation only merges children into a consolidation branch. The `ff_parent` + cleanup happen in a separate `consolidate-finish` step that runs ONLY after the consolidation review is approved (Fix #5). The final `merge → targetBranch` happens in `finalize` at the very end of the pipeline.
 
 3. **awaitCompletion does not hold the mutex.** The session mutex serializes stdin writes, but completion waiting is mutex-free. This allows user interventions (FR-W21) to be injected while the agent is running.
 
-4. **Journal-based git operations.** Both `finalize` and `consolidate` use the `gitOperations` journal table. Each phase is idempotent — on replay, it checks whether the phase was already completed before re-executing.
+4. **Journal-based git operations.** Both `finalize` and `consolidate` use the `gitOperations` journal table. Each phase is idempotent — on replay, it checks whether the phase was already completed before re-executing. Consolidation now has a `merged` phase as a durable checkpoint between merge and review (Fix #5).
 
 5. **Child workflows are full pipelines.** `launch-children` starts each child via `start(runWorkflowPipeline)` with an independent `runId`. Children run their own stages, reviews, and finalization. The parent polls their status via `waitForChildren`.
+
+6. **Single-message review comments (Fix #2).** Review comments are embedded directly in the stage prompt by `buildStagePrompt` — a single ACP user message, not a separate `injectComments` step followed by a continuation prompt. This prevents the agent from seeing two separate messages and potentially acting on the first before receiving the second.
+
+7. **Deferred child worktree creation (Fix #4).** `launch-children` does NOT create child worktrees. Instead, it stores `parentWorktreeCommit` on the child run record. The child's `sessionManager.create()` uses this commit to branch from, keeping worktree creation as a single responsibility of session-manager.
+
+8. **Explicit skip action (Fix #1).** `handleStageFailure` returns a `FailureDecisionResult` with an explicit `action: 'skip'` field. The main loop checks `decision.action === 'skip'` and `continue`s to the next stage without entering review, split, or finalize logic.
+
+9. **Post-split freshSession (Fix #6).** After a split stage's consolidation is approved, the pipeline forces `freshSession=true` for the next stage and passes the consolidation summary as context. This is tracked via the `splitResult` variable in the main loop. On replay, the context is recovered from durable data: completed stage messages + approved reviews in the DB (Fix #7).
+
+10. **Durable sleep (Fix #9).** `sleep()` is imported from the `workflow` package, not implemented locally with `setTimeout`. The workflow runtime persists state before sleeping, so daemon crashes during sleep resume correctly.

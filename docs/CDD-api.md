@@ -6,8 +6,10 @@ This document specifies every HTTP endpoint and WebSocket message for the Vibe H
 
 **Transport:** HTTP/1.1 over `localhost:<port>` (port discovered via `~/.vibe-harness/daemon.port`)
 **Content type:** `application/json` for all request/response bodies
-**Auth:** `Authorization: Bearer <token>` on every request (see §11)
-**Framework:** Hono (route registration pattern in §12)
+**Auth:** `Authorization: Bearer <token>` on every request (see §13)
+**Framework:** Hono (route registration pattern in §14)
+
+> **Authoritative types:** The TypeScript response types defined in this document are the **canonical specification**. The shared types package (`shared/types/api.ts`, as specified in CDD-schema) must be updated to match this document when discrepancies exist. This CDD-api.md is the source of truth for all request/response shapes, error codes, and WebSocket message types.
 
 ---
 
@@ -66,6 +68,8 @@ type ErrorCode =
   // Credentials
   | 'CREDENTIAL_SET_NOT_FOUND'
   | 'CREDENTIAL_ENTRY_NOT_FOUND'
+  // Worktree
+  | 'WORKTREE_NOT_AVAILABLE'
   // Conflict resolution
   | 'NO_ACTIVE_CONFLICT'
   // Prerequisites
@@ -78,7 +82,7 @@ type ErrorCode =
 |--------|------------|
 | 400 | `VALIDATION_ERROR`, `AGENT_CAPABILITY_MISMATCH`, `INVALID_BASE_BRANCH`, `INVALID_GIT_REPO`, `NO_PROPOSALS_SELECTED` |
 | 401 | `UNAUTHORIZED` |
-| 404 | `*_NOT_FOUND`, `NO_ACTIVE_CONFLICT`, `PATH_NOT_FOUND` |
+| 404 | `*_NOT_FOUND`, `NO_ACTIVE_CONFLICT`, `PATH_NOT_FOUND`, `WORKTREE_NOT_AVAILABLE` |
 | 409 | `CONFLICT`, `RUN_ALREADY_RUNNING`, `RUN_NOT_TERMINAL`, `RUN_NOT_RUNNING`, `RUN_NOT_FAILED`, `REVIEW_ALREADY_RESOLVED`, `REVIEW_NOT_PENDING`, `PROPOSAL_ALREADY_LAUNCHED`, `PARALLEL_GROUP_NOT_READY`, `CONSOLIDATION_CONFLICT`, `WORKFLOW_TEMPLATE_IN_USE`, `AGENT_IN_USE` |
 | 500 | `INTERNAL_ERROR`, `SANDBOX_PROVISION_FAILED` |
 | 503 | `PREREQUISITE_FAILED` |
@@ -381,7 +385,7 @@ interface DiffStats {
 
 **Error cases:**
 - `404 RUN_NOT_FOUND`
-- `409 RUN_NOT_RUNNING` — no worktree available (run pending or cleaned up)
+- `404 WORKTREE_NOT_AVAILABLE` — no worktree available (run is pending, already cleaned up, or never provisioned)
 
 ---
 
@@ -604,7 +608,9 @@ type CreateWorkflowBody = z.infer<typeof CreateWorkflowBody>;
 interface CreateWorkflowResponse {
   id: string;
   name: string;
+  description: string | null;
   stages: WorkflowStage[];
+  isBuiltIn: false;           // user-created templates are never built-in
   createdAt: string;
 }
 ```
@@ -921,7 +927,53 @@ interface Proposal {
 
 ---
 
-### 6.2 GET /api/proposals/:id
+### 6.2 POST /api/proposals
+
+**SRD refs:** FR-S3
+**Description:** Manually add a proposal to a workflow run's split stage. Used when the user wants to add sub-tasks beyond what the agent generated.
+
+**Request body:**
+
+```typescript
+const CreateProposalBody = z.object({
+  workflowRunId: z.string().uuid(),
+  stageName: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().min(1).max(10000),
+  affectedFiles: z.array(z.string()).optional().default([]),
+  dependsOn: z.array(z.string().uuid()).optional().default([]),
+  workflowTemplateOverride: z.string().uuid().nullable().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+type CreateProposalBody = z.infer<typeof CreateProposalBody>;
+```
+
+**Response:** `201 Created`
+
+```typescript
+interface CreateProposalResponse {
+  id: string;
+  workflowRunId: string;
+  stageName: string;
+  title: string;
+  status: 'proposed';
+  sortOrder: number;
+  createdAt: string;
+}
+```
+
+**Error cases:**
+- `400 VALIDATION_ERROR` — invalid body fields
+- `404 RUN_NOT_FOUND` — workflowRunId doesn't exist
+- `409 CONFLICT` — run is not in `awaiting_proposals` state (proposals can only be added while the proposal gate is active)
+
+**Side effects:**
+1. Creates `proposals` record with status `proposed`
+2. If `sortOrder` not provided, appends after the last existing proposal
+
+---
+
+### 6.3 GET /api/proposals/:id
 
 **SRD refs:** FR-S3
 **Description:** Get a single proposal.
@@ -933,7 +985,7 @@ interface Proposal {
 
 ---
 
-### 6.3 PUT /api/proposals/:id
+### 6.4 PUT /api/proposals/:id
 
 **SRD refs:** FR-S3
 **Description:** Edit a proposal before launch. Only editable in `proposed` status.
@@ -960,7 +1012,7 @@ type UpdateProposalBody = z.infer<typeof UpdateProposalBody>;
 
 ---
 
-### 6.4 DELETE /api/proposals/:id
+### 6.5 DELETE /api/proposals/:id
 
 **SRD refs:** FR-S3
 **Description:** Discard a proposal (set status to `discarded`). Only in `proposed` status.
@@ -976,7 +1028,7 @@ type UpdateProposalBody = z.infer<typeof UpdateProposalBody>;
 
 ---
 
-### 6.5 POST /api/proposals/launch
+### 6.6 POST /api/proposals/launch
 
 **SRD refs:** FR-S4, FR-S5, FR-S6
 **Description:** Launch selected proposals as parallel child workflow runs.
@@ -1207,7 +1259,7 @@ interface Project {
 ### 8.2 POST /api/projects
 
 **SRD refs:** FR-P1, FR-P7
-**Description:** Register a local git repository as a project.
+**Description:** Register a local git repository as a project. The `gitUrl` field is auto-extracted from `git remote get-url origin` and is not accepted in the request body.
 
 **Request body:**
 
@@ -1352,7 +1404,19 @@ interface AgentDefinition {
 
 ---
 
-### 9.2 POST /api/agents
+### 9.2 GET /api/agents/:id
+
+**SRD refs:** FR-A2
+**Description:** Get a single agent definition by ID.
+
+**Response:** `200 OK` — `AgentDefinition` object
+
+**Error cases:**
+- `404 AGENT_NOT_FOUND`
+
+---
+
+### 9.3 POST /api/agents
 
 **SRD refs:** FR-A1
 **Description:** Create a new agent definition.
@@ -1374,14 +1438,14 @@ const CreateAgentBody = z.object({
 type CreateAgentBody = z.infer<typeof CreateAgentBody>;
 ```
 
-**Response:** `201 Created` — `AgentDefinition` object (without `isBuiltIn`)
+**Response:** `201 Created` — `AgentDefinition` object (with `isBuiltIn: false`)
 
 **Error cases:**
 - `400 VALIDATION_ERROR`
 
 ---
 
-### 9.3 PUT /api/agents/:id
+### 9.4 PUT /api/agents/:id
 
 **SRD refs:** FR-A2
 **Description:** Update an agent definition. Built-in definitions cannot be modified.
@@ -1396,7 +1460,7 @@ type CreateAgentBody = z.infer<typeof CreateAgentBody>;
 
 ---
 
-### 9.4 DELETE /api/agents/:id
+### 9.5 DELETE /api/agents/:id
 
 **SRD refs:** FR-A2
 **Description:** Delete an agent definition.
@@ -1518,7 +1582,41 @@ type CredentialEntryType =
 
 ---
 
-### 10.4 DELETE /api/credentials/:id
+### 10.4 PATCH /api/credentials/:id
+
+**SRD refs:** FR-C1
+**Description:** Update a credential set's name or description.
+
+**Request body:**
+
+```typescript
+const UpdateCredentialSetBody = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().max(500).nullable().optional(),
+});
+type UpdateCredentialSetBody = z.infer<typeof UpdateCredentialSetBody>;
+```
+
+**Response:** `200 OK`
+
+```typescript
+interface UpdateCredentialSetResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  projectId: string | null;
+  entryCount: number;
+  createdAt: string;
+}
+```
+
+**Error cases:**
+- `404 CREDENTIAL_SET_NOT_FOUND`
+- `400 VALIDATION_ERROR`
+
+---
+
+### 10.5 DELETE /api/credentials/:id
 
 **SRD refs:** FR-C1
 **Description:** Delete a credential set and all its entries.
@@ -1535,7 +1633,7 @@ type CredentialEntryType =
 
 ---
 
-### 10.5 POST /api/credentials/:id/entries
+### 10.6 POST /api/credentials/:id/entries
 
 **SRD refs:** FR-C2, FR-C3
 **Description:** Add an entry to a credential set. Value is encrypted at rest.
@@ -1597,7 +1695,50 @@ interface CreateCredentialEntryResponse {
 
 ---
 
-### 10.6 DELETE /api/credentials/:setId/entries/:entryId
+### 10.7 PATCH /api/credentials/:setId/entries/:entryId
+
+**SRD refs:** FR-C2
+**Description:** Update an existing credential entry's value, mount path, or command. Value is re-encrypted at rest.
+
+**Request body:**
+
+```typescript
+const UpdateCredentialEntryBody = z.object({
+  key: z.string().min(1).max(200).optional(),
+  value: z.string().min(1).optional(),
+  mountPath: z.string().min(1).nullable().optional(),
+  command: z.string().min(1).nullable().optional(),
+});
+type UpdateCredentialEntryBody = z.infer<typeof UpdateCredentialEntryBody>;
+```
+
+**Response:** `200 OK`
+
+```typescript
+interface UpdateCredentialEntryResponse {
+  id: string;
+  key: string;
+  value: '***';           // ALWAYS masked
+  type: CredentialEntryType;
+  mountPath: string | null;
+  command: string | null;
+  createdAt: string;
+}
+```
+
+**Error cases:**
+- `404 CREDENTIAL_SET_NOT_FOUND`
+- `404 CREDENTIAL_ENTRY_NOT_FOUND`
+- `400 VALIDATION_ERROR`
+
+**Side effects:**
+1. Re-encrypts value with AES-256 if changed
+2. Updates `credentialEntries` record
+3. Writes `credentialAuditLog` entry (action: `update_entry`)
+
+---
+
+### 10.8 DELETE /api/credentials/:setId/entries/:entryId
 
 **SRD refs:** FR-C2
 **Description:** Remove an entry from a credential set.
@@ -1614,7 +1755,7 @@ interface CreateCredentialEntryResponse {
 
 ---
 
-### 10.7 GET /api/credentials/audit
+### 10.9 GET /api/credentials/audit
 
 **SRD refs:** FR-C5
 **Description:** Get credential access audit log.
@@ -1640,7 +1781,7 @@ interface AuditLogResponse {
 
 interface AuditLogEntry {
   id: string;
-  action: 'create_set' | 'delete_set' | 'create_entry' | 'delete_entry' | 'access_by_run';
+  action: 'create_set' | 'delete_set' | 'create_entry' | 'update_entry' | 'delete_entry' | 'access_by_run';
   credentialSetId: string | null;
   credentialEntryId: string | null;
   workflowRunId: string | null;
@@ -1717,6 +1858,27 @@ interface PrerequisiteCheck {
   version?: string;  // for docker, git
 }
 ```
+
+---
+
+### 11.4 GET /api/last-run-config
+
+**SRD refs:** —
+**Description:** Get the last-used run configuration for GUI form pre-population. Returns the most recently used project, agent, credential set, and workflow template selections.
+
+**Response:** `200 OK`
+
+```typescript
+interface LastRunConfigResponse {
+  projectId: string | null;
+  agentDefinitionId: string | null;
+  credentialSetId: string | null;
+  workflowTemplateId: string | null;
+  updatedAt: string;
+}
+```
+
+**Error cases:** None — returns null fields if no previous run exists.
 
 ---
 
@@ -1892,13 +2054,30 @@ interface PongMessage {
 | `notification` | All clients (broadcast) | Errors, warnings, informational |
 | `pong` | Requesting client | Client sent `ping` |
 
-### 12.5 Reconnection Protocol
+### 12.5 Reconnection & Resync Protocol
+
+**WebSocket reconnection sequence:**
 
 1. Client detects WebSocket disconnect
 2. Reconnects with exponential backoff (2s, 4s, 8s, max 30s)
 3. Re-sends `subscribe` messages for all previously subscribed runs with `lastSeq`
 4. Server replays missed events from in-memory buffer (bounded: 10,000 events per run)
-5. If buffer has rolled over, server sends `resync_required` — client must refetch via `GET /api/runs/:id/messages`
+5. If buffer has rolled over, server sends `resync_required` — client must perform a full resync (see below)
+
+**Full resync strategy (on `resync_required` or initial load):**
+
+After reconnection (or when `resync_required` is received), the client must re-fetch **all mutable state** — not just messages. The WebSocket only delivers incremental updates; the REST API is the source of truth for current state.
+
+Required re-fetches on resync:
+
+| API call | Purpose |
+|----------|---------|
+| `GET /api/runs/:id` | Current run status, currentStage, active review ID, stage list with statuses |
+| `GET /api/runs/:id/messages?after=<lastMessageTimestamp>` | Conversation messages missed during disconnect |
+| `GET /api/reviews?runId=:id` | Current review statuses (may have been approved/rejected while disconnected) |
+| `GET /api/parallel-groups/:id` | If run has children: current group status and child statuses |
+
+The client should perform these fetches in parallel immediately after re-subscribing. Until the fetches complete, the client should display a "Reconnecting…" indicator. After hydration, the client resumes processing incremental WebSocket events normally.
 
 ---
 
@@ -2002,9 +2181,10 @@ import { parallelGroupsRoutes } from './routes/parallel-groups';
 import { credentialsRoutes } from './routes/credentials';
 import { agentsRoutes } from './routes/agents';
 import { statsRoutes } from './routes/stats';
+import { lastRunConfigRoute } from './routes/last-run-config';
 import { healthRoute } from './routes/health';
 import { prerequisitesRoute } from './routes/prerequisites';
-import { wsRoute } from './ws/run-stream';
+import { wsRoute, wsUpgradeAuth } from './ws/run-stream';
 
 const authToken = getOrCreateAuthToken();
 
@@ -2029,6 +2209,7 @@ app.route('/api/parallel-groups', parallelGroupsRoutes);
 app.route('/api/credentials', credentialsRoutes);
 app.route('/api/agents', agentsRoutes);
 app.route('/api/stats', statsRoutes);
+app.route('/api/last-run-config', lastRunConfigRoute);
 app.route('/api/prerequisites', prerequisitesRoute);
 
 // WebSocket
@@ -2379,6 +2560,7 @@ export function zodHook(result: { success: boolean; error?: z.ZodError }, c: any
 | `POST /api/reviews/:id/comments` | FR-R4, FR-R5 |
 | `GET /api/reviews/:id/comments` | FR-R4, FR-R5 |
 | `GET /api/proposals` | FR-S1, FR-S3 |
+| `POST /api/proposals` | FR-S3 |
 | `GET /api/proposals/:id` | FR-S3 |
 | `PUT /api/proposals/:id` | FR-S3 |
 | `DELETE /api/proposals/:id` | FR-S3 |
@@ -2395,17 +2577,21 @@ export function zodHook(result: { success: boolean; error?: z.ZodError }, c: any
 | `DELETE /api/projects/:id` | FR-P3 |
 | `GET /api/projects/:id/branches` | FR-P5 |
 | `GET /api/agents` | FR-A2 |
+| `GET /api/agents/:id` | FR-A2 |
 | `POST /api/agents` | FR-A1 |
 | `PUT /api/agents/:id` | FR-A2 |
 | `DELETE /api/agents/:id` | FR-A2 |
 | `GET /api/credentials` | FR-C1, FR-C6 |
 | `POST /api/credentials` | FR-C1 |
 | `GET /api/credentials/:id` | FR-C1, FR-C7 |
+| `PATCH /api/credentials/:id` | FR-C1 |
 | `DELETE /api/credentials/:id` | FR-C1 |
 | `POST /api/credentials/:id/entries` | FR-C2, FR-C3 |
+| `PATCH /api/credentials/:setId/entries/:entryId` | FR-C2 |
 | `DELETE /api/credentials/:setId/entries/:entryId` | FR-C2 |
 | `GET /api/credentials/audit` | FR-C5 |
 | `GET /api/stats` | FR-D1, FR-D2 |
+| `GET /api/last-run-config` | — |
 | `GET /health` | NFR-O3 |
 | `GET /api/prerequisites` | NFR-I4 |
 | WebSocket `/ws` | FR-W15, FR-W20, NFR-P1, NFR-U6 |
@@ -2421,13 +2607,14 @@ export function zodHook(result: { success: boolean; error?: z.ZodError }, c: any
 | Runs | 11 | GET list, POST create, GET detail, DELETE, PATCH cancel, POST message, GET diff, GET messages, POST retry-stage, POST skip-stage, POST resolve-conflict |
 | Workflows | 5 | GET list, POST create, GET detail, PUT update, DELETE |
 | Reviews | 6 | GET list, GET detail, POST approve, POST request-changes, POST comments, GET comments |
-| Proposals | 5 | GET list, GET detail, PUT update, DELETE, POST launch |
+| Proposals | 6 | GET list, POST create, GET detail, PUT update, DELETE, POST launch |
 | Parallel Groups | 5 | GET status, POST consolidate, POST consolidate-partial, POST retry-children, POST cancel |
 | Projects | 6 | GET list, POST create, GET detail, PATCH update, DELETE, GET branches |
-| Agents | 4 | GET list, POST create, PUT update, DELETE |
-| Credentials | 7 | GET sets, POST set, GET set, DELETE set, POST entry, DELETE entry, GET audit |
+| Agents | 5 | GET list, GET detail, POST create, PUT update, DELETE |
+| Credentials | 9 | GET sets, POST set, GET set, PATCH set, DELETE set, POST entry, PATCH entry, DELETE entry, GET audit |
 | Stats | 1 | GET stats |
+| Last Run Config | 1 | GET last-run-config |
 | Health | 1 | GET health |
 | Prerequisites | 1 | GET prerequisites |
 | WebSocket | 1 | WS /ws |
-| **Total** | **53** | |
+| **Total** | **58** | |
