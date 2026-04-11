@@ -16,7 +16,7 @@ export function DaemonStatus() {
   }, [checkHealth]);
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5 text-[11px]">
       {connected && lastHealthCheck && (
         <span className="text-zinc-600">
           v{lastHealthCheck.version}

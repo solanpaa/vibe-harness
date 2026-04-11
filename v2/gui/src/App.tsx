@@ -154,18 +154,18 @@ function MainApp() {
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100">
       {/* Top nav */}
-      <nav className="flex items-center h-12 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
-        <div className="flex items-center gap-2 px-4 py-3">
+      <nav className="flex items-end h-11 border-b border-zinc-700/50 bg-zinc-900 px-5">
+        <div className="flex items-end gap-1">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === "/"}
               className={({ isActive }: { isActive: boolean }) =>
-                `px-3 py-1.5 text-sm font-medium transition-colors ${
+                `px-3 pb-2.5 text-[13px] font-medium transition-colors border-b-2 ${
                   isActive
-                    ? "border-b-2 border-blue-400 text-zinc-100 rounded-none pb-[11px]"
-                    : "text-zinc-400 hover:text-zinc-200 pb-[11px]"
+                    ? "border-blue-400 text-zinc-100"
+                    : "border-transparent text-zinc-500 hover:text-zinc-300"
                 }`
               }
             >
@@ -173,10 +173,10 @@ function MainApp() {
             </NavLink>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-3 pr-4">
+        <div className="ml-auto flex items-center gap-3 pb-2">
           <button
             onClick={() => setCommandPaletteOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700 rounded-md transition-colors"
+            className="flex items-center gap-2 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/60 hover:bg-zinc-700/50 border border-zinc-700/60 rounded transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <circle cx="11" cy="11" r="8" />
@@ -200,7 +200,7 @@ function MainApp() {
       </main>
 
       {/* Footer */}
-      <footer className="flex items-center justify-end h-7 px-4 border-t border-zinc-800 bg-zinc-900/80 text-xs text-zinc-500">
+      <footer className="flex items-center justify-end h-6 px-4 border-t border-zinc-800/80 bg-zinc-950/50 text-[11px] shrink-0">
         <DaemonStatus />
       </footer>
 

@@ -13,37 +13,29 @@ export function RunCard({ run, isSelected, onClick }: RunCardProps) {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left p-3 rounded-lg mb-1.5 transition-colors border ${
+      className={`w-full text-left px-3 py-2.5 rounded-md mb-1 transition-colors border ${
         isSelected
           ? "bg-blue-950/30 border-blue-500/40"
-          : "bg-zinc-800/30 hover:bg-zinc-800/50 border-transparent"
+          : "bg-transparent hover:bg-zinc-800/40 border-transparent"
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-zinc-200 truncate">
-            {run.title || run.description?.slice(0, 50) || run.id.slice(0, 8)}
+          <div className="text-[13px] font-medium text-zinc-200 truncate leading-tight">
+            {run.title || run.description?.slice(0, 60) || run.id.slice(0, 8)}
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-zinc-500 truncate">
-              {run.projectName}
-            </span>
+          <div className="flex items-center gap-1.5 mt-1">
             {run.currentStage && (
-              <>
-                <span className="text-zinc-700">·</span>
-                <span className="text-xs text-zinc-500">
-                  {run.currentStage}
-                </span>
-              </>
+              <span className="text-[11px] text-zinc-500">
+                {run.currentStage}
+              </span>
             )}
+            <span className="text-[10px] text-zinc-600">
+              {timeAgo(run.createdAt)}
+            </span>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <StatusBadge status={run.status} size="sm" />
-          <span className="text-[10px] text-zinc-600">
-            {timeAgo(run.createdAt)}
-          </span>
-        </div>
+        <StatusBadge status={run.status} size="sm" />
       </div>
 
       {/* Streaming activity indicator */}
