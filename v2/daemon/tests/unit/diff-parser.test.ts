@@ -253,6 +253,76 @@ describe('parseUnifiedDiff', () => {
   });
 });
 
+  it('gracefully handles non-diff text (no "diff --git" marker)', () => {
+    const input = 'This is just a random log message\nNothing to parse here.\n';
+    expect(parseUnifiedDiff(input)).toEqual([]);
+  });
+
+  it('handles a malformed hunk header gracefully', () => {
+    const input = diff(
+      'diff --git a/f.txt b/f.txt',
+      '--- a/f.txt',
+      '+++ b/f.txt',
+      '@@ this is not a valid hunk header @@',
+    );
+    const files = parseUnifiedDiff(input);
+    expect(files).toHaveLength(1);
+    // Malformed hunk should still produce a hunk entry with zeroed counts
+    expect(files[0].hunks).toHaveLength(1);
+    expect(files[0].hunks[0].oldStart).toBe(0);
+    expect(files[0].hunks[0].newStart).toBe(0);
+  });
+
+  it('handles renamed file with content changes', () => {
+    const input = diff(
+      'diff --git a/old.ts b/new.ts',
+      'similarity index 80%',
+      'rename from old.ts',
+      'rename to new.ts',
+      '--- a/old.ts',
+      '+++ b/new.ts',
+      '@@ -1,3 +1,4 @@',
+      ' keep',
+      '-removed',
+      '+added1',
+      '+added2',
+      ' keep2',
+    );
+
+    const files = parseUnifiedDiff(input);
+    expect(files).toHaveLength(1);
+    expect(files[0].status).toBe('renamed');
+    expect(files[0].oldPath).toBe('old.ts');
+    expect(files[0].newPath).toBe('new.ts');
+    expect(files[0].additions).toBe(2);
+    expect(files[0].deletions).toBe(1);
+  });
+
+  it('counts additions and deletions correctly across all files', () => {
+    const input = diff(
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,2 +1,3 @@',
+      ' ctx',
+      '+add1',
+      '+add2',
+      'diff --git a/b.ts b/b.ts',
+      '--- a/b.ts',
+      '+++ b/b.ts',
+      '@@ -1,3 +1,1 @@',
+      ' ctx',
+      '-del1',
+      '-del2',
+    );
+    const files = parseUnifiedDiff(input);
+    expect(files[0].additions).toBe(2);
+    expect(files[0].deletions).toBe(0);
+    expect(files[1].additions).toBe(0);
+    expect(files[1].deletions).toBe(2);
+  });
+});
+
 describe('diffSummary', () => {
   it('generates a human-readable summary', () => {
     const files: DiffFile[] = [
@@ -299,5 +369,12 @@ describe('diffSummary', () => {
 
     const summary = diffSummary(files);
     expect(summary).toContain('- removed.ts');
+  });
+
+  it('returns a coherent summary for empty file list', () => {
+    const summary = diffSummary([]);
+    expect(summary).toContain('0 file(s) changed');
+    expect(summary).toContain('0 insertions(+)');
+    expect(summary).toContain('0 deletions(-)');
   });
 });

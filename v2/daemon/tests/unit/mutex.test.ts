@@ -2,81 +2,139 @@ import { describe, it, expect } from 'vitest';
 import { Mutex } from '../../src/lib/mutex.js';
 
 describe('Mutex', () => {
-  it('serializes concurrent access', async () => {
+  // ── Core contract: mutual exclusion ─────────────────────────────────
+
+  it('prevents concurrent access to a shared resource', async () => {
+    const mutex = new Mutex();
+    let counter = 0;
+
+    // A non-atomic read-modify-write: without the mutex, concurrent
+    // tasks would interleave and produce a wrong final count.
+    const increment = () =>
+      mutex.runExclusive(async () => {
+        const val = counter;
+        await new Promise((r) => setTimeout(r, 5)); // yield to event loop
+        counter = val + 1;
+      });
+
+    await Promise.all(Array.from({ length: 20 }, () => increment()));
+    // With true mutual exclusion, counter MUST be exactly 20.
+    // Without the mutex the interleaving would leave it far less.
+    expect(counter).toBe(20);
+  });
+
+  it('serializes tasks in FIFO order', async () => {
     const mutex = new Mutex();
     const order: number[] = [];
 
-    const task = (id: number, delayMs: number) =>
+    const task = (id: number) =>
       mutex.runExclusive(async () => {
         order.push(id);
-        await new Promise((r) => setTimeout(r, delayMs));
-        return id;
+        await new Promise((r) => setTimeout(r, 5));
       });
 
-    // Launch 3 tasks concurrently
-    const [r1, r2, r3] = await Promise.all([
-      task(1, 30),
-      task(2, 10),
-      task(3, 10),
-    ]);
-
-    expect(r1).toBe(1);
-    expect(r2).toBe(2);
-    expect(r3).toBe(3);
-    // All three ran in the order they were queued
+    await Promise.all([task(1), task(2), task(3)]);
     expect(order).toEqual([1, 2, 3]);
   });
 
-  it('rejects after timeout', async () => {
+  // ── Return value propagation ────────────────────────────────────────
+
+  it('returns the value produced by the exclusive function', async () => {
+    const mutex = new Mutex();
+    const result = await mutex.runExclusive(async () => 42);
+    expect(result).toBe(42);
+  });
+
+  it('returns different types (generic T)', async () => {
+    const mutex = new Mutex();
+    const str = await mutex.runExclusive(async () => 'hello');
+    expect(str).toBe('hello');
+
+    const obj = await mutex.runExclusive(async () => ({ a: 1 }));
+    expect(obj).toEqual({ a: 1 });
+  });
+
+  // ── Error handling contract ─────────────────────────────────────────
+
+  it('propagates errors from the exclusive function', async () => {
+    const mutex = new Mutex();
+    await expect(
+      mutex.runExclusive(async () => { throw new Error('boom'); }),
+    ).rejects.toThrow('boom');
+  });
+
+  it('releases the lock after an error so the next task can proceed', async () => {
     const mutex = new Mutex();
 
-    // Hold the lock for 200ms
+    await mutex.runExclusive(async () => { throw new Error('fail'); }).catch(() => {});
+
+    // If the lock were stuck, this would hang forever
+    const result = await mutex.runExclusive(async () => 'recovered');
+    expect(result).toBe('recovered');
+  });
+
+  it('remains usable after multiple consecutive errors', async () => {
+    const mutex = new Mutex();
+
+    for (let i = 0; i < 5; i++) {
+      await mutex.runExclusive(async () => { throw new Error(`err-${i}`); }).catch(() => {});
+    }
+
+    const result = await mutex.runExclusive(async () => 'still works');
+    expect(result).toBe('still works');
+  });
+
+  // ── Timeout contract ────────────────────────────────────────────────
+
+  it('rejects with timeout error when lock is held too long', async () => {
+    const mutex = new Mutex();
+
     const blocker = mutex.runExclusive(
-      () => new Promise((r) => setTimeout(r, 200)),
+      () => new Promise((r) => setTimeout(r, 300)),
     );
 
-    // Try to acquire with a very short timeout
-    const timeouter = mutex.runExclusive(async () => 'done', 10);
-
-    await expect(timeouter).rejects.toThrow(/timed out/);
-    await blocker; // clean up
+    // This task will time out waiting for the lock
+    const waiter = mutex.runExclusive(async () => 'never', 20);
+    await expect(waiter).rejects.toThrow(/timed out/i);
+    await blocker;
   });
 
-  it('releases lock on error (no deadlock)', async () => {
+  it('does not corrupt state when timeout occurs mid-queue', async () => {
     const mutex = new Mutex();
+    const results: string[] = [];
 
-    // First task throws
-    await expect(
-      mutex.runExclusive(async () => {
-        throw new Error('boom');
-      }),
-    ).rejects.toThrow('boom');
+    // Task A: holds lock 100ms
+    const a = mutex.runExclusive(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      results.push('A');
+    });
 
-    // Second task should still acquire the lock
-    const result = await mutex.runExclusive(async () => 'success');
-    expect(result).toBe('success');
+    // Task B: times out after 10ms
+    const b = mutex.runExclusive(async () => {
+      results.push('B');
+    }, 10).catch(() => results.push('B-timeout'));
+
+    // Task C: waits patiently
+    const c = mutex.runExclusive(async () => {
+      results.push('C');
+    });
+
+    await Promise.all([a, b, c]);
+
+    // A runs first, B times out, C runs after A
+    expect(results).toContain('A');
+    expect(results).toContain('B-timeout');
+    expect(results).toContain('C');
+    expect(results).not.toContain('B');
   });
 
-  it('allows sequential access after release', async () => {
+  // ── Sequential reuse ───────────────────────────────────────────────
+
+  it('allows reuse after lock is released', async () => {
     const mutex = new Mutex();
     const r1 = await mutex.runExclusive(async () => 1);
     const r2 = await mutex.runExclusive(async () => 2);
     expect(r1).toBe(1);
     expect(r2).toBe(2);
-  });
-
-  it('handles many concurrent tasks', async () => {
-    const mutex = new Mutex();
-    const results: number[] = [];
-
-    const tasks = Array.from({ length: 20 }, (_, i) =>
-      mutex.runExclusive(async () => {
-        results.push(i);
-        return i;
-      }),
-    );
-
-    await Promise.all(tasks);
-    expect(results).toEqual(Array.from({ length: 20 }, (_, i) => i));
   });
 });

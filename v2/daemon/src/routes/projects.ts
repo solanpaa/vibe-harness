@@ -74,7 +74,7 @@ projects.post('/api/projects', async (c) => {
     gitUrl = remoteResult.stdout.trim();
   }
 
-  const [project] = db
+  const project = db
     .insert(schema.projects)
     .values({
       name,
@@ -83,7 +83,8 @@ projects.post('/api/projects', async (c) => {
       description: description ?? null,
       defaultCredentialSetId: defaultCredentialSetId ?? null,
     })
-    .returning();
+    .returning()
+    .get();
 
   logger.info({ projectId: project.id, name }, 'Project created');
   return c.json(project, 201);
@@ -157,11 +158,12 @@ projects.patch('/api/projects/:id', async (c) => {
   if (parsed.data.defaultCredentialSetId !== undefined)
     updates.defaultCredentialSetId = parsed.data.defaultCredentialSetId;
 
-  const [updated] = db
+  const updated = db
     .update(schema.projects)
     .set(updates)
     .where(eq(schema.projects.id, id))
-    .returning();
+    .returning()
+    .get();
 
   return c.json(updated);
 });

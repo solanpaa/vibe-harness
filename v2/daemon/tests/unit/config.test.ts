@@ -1,114 +1,138 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, rmSync, existsSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-// config.ts uses homedir() internally, so we test the file helpers
-// by replicating the logic with a temp directory.
+// ── Redirect config dir to a test temp dir ──────────────────────────
 
 const TEST_DIR = join(process.cwd(), '.test-config-temp');
 
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof import('node:os')>('node:os');
+  return { ...actual, homedir: () => join(process.cwd(), '.test-config-temp', 'home') };
+});
+
+// Import AFTER mock so the real config module uses our homedir
+const {
+  getConfigDir,
+  writePortFile,
+  readPortFile,
+  removePortFile,
+  writePidFile,
+  readPidFile,
+  removePidFile,
+  getDbPath,
+} = await import('../../src/lib/config.js');
+
 beforeEach(() => {
-  mkdirSync(TEST_DIR, { recursive: true });
+  mkdirSync(join(TEST_DIR, 'home'), { recursive: true });
 });
 
 afterEach(() => {
   rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
-describe('config dir creation', () => {
-  it('creates directory with correct permissions on Unix', () => {
-    const dir = join(TEST_DIR, 'subdir');
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    expect(existsSync(dir)).toBe(true);
+// ── getConfigDir contract ───────────────────────────────────────────
 
-    const stat = statSync(dir);
-    // On macOS/Linux, mode includes file type bits. Mask to permission bits.
-    const perms = stat.mode & 0o777;
+describe('getConfigDir', () => {
+  it('creates the config directory if it does not exist', () => {
+    const dir = getConfigDir();
+    expect(existsSync(dir)).toBe(true);
+    expect(dir).toContain('.vibe-harness');
+  });
+
+  it('returns the same path on repeated calls (idempotent)', () => {
+    const a = getConfigDir();
+    const b = getConfigDir();
+    expect(a).toBe(b);
+  });
+
+  it('creates directory with owner-only permissions (0o700)', () => {
+    const dir = getConfigDir();
+    const perms = statSync(dir).mode & 0o777;
     expect(perms).toBe(0o700);
   });
 });
 
-describe('port file round-trip', () => {
-  const portFile = () => join(TEST_DIR, 'daemon.port');
+// ── Port file contract ──────────────────────────────────────────────
 
-  function writePortFile(port: number) {
-    writeFileSync(portFile(), String(port), { mode: 0o600 });
-  }
-
-  function readPortFile(): number | null {
-    try {
-      const raw = readFileSync(portFile(), 'utf-8').trim();
-      const port = parseInt(raw, 10);
-      return Number.isNaN(port) ? null : port;
-    } catch {
-      return null;
-    }
-  }
-
-  it('writes and reads back the same port', () => {
+describe('writePortFile / readPortFile', () => {
+  it('round-trips a port number', () => {
     writePortFile(3456);
     expect(readPortFile()).toBe(3456);
   });
 
-  it('returns null when file does not exist', () => {
+  it('overwrites previous port on second write', () => {
+    writePortFile(3000);
+    writePortFile(4000);
+    expect(readPortFile()).toBe(4000);
+  });
+
+  it('returns null when no port file exists', () => {
     expect(readPortFile()).toBeNull();
   });
 
-  it('returns null for non-numeric content', () => {
-    writeFileSync(portFile(), 'not-a-number');
+  it('returns null when port file contains non-numeric content', () => {
+    // Simulate corrupted file
+    writeFileSync(join(getConfigDir(), 'daemon.port'), 'garbage');
+    expect(readPortFile()).toBeNull();
+  });
+
+  it('returns null when port file is empty', () => {
+    writeFileSync(join(getConfigDir(), 'daemon.port'), '');
     expect(readPortFile()).toBeNull();
   });
 });
 
-describe('PID file round-trip', () => {
-  const pidFile = () => join(TEST_DIR, 'daemon.pid');
+// ── removePortFile contract ─────────────────────────────────────────
 
-  function writePidFile(pid: number) {
-    writeFileSync(pidFile(), String(pid), { mode: 0o600 });
-  }
-
-  function readPidFile(): number | null {
-    try {
-      const raw = readFileSync(pidFile(), 'utf-8').trim();
-      const pid = parseInt(raw, 10);
-      return Number.isNaN(pid) ? null : pid;
-    } catch {
-      return null;
-    }
-  }
-
-  it('writes and reads back the same PID', () => {
-    writePidFile(12345);
-    expect(readPidFile()).toBe(12345);
+describe('removePortFile', () => {
+  it('removes an existing port file', () => {
+    writePortFile(3000);
+    expect(readPortFile()).toBe(3000);
+    removePortFile();
+    expect(readPortFile()).toBeNull();
   });
 
-  it('returns null when file does not exist', () => {
+  it('does not throw when port file already absent', () => {
+    expect(() => removePortFile()).not.toThrow();
+  });
+});
+
+// ── PID file contract ───────────────────────────────────────────────
+
+describe('writePidFile / readPidFile', () => {
+  it('writes current process PID and reads it back', () => {
+    writePidFile();
+    expect(readPidFile()).toBe(process.pid);
+  });
+
+  it('returns null when no PID file exists', () => {
     expect(readPidFile()).toBeNull();
   });
 });
 
-describe('cleanup', () => {
-  it('removes port and PID files', () => {
-    const pf = join(TEST_DIR, 'daemon.port');
-    const pidf = join(TEST_DIR, 'daemon.pid');
-
-    writeFileSync(pf, '3000');
-    writeFileSync(pidf, '99999');
-    expect(existsSync(pf)).toBe(true);
-    expect(existsSync(pidf)).toBe(true);
-
-    // Simulate cleanup
-    try { rmSync(pf); } catch { /* ok */ }
-    try { rmSync(pidf); } catch { /* ok */ }
-
-    expect(existsSync(pf)).toBe(false);
-    expect(existsSync(pidf)).toBe(false);
+describe('removePidFile', () => {
+  it('removes an existing PID file', () => {
+    writePidFile();
+    removePidFile();
+    expect(readPidFile()).toBeNull();
   });
 
-  it('does not throw when files already removed', () => {
-    expect(() => {
-      try { rmSync(join(TEST_DIR, 'daemon.port')); } catch { /* ok */ }
-      try { rmSync(join(TEST_DIR, 'daemon.pid')); } catch { /* ok */ }
-    }).not.toThrow();
+  it('does not throw when PID file already absent', () => {
+    expect(() => removePidFile()).not.toThrow();
+  });
+});
+
+// ── getDbPath contract ──────────────────────────────────────────────
+
+describe('getDbPath', () => {
+  it('returns a path ending in vibe-harness.db inside config dir', () => {
+    const dbPath = getDbPath();
+    expect(dbPath).toContain('.vibe-harness');
+    expect(dbPath).toMatch(/vibe-harness\.db$/);
+  });
+
+  it('returns consistent path across calls', () => {
+    expect(getDbPath()).toBe(getDbPath());
   });
 });

@@ -64,6 +64,10 @@ describe('deduplicate', () => {
     expect(deduplicate('my-branch', ['main', 'develop'])).toBe('my-branch');
   });
 
+  it('returns name unchanged with empty existing list', () => {
+    expect(deduplicate('my-branch', [])).toBe('my-branch');
+  });
+
   it('appends -2 for first conflict', () => {
     expect(deduplicate('my-branch', ['my-branch'])).toBe('my-branch-2');
   });
@@ -73,12 +77,6 @@ describe('deduplicate', () => {
   });
 
   it('handles large chains', () => {
-    const existing = Array.from({ length: 10 }, (_, i) =>
-      i === 0 ? 'x' : `x-${i + 1}`,
-    );
-    // existing = ['x', 'x-2', 'x-3', ..., 'x-10']
-    // Wait: Array.from with (_, 0) => 'x', (_, 1) => 'x-2' etc up to (_, 9) => 'x-10'
-    // Actually need a cleaner approach
     const branches = ['x'];
     for (let i = 2; i <= 10; i++) branches.push(`x-${i}`);
     expect(deduplicate('x', branches)).toBe('x-11');
@@ -153,6 +151,25 @@ describe('generate', () => {
       shortId: 'ddd',
     });
     expect(result).toBe('fix-login-bug');
+  });
+
+  it('uses only the first line when LLM returns multiline', async () => {
+    const bn = namer(async () => 'fix-auth\nHere is my reasoning...');
+    const result = await bn.generate('whatever', [], {
+      prefix: 'vh',
+      shortId: 'eee',
+    });
+    expect(result).toBe('fix-auth');
+  });
+
+  it('falls back when LLM returns very short sanitized name', async () => {
+    // After sanitize, "x!" becomes "x" (len 1 < 3 minimum)
+    const bn = namer(async () => 'x!');
+    const result = await bn.generate('whatever', [], {
+      prefix: 'vh',
+      shortId: 'fff',
+    });
+    expect(result).toBe('vh/run-fff');
   });
 
   it('produces a valid git ref (no spaces, no special chars)', async () => {

@@ -57,14 +57,15 @@ function logAudit(action: string, opts?: {
 
 export function createCredentialSet(input: CredentialSetInput) {
   const db = getDb();
-  const [credSet] = db
+  const credSet = db
     .insert(schema.credentialSets)
     .values({
       name: input.name,
       description: input.description ?? null,
       projectId: input.projectId ?? null,
     })
-    .returning();
+    .returning()
+    .get();
 
   logAudit('created', {
     credentialSetId: credSet.id,
@@ -109,7 +110,7 @@ export function addCredentialEntry(setId: string, input: CredentialEntryInput) {
   const db = getDb();
   const encryptedValue = input.value ? encrypt(input.value) : '';
 
-  const [entry] = db
+  const entry = db
     .insert(schema.credentialEntries)
     .values({
       credentialSetId: setId,
@@ -119,7 +120,8 @@ export function addCredentialEntry(setId: string, input: CredentialEntryInput) {
       mountPath: input.mountPath ?? null,
       command: input.command ?? null,
     })
-    .returning();
+    .returning()
+    .get();
 
   logAudit('created', {
     credentialSetId: setId,

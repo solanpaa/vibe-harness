@@ -44,14 +44,15 @@ workflows.post('/api/workflows', async (c) => {
   const { name, description, stages } = parsed.data;
 
   const db = getDb();
-  const [template] = db
+  const template = db
     .insert(schema.workflowTemplates)
     .values({
       name,
       description: description ?? null,
       stages: JSON.stringify(stages),
     })
-    .returning();
+    .returning()
+    .get();
 
   logger.info({ templateId: template.id, name }, 'Workflow template created');
   return c.json(toTemplate(template), 201);
@@ -111,7 +112,7 @@ workflows.put('/api/workflows/:id', async (c) => {
     );
   }
 
-  const [updated] = db
+  const updated = db
     .update(schema.workflowTemplates)
     .set({
       name: parsed.data.name,
@@ -120,7 +121,8 @@ workflows.put('/api/workflows/:id', async (c) => {
       updatedAt: new Date().toISOString(),
     })
     .where(eq(schema.workflowTemplates.id, id))
-    .returning();
+    .returning()
+    .get();
 
   logger.info({ templateId: id }, 'Workflow template updated');
   return c.json(toTemplate(updated));

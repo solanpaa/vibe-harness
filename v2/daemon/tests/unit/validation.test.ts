@@ -24,6 +24,11 @@ describe('assertSafeRef', () => {
     expect(() => assertSafeRef('my_branch')).not.toThrow();
   });
 
+  it('allows single-character refs', () => {
+    expect(() => assertSafeRef('a')).not.toThrow();
+    expect(() => assertSafeRef('1')).not.toThrow();
+  });
+
   it('blocks empty strings', () => {
     expect(() => assertSafeRef('')).toThrow(InvalidGitRefError);
   });
@@ -73,6 +78,19 @@ describe('assertSafeRef', () => {
     expect(() => assertSafeRef('main\\path')).toThrow(InvalidGitRefError);
   });
 
+  it('blocks spaces in the middle of ref', () => {
+    expect(() => assertSafeRef('my branch')).toThrow(InvalidGitRefError);
+  });
+
+  it('throws InvalidGitRefError (not generic Error)', () => {
+    try {
+      assertSafeRef('main`inject`');
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvalidGitRefError);
+    }
+  });
+
   it('uses custom label in error messages', () => {
     try {
       assertSafeRef('', 'branch');
@@ -105,5 +123,18 @@ describe('assertSafePath', () => {
 
   it('allows deeply nested paths', () => {
     expect(() => assertSafePath('a/b/c/d/e/f.txt', '/base')).not.toThrow();
+  });
+
+  it('allows absolute path within the base directory', () => {
+    expect(() => assertSafePath('/project/src/file.ts', '/project')).not.toThrow();
+  });
+
+  it('throws PathTraversalError (not generic Error)', () => {
+    try {
+      assertSafePath('../../../etc/shadow', '/project');
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(PathTraversalError);
+    }
   });
 });

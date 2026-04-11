@@ -51,7 +51,7 @@ agents.post('/api/agents', async (c) => {
   }
 
   const db = getDb();
-  const [agent] = db
+  const agent = db
     .insert(schema.agentDefinitions)
     .values({
       ...parsed.data,
@@ -59,7 +59,8 @@ agents.post('/api/agents', async (c) => {
       description: parsed.data.description ?? null,
       isBuiltIn: false,
     })
-    .returning();
+    .returning()
+    .get();
 
   logger.info({ agentId: agent.id, name: agent.name }, 'Agent definition created');
   return c.json(agent, 201);
@@ -111,11 +112,12 @@ agents.put('/api/agents/:id', async (c) => {
   if (data.supportsIntervention !== undefined) updates.supportsIntervention = data.supportsIntervention;
   if (data.outputFormat !== undefined) updates.outputFormat = data.outputFormat;
 
-  const [updated] = db
+  const updated = db
     .update(schema.agentDefinitions)
     .set(updates)
     .where(eq(schema.agentDefinitions.id, id))
-    .returning();
+    .returning()
+    .get();
 
   return c.json(updated);
 });

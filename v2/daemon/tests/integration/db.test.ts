@@ -182,6 +182,110 @@ describe('Unique constraints', () => {
         .run();
     }).toThrow(/UNIQUE/i);
   });
+
+  it('allows same stage name with different round number', () => {
+    const agents = db.select().from(schema.agentDefinitions).all();
+    const templates = db.select().from(schema.workflowTemplates).all();
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    const run = db
+      .insert(schema.workflowRuns)
+      .values({
+        workflowTemplateId: templates[0].id,
+        projectId: project.id,
+        agentDefinitionId: agents[0].id,
+      })
+      .returning()
+      .get();
+
+    db.insert(schema.stageExecutions)
+      .values({ workflowRunId: run.id, stageName: 'plan', round: 1 })
+      .run();
+    // Different round → should succeed
+    expect(() => {
+      db.insert(schema.stageExecutions)
+        .values({ workflowRunId: run.id, stageName: 'plan', round: 2 })
+        .run();
+    }).not.toThrow();
+  });
+});
+
+describe('Cascade delete behavior', () => {
+  it('deletes review_comments when parent review is deleted', () => {
+    const agents = db.select().from(schema.agentDefinitions).all();
+    const templates = db.select().from(schema.workflowTemplates).all();
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    const run = db
+      .insert(schema.workflowRuns)
+      .values({
+        workflowTemplateId: templates[0].id,
+        projectId: project.id,
+        agentDefinitionId: agents[0].id,
+      })
+      .returning()
+      .get();
+    const review = db
+      .insert(schema.reviews)
+      .values({ workflowRunId: run.id, stageName: 'plan', round: 1 })
+      .returning()
+      .get();
+    db.insert(schema.reviewComments)
+      .values({ reviewId: review.id, body: 'Fix this' })
+      .run();
+
+    // Verify comment exists
+    const before = db.select().from(schema.reviewComments).all();
+    expect(before.length).toBe(1);
+
+    // Delete the review
+    db.delete(schema.reviews).where(eq(schema.reviews.id, review.id)).run();
+
+    // Comment should be cascade-deleted
+    const after = db.select().from(schema.reviewComments).all();
+    expect(after.length).toBe(0);
+  });
+
+  it('deletes run_messages when parent workflow_run is deleted', () => {
+    const agents = db.select().from(schema.agentDefinitions).all();
+    const templates = db.select().from(schema.workflowTemplates).all();
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    const run = db
+      .insert(schema.workflowRuns)
+      .values({
+        workflowTemplateId: templates[0].id,
+        projectId: project.id,
+        agentDefinitionId: agents[0].id,
+      })
+      .returning()
+      .get();
+    db.insert(schema.runMessages)
+      .values({
+        workflowRunId: run.id,
+        stageName: 'plan',
+        role: 'user',
+        content: 'hello',
+      })
+      .run();
+
+    const before = db.select().from(schema.runMessages).all();
+    expect(before.length).toBe(1);
+
+    db.delete(schema.workflowRuns).where(eq(schema.workflowRuns.id, run.id)).run();
+
+    const after = db.select().from(schema.runMessages).all();
+    expect(after.length).toBe(0);
+  });
 });
 
 describe('JSON columns', () => {
@@ -251,5 +355,81 @@ describe('JSON columns', () => {
 
     const parsed = JSON.parse(fetched.metadata!);
     expect(parsed).toEqual(metadata);
+  });
+
+  it('stores null metadata when field is omitted', () => {
+    const agents = db.select().from(schema.agentDefinitions).all();
+    const templates = db.select().from(schema.workflowTemplates).all();
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    const run = db
+      .insert(schema.workflowRuns)
+      .values({
+        workflowTemplateId: templates[0].id,
+        projectId: project.id,
+        agentDefinitionId: agents[0].id,
+      })
+      .returning()
+      .get();
+    const msg = db
+      .insert(schema.runMessages)
+      .values({
+        workflowRunId: run.id,
+        stageName: 'plan',
+        role: 'user',
+        content: 'test',
+      })
+      .returning()
+      .get();
+
+    expect(msg.metadata).toBeNull();
+  });
+});
+
+describe('Default values', () => {
+  it('workflow_run status defaults to pending', () => {
+    const agents = db.select().from(schema.agentDefinitions).all();
+    const templates = db.select().from(schema.workflowTemplates).all();
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    const run = db
+      .insert(schema.workflowRuns)
+      .values({
+        workflowTemplateId: templates[0].id,
+        projectId: project.id,
+        agentDefinitionId: agents[0].id,
+      })
+      .returning()
+      .get();
+
+    expect(run.status).toBe('pending');
+  });
+
+  it('auto-generates UUID primary keys', () => {
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    // UUID v4 format
+    expect(project.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it('auto-generates createdAt timestamps', () => {
+    const project = db
+      .insert(schema.projects)
+      .values({ name: 'Test', localPath: '/fake' })
+      .returning()
+      .get();
+    // ISO 8601 format
+    expect(new Date(project.createdAt).toISOString()).toBe(project.createdAt);
   });
 });
