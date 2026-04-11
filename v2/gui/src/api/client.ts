@@ -34,6 +34,16 @@ import type {
   RequestChangesResponse,
   CreateReviewCommentRequest,
   ReviewComment,
+  ProposalListResponse,
+  ProposalDetailResponse,
+  CreateProposalRequest,
+  UpdateProposalRequest,
+  LaunchProposalsResponse,
+  ParallelGroupDetailResponse,
+  ConsolidateResponse,
+  ConsolidatePartialResponse,
+  RetryChildrenResponse,
+  CancelGroupResponse,
 } from "@vibe-harness/shared";
 
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
@@ -315,6 +325,67 @@ export class DaemonClient {
     return this.fetch<ReviewComment>(`/api/reviews/${reviewId}/comments`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  }
+
+  // ── Proposals ─────────────────────────────────────────────────────────
+
+  async getProposals(runId: string): Promise<ProposalListResponse> {
+    return this.fetch<ProposalListResponse>(`/api/proposals?runId=${runId}`);
+  }
+
+  async createProposal(data: CreateProposalRequest): Promise<ProposalDetailResponse> {
+    return this.fetch<ProposalDetailResponse>("/api/proposals", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProposal(id: string, data: UpdateProposalRequest): Promise<ProposalDetailResponse> {
+    return this.fetch<ProposalDetailResponse>(`/api/proposals/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProposal(id: string): Promise<void> {
+    return this.fetch<void>(`/api/proposals/${id}`, { method: "DELETE" });
+  }
+
+  async launchProposals(runId: string, proposalIds: string[]): Promise<LaunchProposalsResponse> {
+    return this.fetch<LaunchProposalsResponse>(`/api/proposals/launch`, {
+      method: "POST",
+      body: JSON.stringify({ runId, proposalIds }),
+    });
+  }
+
+  // ── Parallel Groups ───────────────────────────────────────────────────
+
+  async getParallelGroup(id: string): Promise<ParallelGroupDetailResponse> {
+    return this.fetch<ParallelGroupDetailResponse>(`/api/parallel-groups/${id}`);
+  }
+
+  async consolidateGroup(id: string): Promise<ConsolidateResponse> {
+    return this.fetch<ConsolidateResponse>(`/api/parallel-groups/${id}/consolidate`, {
+      method: "POST",
+    });
+  }
+
+  async consolidateGroupPartial(id: string): Promise<ConsolidatePartialResponse> {
+    return this.fetch<ConsolidatePartialResponse>(`/api/parallel-groups/${id}/consolidate-partial`, {
+      method: "POST",
+    });
+  }
+
+  async retryFailedChildren(id: string): Promise<RetryChildrenResponse> {
+    return this.fetch<RetryChildrenResponse>(`/api/parallel-groups/${id}/retry`, {
+      method: "POST",
+    });
+  }
+
+  async cancelGroup(id: string): Promise<CancelGroupResponse> {
+    return this.fetch<CancelGroupResponse>(`/api/parallel-groups/${id}/cancel`, {
+      method: "POST",
     });
   }
 }

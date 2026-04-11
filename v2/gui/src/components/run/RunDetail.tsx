@@ -8,6 +8,8 @@ import { InterventionInput } from "./InterventionInput";
 import { StatusBadge } from "../shared/StatusBadge";
 import { PopOutButton } from "../shared/PopOutButton";
 import { ReviewPanel } from "../review/ReviewPanel";
+import { ProposalPanel } from "../workflow/ProposalPanel";
+import { ParallelGroupStatus } from "../workflow/ParallelGroupStatus";
 import type { WebSocketManager } from "../../api/ws";
 import type {
   WorkflowRunDetailResponse,
@@ -25,7 +27,7 @@ const RUNNING_STATUSES = new Set([
   "waiting_for_children",
 ]);
 
-type TabId = "conversation" | "details" | "review";
+type TabId = "conversation" | "details" | "review" | "proposals" | "parallel";
 
 export function RunDetail({ runId, ws }: RunDetailProps) {
   const { client } = useDaemonStore();
@@ -88,6 +90,17 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
         if (res.status === "awaiting_review" && res.activeReviewId) {
           setActiveTab("review");
         }
+        // Auto-switch to proposals tab when run enters awaiting_proposals
+        if (res.status === "awaiting_proposals") {
+          setActiveTab("proposals");
+        }
+        // Auto-switch to parallel tab when children are running
+        if (
+          res.status === "waiting_for_children" ||
+          res.status === "children_completed_with_failures"
+        ) {
+          setActiveTab("parallel");
+        }
       })
       .catch((err) => console.error("Failed to refresh run detail:", err));
   }, [client, runId, wsRunStatus, detail?.status]);
@@ -124,11 +137,18 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
   if (!detail) return null;
 
   const hasReview = detail.status === "awaiting_review" && detail.activeReviewId;
+  const hasProposals = detail.status === "awaiting_proposals";
+  const hasParallelGroup =
+    (detail.status === "waiting_for_children" ||
+      detail.status === "children_completed_with_failures") &&
+    detail.parallelGroupId;
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "conversation", label: "Conversation" },
     { id: "details", label: "Details" },
     ...(hasReview ? [{ id: "review" as TabId, label: "📋 Review" }] : []),
+    ...(hasProposals ? [{ id: "proposals" as TabId, label: "🔀 Proposals" }] : []),
+    ...(hasParallelGroup ? [{ id: "parallel" as TabId, label: "⚡ Parallel" }] : []),
   ];
 
   return (
@@ -271,6 +291,30 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
             reviewId={detail.activeReviewId!}
             runId={runId}
             onBack={() => setActiveTab("conversation")}
+          />
+        )}
+
+        {activeTab === "proposals" && hasProposals && (
+          <ProposalPanel
+            runId={runId}
+            currentStage={detail.currentStage}
+            onLaunched={() => {
+              // Re-fetch detail to pick up new status
+              client?.getRun(runId).then(setDetail).catch(() => {});
+            }}
+          />
+        )}
+
+        {activeTab === "parallel" && hasParallelGroup && detail.parallelGroupId && (
+          <ParallelGroupStatus
+            parallelGroupId={detail.parallelGroupId}
+            onSelectChild={(childId) => {
+              // Navigate to child run — update workspace selection
+              useWorkspaceStore.getState().selectRun(childId);
+            }}
+            onStatusChange={() => {
+              client?.getRun(runId).then(setDetail).catch(() => {});
+            }}
           />
         )}
       </div>

@@ -32,6 +32,14 @@ const STATUS_CONFIG: Record<
   pending_review: { bg: "bg-yellow-950",    text: "text-yellow-400", dot: "bg-yellow-400", label: "Pending Review" },
   approved:       { bg: "bg-green-950",     text: "text-green-400",  dot: "bg-green-400",  label: "Approved" },
   changes_requested: { bg: "bg-orange-950", text: "text-orange-400", dot: "bg-orange-400", label: "Changes Requested" },
+  // ParallelGroupStatus
+  children_completed: { bg: "bg-blue-950",   text: "text-blue-400",   dot: "bg-blue-400",   label: "All Completed" },
+  children_mixed:     { bg: "bg-amber-950",  text: "text-amber-400",  dot: "bg-amber-400",  label: "Mixed Results" },
+  consolidating:      { bg: "bg-purple-950", text: "text-purple-400", dot: "bg-purple-400", label: "Consolidating" },
+  // ProposalStatus
+  proposed:  { bg: "bg-purple-950", text: "text-purple-400", dot: "bg-purple-400", label: "Proposed" },
+  launched:  { bg: "bg-blue-950",   text: "text-blue-400",   dot: "bg-blue-400",   label: "Launched" },
+  discarded: { bg: "bg-zinc-800",   text: "text-zinc-500",   dot: "bg-zinc-500",   label: "Discarded" },
 };
 
 const ANIMATED_STATUSES = new Set([
