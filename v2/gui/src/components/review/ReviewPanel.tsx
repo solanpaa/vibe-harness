@@ -312,6 +312,7 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
           review={detail.review}
           reviews={allReviews}
           selectedRound={selectedRound}
+          runId={runId}
           onSelectRound={handleSelectRound}
           onApprove={handleApprove}
           onRequestChanges={handleRequestChanges}

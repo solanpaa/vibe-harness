@@ -1,10 +1,12 @@
 import type { Review } from "@vibe-harness/shared";
 import { StatusBadge } from "../shared/StatusBadge";
+import { PopOutButton } from "../shared/PopOutButton";
 
 interface ReviewHeaderProps {
   review: Review;
   reviews: Review[];
   selectedRound: number;
+  runId: string;
   onSelectRound: (round: number) => void;
   onApprove: () => void;
   onRequestChanges: () => void;
@@ -19,6 +21,7 @@ export function ReviewHeader({
   review,
   reviews,
   selectedRound,
+  runId,
   onSelectRound,
   onApprove,
   onRequestChanges,
@@ -74,6 +77,10 @@ export function ReviewHeader({
 
       {/* Action buttons */}
       <div className="flex items-center gap-2 flex-shrink-0">
+        <PopOutButton
+          route={`/run/${runId}/review/${review.id}`}
+          title={`Review — ${review.stageName ?? "Review"} (Round ${review.round})`}
+        />
         {canRequestChanges && (
           <button
             onClick={onRequestChanges}
