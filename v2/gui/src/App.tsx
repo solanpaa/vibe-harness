@@ -153,8 +153,11 @@ function MainApp() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100">
-      {/* Top nav */}
-      <nav className="flex items-end h-11 border-b border-zinc-700/50 bg-zinc-900 px-4">
+      {/* Top nav — sits in the titlebar overlay zone on macOS */}
+      <nav
+        data-tauri-drag-region
+        className="flex items-end h-11 border-b border-zinc-700/50 bg-zinc-900 pl-[80px] pr-4"
+      >
         <div className="flex items-end gap-0.5">
           {NAV_ITEMS.map((item) => (
             <NavLink
