@@ -250,11 +250,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     } = options;
 
     // 1. Create git worktree
-    log.info({ branchName, baseBranch }, 'Creating worktree');
+    // If the run record has a parentWorktreeCommit (child of a split),
+    // branch from that exact SHA instead of the symbolic baseBranch name.
+    const db = getDb();
+    const runRecord = db
+      .select({ parentWorktreeCommit: schema.workflowRuns.parentWorktreeCommit })
+      .from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.id, runId))
+      .get();
+    const startPoint = runRecord?.parentWorktreeCommit ?? baseBranch;
+
+    log.info({ branchName, baseBranch: startPoint }, 'Creating worktree');
     const { worktreePath } = await worktree.create(
       projectPath,
       branchName,
-      baseBranch,
+      startPoint,
     );
 
     // 2. Provision Docker sandbox (idempotent via getOrCreate)

@@ -178,6 +178,33 @@ proposals.post('/api/proposals/launch', (c) => {
       );
     }
 
+    // Validate each proposal belongs to this run and has a launchable status
+    for (const proposalId of proposalIds) {
+      const proposal = db
+        .select({
+          id: schema.proposals.id,
+          workflowRunId: schema.proposals.workflowRunId,
+          status: schema.proposals.status,
+        })
+        .from(schema.proposals)
+        .where(eq(schema.proposals.id, proposalId))
+        .get();
+
+      if (!proposal || proposal.workflowRunId !== runId) {
+        return c.json(
+          { error: { code: 'VALIDATION_ERROR', message: `Proposal ${proposalId} does not belong to run ${runId}` } },
+          400,
+        );
+      }
+
+      if (proposal.status !== 'proposed' && proposal.status !== 'approved') {
+        return c.json(
+          { error: { code: 'VALIDATION_ERROR', message: `Proposal ${proposalId} has non-launchable status '${proposal.status}'` } },
+          400,
+        );
+      }
+    }
+
     // Mark selected proposals as approved
     const service = getProposalService();
     for (const proposalId of proposalIds) {
@@ -188,7 +215,9 @@ proposals.post('/api/proposals/launch', (c) => {
       }
     }
 
-    // Resume the proposalReviewHook via outbox pattern
+    // Resume the proposalReviewHook via outbox pattern.
+    // On crash, any un-deleted row in hookResumes is replayed by
+    // replayPendingHookResumes() in lib/reconcile.ts on startup.
     const hookToken = `proposals:${runId}`;
     const payload = { proposalIds };
 

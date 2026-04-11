@@ -142,8 +142,15 @@ export async function consolidate(
       'Snapshot before consolidation',
     );
 
-    // Create the consolidation branch — for now we use the worktree branch
-    // The consolidation happens on a branch created from parent's current state
+    // Create the consolidation branch from parent HEAD.
+    // Children merge into this branch, keeping the parent branch clean
+    // until the consolidation review is approved.
+    await deps.worktreeService.checkoutNewBranch(
+      projectPath,
+      parentRun.worktreePath,
+      metadata.consolidationBranch,
+    );
+
     advancePhase(db, journal.id, 'merge_children', metadata);
   }
 
@@ -168,11 +175,20 @@ export async function consolidate(
 
       if (!childRun?.branch) continue;
 
+      // Fix #5: If retrying after a resolved conflict, the child's branch
+      // may already be integrated into the current HEAD. Skip it.
+      const alreadyMerged = await deps.worktreeService.isAncestor(parentRun.worktreePath, childRun.branch);
+      if (alreadyMerged) {
+        (metadata.mergedChildren as string[]).push(childRunId);
+        advancePhase(db, journal.id, 'merge_children', metadata);
+        continue;
+      }
+
       const mergeResult = await deps.worktreeService.mergeBranch(
         projectPath,
         parentRun.worktreePath,
         childRun.branch,
-        parentRun.branch!,
+        metadata.consolidationBranch,
         { noFf: true },
       );
 
@@ -195,7 +211,7 @@ export async function consolidate(
   // ── Collect merge summary for the consolidation review (Fix #14) ──
   let mergedFiles: string | undefined;
   try {
-    const diff = await deps.worktreeService.getDiff(parentRun.worktreePath, parentRun.branch!);
+    const diff = await deps.worktreeService.getDiff(parentRun.worktreePath, metadata.consolidationBranch);
     mergedFiles = `${diff.stats.filesChanged} files changed, ${diff.stats.insertions} insertions(+), ${diff.stats.deletions} deletions(-)`;
   } catch {
     // Best-effort — diff summary is optional

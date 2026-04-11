@@ -89,6 +89,16 @@ export interface WorktreeService {
     targetBranch: string,
   ): Promise<void>;
 
+  /** Create and checkout a new branch in a worktree. */
+  checkoutNewBranch(
+    projectPath: string,
+    worktreePath: string,
+    branchName: string,
+  ): Promise<void>;
+
+  /** Check if a branch/commit is an ancestor of HEAD in the given worktree. */
+  isAncestor(worktreePath: string, ref: string): Promise<boolean>;
+
   listBranches(projectPath: string): Promise<string[]>;
 
   exists(worktreePath: string): Promise<boolean>;
@@ -457,6 +467,34 @@ export function createWorktreeService(deps: {
     }
   }
 
+  // ── checkoutNewBranch ───────────────────────────────────────────
+
+  async function checkoutNewBranch(
+    projectPath: string,
+    worktreePath: string,
+    branchName: string,
+  ): Promise<void> {
+    assertSafeRef(branchName, 'branchName');
+
+    return getRepoLock(projectPath).runExclusive(async () => {
+      const result = await git(['checkout', '-b', branchName], worktreePath);
+      if (result.exitCode !== 0) {
+        throw new GitOperationError('checkout -b', result.stderr);
+      }
+    });
+  }
+
+  // ── isAncestor (read — no lock) ────────────────────────────────
+
+  async function isAncestor(
+    worktreePath: string,
+    ref: string,
+  ): Promise<boolean> {
+    assertSafeRef(ref, 'ref');
+    const result = await git(['merge-base', '--is-ancestor', ref, 'HEAD'], worktreePath);
+    return result.exitCode === 0;
+  }
+
   return {
     create,
     remove,
@@ -465,6 +503,8 @@ export function createWorktreeService(deps: {
     rebase,
     mergeBranch,
     fastForwardMerge,
+    checkoutNewBranch,
+    isAncestor,
     listBranches,
     exists,
   };

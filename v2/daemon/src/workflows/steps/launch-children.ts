@@ -148,6 +148,7 @@ export async function launchChildren(
       id: groupId,
       sourceWorkflowRunId: parentRunId,
       status: 'running',
+      metadata: JSON.stringify({ snapshotCommit }),
     })
     .run();
 
@@ -270,6 +271,7 @@ async function launchMissingChildren(
         credentialSetId,
         baseBranch: parentBranch ?? null,
         targetBranch: parentBranch ?? null,
+        parentWorktreeCommit: snapshotCommit ?? null,
       })
       .run();
 

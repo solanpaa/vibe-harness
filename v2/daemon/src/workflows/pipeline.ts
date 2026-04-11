@@ -562,8 +562,8 @@ async function handleConsolidationConflict(
 ): Promise<void> {
   updateRunStatus(ctx.runId, 'awaiting_conflict_resolution');
 
-  // Fix #13: Include operation type and timestamp in hook token
-  const hookToken = `conflict:${ctx.runId}:consolidate:${Date.now()}`;
+  // Stable, durable hook token — no Date.now() which breaks on replay
+  const hookToken = `conflict:${ctx.runId}:${groupId}:consolidate`;
   using hook = conflictResolutionHook.create({ token: hookToken });
   const decision = await hook;
 
@@ -728,6 +728,13 @@ function retryChildRun(childRunId: string): void {
     .set({ status: 'pending', completedAt: null })
     .where(eq(schema.workflowRuns.id, childRunId))
     .run();
+
+  // Actually restart the child pipeline (fire-and-forget).
+  // start() is imported from 'workflow/api' in the step modules;
+  // we import it here to avoid circular deps at module level.
+  import('workflow/api').then(({ start: startWorkflow }) => {
+    startWorkflow(runWorkflowPipeline, [{ runId: childRunId }]);
+  });
 }
 
 function cancelAllChildren(childRunIds: string[]): void {

@@ -93,6 +93,7 @@ export const workflowRuns = sqliteTable(
       .references(() => credentialSets.id),
     baseBranch: text('base_branch'),
     targetBranch: text('target_branch'),
+    parentWorktreeCommit: text('parent_worktree_commit'),
     model: text('model'),
     createdAt: createdAt(),
     completedAt: text('completed_at'),
@@ -247,6 +248,7 @@ export const parallelGroups = sqliteTable(
       .references(() => workflowRuns.id),
     name: text('name'),
     description: text('description'),
+    metadata: text('metadata'),                      // JSON: snapshotCommit, etc.
     status: text('status').notNull().default('pending'),
     createdAt: createdAt(),
     completedAt: text('completed_at'),
