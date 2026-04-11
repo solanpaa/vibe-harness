@@ -1,0 +1,5 @@
+{
+  "name": "vibe-harness-v2",
+  "private": true,
+  "workspaces": ["shared", "daemon", "gui"]
+}

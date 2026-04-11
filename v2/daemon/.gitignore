@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.nitro/
+.output/
+.workflow-data/
+.workflow-output/
+.well-known/
+.swc/
+*.db

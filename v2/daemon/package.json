@@ -1,0 +1,31 @@
+{
+  "name": "vibe-harness-daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "nitro dev",
+    "build": "nitro build",
+    "start": "node .output/server/index.mjs",
+    "test:db": "tsx src/db/test-db.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@vibe-harness/shared": "*",
+    "better-sqlite3": "^11.9.1",
+    "drizzle-orm": "^0.44.2",
+    "hono": "^4.10.6",
+    "nitro": "3.0.1-alpha.1",
+    "pino": "^9.6.0",
+    "rollup": "^4.53.2",
+    "workflow": "4.2.0-beta.67"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.7.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.nitro/
+.output/
+.workflow-data/
+*.db
+*.db-wal
+*.db-shm
+.vite/
+target/
