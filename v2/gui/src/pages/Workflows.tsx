@@ -27,17 +27,17 @@ function StagePipeline({ stages }: { stages: WorkflowStage[] }) {
     <div className="flex items-center gap-1 overflow-x-auto py-1">
       {stages.map((stage, i) => (
         <div key={i} className="flex items-center gap-1">
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-zinc-700 text-zinc-200 whitespace-nowrap">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground whitespace-nowrap">
             {stage.name || `Stage ${i + 1}`}
             {stage.type === "split" && (
               <span className="ml-1 text-amber-400" title="Split stage">⑂</span>
             )}
             {stage.reviewRequired && (
-              <span className="ml-1 text-blue-400" title="Review gate">◉</span>
+              <span className="ml-1 text-primary" title="Review gate">◉</span>
             )}
           </span>
           {i < stages.length - 1 && (
-            <span className="text-zinc-500">→</span>
+            <span className="text-muted-foreground">→</span>
           )}
         </div>
       ))}
@@ -84,13 +84,13 @@ function StageEditor({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-zinc-300">
+        <label className="block text-sm font-medium text-foreground">
           Stages ({stages.length})
         </label>
         <button
           type="button"
           onClick={add}
-          className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
+          className="px-2 py-1 text-xs rounded-md bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           + Add Stage
         </button>
@@ -101,9 +101,9 @@ function StageEditor({
       )}
 
       {stages.map((stage, idx) => (
-        <div key={idx} className="border border-zinc-700 rounded-lg p-3 space-y-2 bg-zinc-800/50">
+        <div key={idx} className="border border-border rounded-lg p-3 space-y-2 bg-card">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-zinc-300">
+            <span className="text-sm font-medium text-foreground">
               Stage {idx + 1}
             </span>
             <div className="flex items-center gap-1">
@@ -111,7 +111,7 @@ function StageEditor({
                 type="button"
                 onClick={() => moveUp(idx)}
                 disabled={idx === 0}
-                className="px-1.5 py-0.5 text-xs rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 text-zinc-300"
+                className="px-1.5 py-0.5 text-xs rounded bg-muted hover:bg-accent disabled:opacity-30 text-muted-foreground"
               >
                 ↑
               </button>
@@ -119,14 +119,14 @@ function StageEditor({
                 type="button"
                 onClick={() => moveDown(idx)}
                 disabled={idx >= stages.length - 1}
-                className="px-1.5 py-0.5 text-xs rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 text-zinc-300"
+                className="px-1.5 py-0.5 text-xs rounded bg-muted hover:bg-accent disabled:opacity-30 text-muted-foreground"
               >
                 ↓
               </button>
               <button
                 type="button"
                 onClick={() => remove(idx)}
-                className="px-1.5 py-0.5 text-xs rounded bg-red-800/60 hover:bg-red-700 text-red-200"
+                className="px-1.5 py-0.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
               >
                 ✕
               </button>
@@ -135,21 +135,21 @@ function StageEditor({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs text-zinc-400 mb-0.5">Name</label>
+              <label className="block text-xs text-muted-foreground mb-0.5">Name</label>
               <input
                 type="text"
                 value={stage.name}
                 onChange={(e) => update(idx, { name: e.target.value })}
                 placeholder="e.g. plan"
-                className="w-full px-2 py-1 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-400 mb-0.5">Type</label>
+              <label className="block text-xs text-muted-foreground mb-0.5">Type</label>
               <select
                 value={stage.type}
                 onChange={(e) => update(idx, { type: e.target.value as "standard" | "split" })}
-                className="w-full px-2 py-1 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
               >
                 <option value="standard">Standard</option>
                 <option value="split">Split</option>
@@ -158,18 +158,18 @@ function StageEditor({
           </div>
 
           <div>
-            <label className="block text-xs text-zinc-400 mb-0.5">Prompt Template</label>
+            <label className="block text-xs text-muted-foreground mb-0.5">Prompt Template</label>
             <textarea
               value={stage.promptTemplate}
               onChange={(e) => update(idx, { promptTemplate: e.target.value })}
               placeholder="Instructions for this stage..."
               rows={3}
-              className="w-full px-2 py-1 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none resize-y"
+              className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none resize-y"
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm">
-            <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-foreground cursor-pointer">
               <input
                 type="checkbox"
                 checked={stage.reviewRequired}
@@ -179,11 +179,11 @@ function StageEditor({
                     autoAdvance: e.target.checked ? false : stage.autoAdvance,
                   })
                 }
-                className="rounded bg-zinc-900 border-zinc-600"
+                className="rounded bg-background border-border"
               />
               Review required
             </label>
-            <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-foreground cursor-pointer">
               <input
                 type="checkbox"
                 checked={stage.autoAdvance}
@@ -193,27 +193,27 @@ function StageEditor({
                     reviewRequired: e.target.checked ? false : stage.reviewRequired,
                   })
                 }
-                className="rounded bg-zinc-900 border-zinc-600"
+                className="rounded bg-background border-border"
               />
               Auto advance
             </label>
-            <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-foreground cursor-pointer">
               <input
                 type="checkbox"
                 checked={stage.freshSession}
                 onChange={(e) => update(idx, { freshSession: e.target.checked })}
-                className="rounded bg-zinc-900 border-zinc-600"
+                className="rounded bg-background border-border"
               />
               Fresh session
             </label>
             <div className="flex items-center gap-1.5">
-              <label className="text-zinc-400 text-xs">Model</label>
+              <label className="text-muted-foreground text-xs">Model</label>
               <input
                 type="text"
                 value={stage.model ?? ""}
                 onChange={(e) => update(idx, { model: e.target.value || undefined })}
                 placeholder="(default)"
-                className="w-28 px-2 py-0.5 text-xs rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                className="w-28 px-2 py-0.5 text-xs rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
               />
             </div>
           </div>
@@ -221,7 +221,7 @@ function StageEditor({
       ))}
 
       {stages.length === 0 && (
-        <p className="text-zinc-500 text-sm text-center py-4">
+        <p className="text-muted-foreground text-sm text-center py-4">
           No stages yet. Add at least one stage.
         </p>
       )}
@@ -294,30 +294,30 @@ function TemplateForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 max-w-3xl">
       {error && (
-        <div className="px-3 py-2 rounded bg-red-900/40 border border-red-700 text-red-300 text-sm">
+        <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/30 text-destructive text-sm">
           {error}
         </div>
       )}
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">Name</label>
+        <label className="block text-sm font-medium text-foreground mb-1">Name</label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Plan & Implement"
-          className="w-full px-3 py-1.5 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none"
+          className="w-full px-3 py-1.5 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">Description</label>
+        <label className="block text-sm font-medium text-foreground mb-1">Description</label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description"
-          className="w-full px-3 py-1.5 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 focus:border-blue-500 focus:outline-none"
+          className="w-full px-3 py-1.5 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
         />
       </div>
 
@@ -327,14 +327,14 @@ function TemplateForm({
         <button
           type="submit"
           disabled={saving}
-          className="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50"
         >
           {saving ? "Saving..." : submitLabel}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-1.5 text-sm rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
+          className="px-3 py-1.5 text-sm rounded-md bg-muted hover:bg-accent text-muted-foreground"
         >
           Cancel
         </button>
@@ -385,7 +385,7 @@ function TemplateDetail({
   if (editing) {
     return (
       <div>
-        <h2 className="text-lg font-semibold text-zinc-200 mb-4">Edit Template</h2>
+        <h2 className="text-lg font-semibold text-foreground mb-4">Edit Template</h2>
         <TemplateForm
           initial={template}
           onSubmit={handleUpdate}
@@ -401,65 +401,65 @@ function TemplateDetail({
       <div className="flex items-center gap-2">
         <button
           onClick={onBack}
-          className="px-2 py-1 text-xs rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+          className="px-2 py-1 text-xs rounded-md bg-muted hover:bg-accent text-muted-foreground"
         >
           ← Back
         </button>
-        <h2 className="text-lg font-semibold text-zinc-200">{template.name}</h2>
+        <h2 className="text-lg font-semibold text-foreground">{template.name}</h2>
         {template.isBuiltIn && (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-amber-800/50 text-amber-300">
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             Built-in
           </span>
         )}
       </div>
 
       {error && (
-        <div className="px-3 py-2 rounded bg-red-900/40 border border-red-700 text-red-300 text-sm">
+        <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/30 text-destructive text-sm">
           {error}
         </div>
       )}
 
       {template.description && (
-        <p className="text-sm text-zinc-400">{template.description}</p>
+        <p className="text-sm text-muted-foreground">{template.description}</p>
       )}
 
       <div>
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">Pipeline</h3>
+        <h3 className="text-sm font-medium text-muted-foreground mb-2">Pipeline</h3>
         <StagePipeline stages={template.stages} />
       </div>
 
       <div>
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">Stages</h3>
+        <h3 className="text-sm font-medium text-muted-foreground mb-2">Stages</h3>
         <div className="space-y-2">
           {template.stages.map((stage, i) => (
-            <div key={i} className="border border-zinc-700 rounded-lg p-3 bg-zinc-800/50">
+            <div key={i} className="border border-border rounded-lg p-3 bg-card">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-medium text-zinc-200">{stage.name}</span>
-                <span className="px-1.5 py-0.5 text-xs rounded bg-zinc-700 text-zinc-400">
+                <span className="text-sm font-medium text-foreground">{stage.name}</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                   {stage.type}
                 </span>
                 {stage.reviewRequired && (
-                  <span className="px-1.5 py-0.5 text-xs rounded bg-blue-900/40 text-blue-300">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     review
                   </span>
                 )}
                 {stage.autoAdvance && (
-                  <span className="px-1.5 py-0.5 text-xs rounded bg-green-900/40 text-green-300">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     auto-advance
                   </span>
                 )}
                 {stage.freshSession && (
-                  <span className="px-1.5 py-0.5 text-xs rounded bg-purple-900/40 text-purple-300">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     fresh
                   </span>
                 )}
                 {stage.model && (
-                  <span className="px-1.5 py-0.5 text-xs rounded bg-zinc-700 text-zinc-400">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     {stage.model}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-zinc-500 whitespace-pre-wrap font-mono">
+              <p className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">
                 {stage.promptTemplate}
               </p>
             </div>
@@ -467,11 +467,11 @@ function TemplateDetail({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 pt-2 border-t border-zinc-800">
+      <div className="flex items-center gap-2 pt-2 border-t border-border">
         <button
           onClick={() => setEditing(true)}
           disabled={template.isBuiltIn}
-          className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
           title={template.isBuiltIn ? "Cannot edit built-in templates" : ""}
         >
           Edit
@@ -479,12 +479,12 @@ function TemplateDetail({
         <button
           onClick={handleDelete}
           disabled={template.isBuiltIn || deleting}
-          className="px-3 py-1.5 text-sm rounded bg-red-800/60 hover:bg-red-700 text-red-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title={template.isBuiltIn ? "Cannot delete built-in templates" : ""}
         >
           {deleting ? "Deleting..." : "Delete"}
         </button>
-        <span className="ml-auto text-xs text-zinc-500">
+        <span className="ml-auto text-xs text-muted-foreground">
           Created {new Date(template.createdAt).toLocaleDateString()}
         </span>
       </div>
@@ -534,8 +534,8 @@ export function Workflows() {
     };
 
     return (
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-200 mb-4">Create Workflow Template</h1>
+      <div className="p-6 max-w-4xl">
+        <h1 className="text-lg font-semibold text-foreground mb-6">Create Workflow Template</h1>
         <TemplateForm
           onSubmit={handleCreate}
           onCancel={() => setView("list")}
@@ -549,7 +549,7 @@ export function Workflows() {
 
   if (view === "detail" && selectedTemplate) {
     return (
-      <div>
+      <div className="p-6 max-w-4xl">
         <TemplateDetail
           template={selectedTemplate}
           onBack={() => {
@@ -571,35 +571,37 @@ export function Workflows() {
 
   if (!connected) {
     return (
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-200 mb-4">Workflows</h1>
-        <p className="text-zinc-500">Daemon not connected.</p>
+      <div className="p-6 max-w-4xl">
+        <h1 className="text-lg font-semibold text-foreground mb-4">Workflows</h1>
+        <p className="text-muted-foreground">Daemon not connected.</p>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-zinc-200">Workflow Templates</h1>
+    <div className="p-6 max-w-4xl">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-lg font-semibold text-foreground">Workflow Templates</h1>
         <button
           onClick={() => setView("create")}
-          className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white"
+          className="text-sm px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           + Create Template
         </button>
       </div>
 
       {error && (
-        <div className="px-3 py-2 mb-3 rounded bg-red-900/40 border border-red-700 text-red-300 text-sm">
+        <div className="px-3 py-2 mb-3 rounded bg-destructive/10 border border-destructive/30 text-destructive text-sm">
           {error}
         </div>
       )}
 
       {loading ? (
-        <p className="text-zinc-500 text-sm">Loading...</p>
+        <p className="text-muted-foreground text-sm">Loading...</p>
       ) : templates.length === 0 ? (
-        <p className="text-zinc-500 text-sm">No workflow templates found.</p>
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">No workflow templates found.</p>
+        </div>
       ) : (
         <div className="space-y-2">
           {templates.map((t) => (
@@ -609,21 +611,21 @@ export function Workflows() {
                 setSelectedId(t.id);
                 setView("detail");
               }}
-              className="w-full text-left px-4 py-3 rounded-lg border border-zinc-700 bg-zinc-800/50 hover:bg-zinc-800 transition-colors"
+              className="w-full text-left px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors"
             >
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-medium text-zinc-200">{t.name}</span>
+                <span className="text-sm font-medium text-foreground">{t.name}</span>
                 {t.isBuiltIn && (
-                  <span className="px-1.5 py-0.5 text-xs rounded bg-amber-800/50 text-amber-300">
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     Built-in
                   </span>
                 )}
-                <span className="ml-auto text-xs text-zinc-500">
+                <span className="ml-auto text-xs text-muted-foreground">
                   {t.stages.length} stage{t.stages.length !== 1 ? "s" : ""}
                 </span>
               </div>
               {t.description && (
-                <p className="text-xs text-zinc-400 mb-1.5">{t.description}</p>
+                <p className="text-xs text-muted-foreground mb-1.5">{t.description}</p>
               )}
               <StagePipeline stages={t.stages} />
             </button>

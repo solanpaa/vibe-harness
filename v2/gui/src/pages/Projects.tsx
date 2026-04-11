@@ -57,65 +57,65 @@ function AddProjectForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 mb-4 space-y-3"
+      className="bg-card border border-border rounded-lg p-4 mb-4 space-y-3"
     >
-      <h3 className="text-sm font-semibold text-zinc-200">Add Project</h3>
+      <h3 className="text-sm font-semibold text-foreground">Add Project</h3>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Local Path <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Local Path <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={localPath}
           onChange={(e) => setLocalPath(e.target.value)}
           placeholder="/path/to/git/repo"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
           required
         />
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Name <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Name <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="my-project"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
           required
         />
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Description</label>
+        <label className="block text-xs text-muted-foreground mb-1">Description</label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
         />
       </div>
 
       {error && (
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-destructive">{error}</p>
       )}
 
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white transition-colors"
+          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Project"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 transition-colors"
+          className="px-3 py-1.5 text-sm bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
         >
           Cancel
         </button>
@@ -159,24 +159,24 @@ function ProjectRow({
   };
 
   return (
-    <div className="bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
+    <div className="rounded-lg border border-border bg-card overflow-hidden hover:bg-accent/50 transition-colors">
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-zinc-750"
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer"
         onClick={handleExpand}
       >
-        <span className="text-xs text-zinc-500">{expanded ? "▼" : "▶"}</span>
+        <span className="text-xs text-muted-foreground">{expanded ? "▼" : "▶"}</span>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-zinc-200">{project.name}</div>
-          <div className="text-xs text-zinc-500 truncate font-mono">
+          <div className="text-sm font-medium text-foreground">{project.name}</div>
+          <div className="font-mono text-xs text-muted-foreground truncate">
             {project.localPath}
           </div>
           {project.description && (
-            <div className="text-xs text-zinc-400 mt-0.5">{project.description}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{project.description}</div>
           )}
         </div>
         <div className="flex items-center gap-2">
           {project.gitUrl && (
-            <span className="text-xs text-zinc-500 truncate max-w-48">
+            <span className="font-mono text-xs text-muted-foreground truncate max-w-48">
               {project.gitUrl}
             </span>
           )}
@@ -184,13 +184,13 @@ function ProjectRow({
             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => onDelete(project.id)}
-                className="px-2 py-1 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
+                className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
               >
                 Confirm
               </button>
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
+                className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
               >
                 Cancel
               </button>
@@ -201,7 +201,7 @@ function ProjectRow({
                 e.stopPropagation();
                 setConfirmDelete(true);
               }}
-              className="px-2 py-1 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
+              className="text-xs text-muted-foreground hover:text-destructive transition-colors"
             >
               Delete
             </button>
@@ -210,10 +210,10 @@ function ProjectRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-700 px-4 py-3">
-          <h4 className="text-xs font-semibold text-zinc-400 mb-2">Branches</h4>
+        <div className="border-t border-border px-4 py-3">
+          <h4 className="text-xs font-semibold text-muted-foreground mb-2">Branches</h4>
           {loadingBranches ? (
-            <p className="text-xs text-zinc-500">Loading branches…</p>
+            <p className="text-xs text-muted-foreground">Loading branches…</p>
           ) : branches ? (
             branches.branches.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -222,22 +222,22 @@ function ProjectRow({
                     key={b.name}
                     className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded font-mono ${
                       b.isCurrent
-                        ? "bg-blue-600/20 text-blue-300 border border-blue-500/30"
-                        : "bg-zinc-700 text-zinc-400"
+                        ? "bg-primary/15 text-primary border border-primary/30"
+                        : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {b.name}
                     {b.lastCommit && (
-                      <span className="text-zinc-500">{b.lastCommit}</span>
+                      <span className="text-muted-foreground">{b.lastCommit}</span>
                     )}
                   </span>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-zinc-500">No branches found</p>
+              <p className="text-xs text-muted-foreground">No branches found</p>
             )
           ) : (
-            <p className="text-xs text-zinc-500">Failed to load branches</p>
+            <p className="text-xs text-muted-foreground">Failed to load branches</p>
           )}
         </div>
       )}
@@ -284,9 +284,9 @@ export function Projects() {
 
   if (!connected) {
     return (
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-200 mb-4">Projects</h1>
-        <p className="text-zinc-500">
+      <div className="p-6 max-w-4xl">
+        <h1 className="text-lg font-semibold text-foreground mb-4">Projects</h1>
+        <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage projects.
         </p>
       </div>
@@ -294,13 +294,13 @@ export function Projects() {
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-zinc-200">Projects</h1>
+    <div className="p-6 max-w-4xl h-full flex flex-col">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-lg font-semibold text-foreground">Projects</h1>
         {!showAddForm && (
           <button
             onClick={() => setShowAddForm(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 rounded text-white transition-colors"
+            className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
             + Add Project
           </button>
@@ -318,18 +318,18 @@ export function Projects() {
       )}
 
       {error && (
-        <div className="mb-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
+        <div className="mb-3 px-3 py-2 bg-destructive/10 border border-destructive/30 rounded text-xs text-destructive">
           {error}
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto space-y-2">
         {loading ? (
-          <p className="text-zinc-500 text-sm">Loading projects…</p>
+          <p className="text-muted-foreground text-sm">Loading projects…</p>
         ) : projects.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-zinc-500 mb-2">No projects registered yet.</p>
-            <p className="text-xs text-zinc-600">
+            <p className="text-muted-foreground mb-2">No projects registered yet.</p>
+            <p className="text-xs text-muted-foreground/60">
               Add a project by pointing to a local git repository.
             </p>
           </div>

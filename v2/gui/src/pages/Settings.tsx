@@ -50,51 +50,51 @@ function AddAgentForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 mb-4 space-y-3"
+      className="bg-card border border-border rounded-lg p-4 mb-4 space-y-3"
     >
-      <h3 className="text-sm font-semibold text-zinc-200">Add Custom Agent</h3>
+      <h3 className="text-sm font-semibold text-foreground">Add Custom Agent</h3>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Name <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Name <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="My Custom Agent"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
           required
         />
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Command Template <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Command Template <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={commandTemplate}
           onChange={(e) => setCommandTemplate(e.target.value)}
           placeholder="copilot-cli"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
           required
         />
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Description</label>
+        <label className="block text-xs text-muted-foreground mb-1">Description</label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
         />
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
+        <label className="block text-xs text-muted-foreground mb-1">
           Docker Image
         </label>
         <input
@@ -102,24 +102,24 @@ function AddAgentForm({
           value={dockerImage}
           onChange={(e) => setDockerImage(e.target.value)}
           placeholder="ghcr.io/owner/image:tag"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
         />
       </div>
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white transition-colors"
+          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Agent"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 transition-colors"
+          className="px-3 py-1.5 text-sm bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
         >
           Cancel
         </button>
@@ -140,28 +140,28 @@ function AgentRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
-    <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 flex items-center gap-3">
+    <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-3 hover:bg-accent/50 transition-colors">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-zinc-200">{agent.name}</span>
-          <span className="px-1.5 py-0.5 text-xs rounded bg-zinc-700 text-zinc-400 font-mono">
+          <span className="text-sm font-medium text-foreground">{agent.name}</span>
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
             {agent.type}
           </span>
           {agent.isBuiltIn && (
-            <span className="px-1.5 py-0.5 text-xs rounded bg-amber-600/20 text-amber-300 border border-amber-500/30">
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
               Built-in
             </span>
           )}
         </div>
         {agent.description && (
-          <div className="text-xs text-zinc-400 mt-0.5">{agent.description}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">{agent.description}</div>
         )}
-        <div className="text-xs text-zinc-500 font-mono mt-0.5">
+        <div className="font-mono text-xs text-muted-foreground mt-0.5">
           {agent.commandTemplate}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-zinc-500">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {agent.supportsStreaming && <span title="Streaming">🔄</span>}
         {agent.supportsContinue && <span title="Continue">⏩</span>}
         {agent.supportsIntervention && <span title="Intervention">✋</span>}
@@ -172,13 +172,13 @@ function AgentRow({
           <div className="flex gap-1">
             <button
               onClick={() => onDelete(agent.id)}
-              className="px-2 py-1 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
+              className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
             >
               Confirm
             </button>
             <button
               onClick={() => setConfirmDelete(false)}
-              className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
+              className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
             >
               Cancel
             </button>
@@ -186,7 +186,7 @@ function AgentRow({
         ) : (
           <button
             onClick={() => setConfirmDelete(true)}
-            className="px-2 py-1 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors"
           >
             Delete
           </button>
@@ -235,9 +235,9 @@ export function Settings() {
 
   if (!connected) {
     return (
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-200 mb-4">Settings</h1>
-        <p className="text-zinc-500">
+      <div className="p-6 max-w-4xl">
+        <h1 className="text-lg font-semibold text-foreground mb-4">Settings</h1>
+        <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage settings.
         </p>
       </div>
@@ -245,19 +245,19 @@ export function Settings() {
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <h1 className="text-xl font-semibold text-zinc-200 mb-6">Settings</h1>
+    <div className="p-6 max-w-4xl h-full flex flex-col">
+      <h1 className="text-lg font-semibold text-foreground mb-6">Settings</h1>
 
       {/* Agent Definitions Section */}
       <section>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-medium text-zinc-300">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Agent Definitions
           </h2>
           {!showAddForm && (
             <button
               onClick={() => setShowAddForm(true)}
-              className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 rounded text-white transition-colors"
+              className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
             >
               + Add Agent
             </button>
@@ -275,16 +275,18 @@ export function Settings() {
         )}
 
         {error && (
-          <div className="mb-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
+          <div className="mb-3 px-3 py-2 bg-destructive/10 border border-destructive/30 rounded text-xs text-destructive">
             {error}
           </div>
         )}
 
         <div className="space-y-2">
           {loading ? (
-            <p className="text-zinc-500 text-sm">Loading agents…</p>
+            <p className="text-muted-foreground text-sm">Loading agents…</p>
           ) : agents.length === 0 ? (
-            <p className="text-zinc-500 text-sm">No agent definitions found.</p>
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">No agent definitions found.</p>
+            </div>
           ) : (
             agents.map((a) => (
               <AgentRow key={a.id} agent={a} onDelete={handleDelete} />

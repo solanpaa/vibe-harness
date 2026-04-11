@@ -67,45 +67,45 @@ function AddSetForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 mb-4 space-y-3"
+      className="bg-card border border-border rounded-lg p-4 mb-4 space-y-3"
     >
-      <h3 className="text-sm font-semibold text-zinc-200">New Credential Set</h3>
+      <h3 className="text-sm font-semibold text-foreground">New Credential Set</h3>
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Name <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Name <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Production API Keys"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
           required
         />
       </div>
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Description</label>
+        <label className="block text-xs text-muted-foreground mb-1">Description</label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description"
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
         />
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white transition-colors"
+          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Creating…" : "Create Set"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 transition-colors"
+          className="px-3 py-1.5 text-sm bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
         >
           Cancel
         </button>
@@ -162,16 +162,16 @@ function AddEntryForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-zinc-850 border border-zinc-600 rounded p-3 mt-3 space-y-3"
+      className="bg-card border border-border rounded p-3 mt-3 space-y-3"
     >
-      <h4 className="text-xs font-semibold text-zinc-300">Add Credential Entry</h4>
+      <h4 className="text-xs font-semibold text-foreground">Add Credential Entry</h4>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Type</label>
+        <label className="block text-xs text-muted-foreground mb-1">Type</label>
         <select
           value={type}
           onChange={(e) => setType(e.target.value as CredentialEntryType)}
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
         >
           {ENTRY_TYPES.map((t) => (
             <option key={t.value} value={t.value}>
@@ -179,29 +179,29 @@ function AddEntryForm({
             </option>
           ))}
         </select>
-        <p className="text-xs text-zinc-500 mt-1">
+        <p className="text-xs text-muted-foreground mt-1">
           {ENTRY_TYPES.find((t) => t.value === type)?.description}
         </p>
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          Key <span className="text-red-400">*</span>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Key <span className="text-destructive">*</span>
         </label>
         <input
           type="text"
           value={key}
           onChange={(e) => setKey(e.target.value)}
           placeholder={type === "docker_login" ? "registry.example.com" : "API_KEY"}
-          className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
           required
         />
       </div>
 
       {needsValue && (
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">
-            Value <span className="text-red-400">*</span>
+          <label className="block text-xs text-muted-foreground mb-1">
+            Value <span className="text-destructive">*</span>
           </label>
           <textarea
             value={value}
@@ -214,7 +214,7 @@ function AddEntryForm({
                   : "secret value"
             }
             rows={type === "file_mount" || type === "docker_login" ? 4 : 2}
-            className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
             required
           />
         </div>
@@ -222,15 +222,15 @@ function AddEntryForm({
 
       {needsMountPath && (
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">
-            Mount Path <span className="text-red-400">*</span>
+          <label className="block text-xs text-muted-foreground mb-1">
+            Mount Path <span className="text-destructive">*</span>
           </label>
           <input
             type="text"
             value={mountPath}
             onChange={(e) => setMountPath(e.target.value)}
             placeholder={type === "host_dir_mount" ? "/container/path" : "/home/user/.config/file"}
-            className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
             required
           />
         </div>
@@ -238,15 +238,15 @@ function AddEntryForm({
 
       {needsCommand && (
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">
-            Command <span className="text-red-400">*</span>
+          <label className="block text-xs text-muted-foreground mb-1">
+            Command <span className="text-destructive">*</span>
           </label>
           <input
             type="text"
             value={command}
             onChange={(e) => setCommand(e.target.value)}
             placeholder="gcloud auth print-access-token"
-            className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
             required
           />
           <p className="text-xs text-amber-400 mt-1">
@@ -255,20 +255,20 @@ function AddEntryForm({
         </div>
       )}
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white transition-colors"
+          className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Adding…" : "Add Entry"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 transition-colors"
+          className="px-3 py-1.5 text-xs bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
         >
           Cancel
         </button>
@@ -301,13 +301,13 @@ function EntryDeleteButton({
               onDeleted();
             }
           }}
-          className="px-2 py-0.5 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
+          className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
         >
           Confirm
         </button>
         <button
           onClick={() => setConfirmDelete(false)}
-          className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
+          className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
         >
           Cancel
         </button>
@@ -318,7 +318,7 @@ function EntryDeleteButton({
   return (
     <button
       onClick={() => setConfirmDelete(true)}
-      className="px-2 py-0.5 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
+      className="text-xs text-muted-foreground hover:text-destructive transition-colors"
     >
       Delete
     </button>
@@ -367,32 +367,32 @@ function CredentialSetRow({
   };
 
   return (
-    <div className="bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
+    <div className="rounded-lg border border-border bg-card overflow-hidden hover:bg-accent/50 transition-colors">
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-zinc-750"
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer"
         onClick={handleExpand}
       >
-        <span className="text-xs text-zinc-500">{expanded ? "▼" : "▶"}</span>
+        <span className="text-xs text-muted-foreground">{expanded ? "▼" : "▶"}</span>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-zinc-200">{credSet.name}</div>
+          <div className="text-sm font-medium text-foreground">{credSet.name}</div>
           {credSet.description && (
-            <div className="text-xs text-zinc-400 mt-0.5">{credSet.description}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{credSet.description}</div>
           )}
         </div>
-        <span className="text-xs text-zinc-500">
+        <span className="text-xs text-muted-foreground">
           {credSet.entryCount} {credSet.entryCount === 1 ? "entry" : "entries"}
         </span>
         {confirmDelete ? (
           <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={handleDelete}
-              className="px-2 py-1 text-xs bg-red-600 hover:bg-red-500 rounded text-white"
+              className="px-2 py-0.5 text-xs bg-destructive hover:bg-destructive/90 rounded text-destructive-foreground"
             >
               Confirm
             </button>
             <button
               onClick={() => setConfirmDelete(false)}
-              className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300"
+              className="px-2 py-0.5 text-xs bg-muted hover:bg-accent rounded text-muted-foreground"
             >
               Cancel
             </button>
@@ -403,7 +403,7 @@ function CredentialSetRow({
               e.stopPropagation();
               setConfirmDelete(true);
             }}
-            className="px-2 py-1 text-xs bg-zinc-700 hover:bg-red-600/80 rounded text-zinc-400 hover:text-white transition-colors"
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors"
           >
             Delete
           </button>
@@ -411,13 +411,13 @@ function CredentialSetRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-700 px-4 py-3">
+        <div className="border-t border-border px-4 py-3">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-xs font-semibold text-zinc-400">Entries</h4>
+            <h4 className="text-xs font-semibold text-muted-foreground">Entries</h4>
             {!showAddEntry && (
               <button
                 onClick={() => setShowAddEntry(true)}
-                className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 transition-colors"
+                className="px-2 py-1 text-xs bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
               >
                 + Add Entry
               </button>
@@ -425,9 +425,9 @@ function CredentialSetRow({
           </div>
 
           {loadingEntries ? (
-            <p className="text-xs text-zinc-500">Loading entries…</p>
+            <p className="text-xs text-muted-foreground">Loading entries…</p>
           ) : entries.length > 0 ? (
-            <EnvironmentVariables className="bg-zinc-900 border-zinc-600">
+            <EnvironmentVariables className="bg-background border-border">
               <EnvironmentVariablesHeader>
                 <EnvironmentVariablesTitle>Credentials</EnvironmentVariablesTitle>
                 <EnvironmentVariablesToggle />
@@ -454,12 +454,12 @@ function CredentialSetRow({
                       </span>
                       <EnvironmentVariableName />
                       {entry.mountPath && (
-                        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
+                        <span className="text-xs text-muted-foreground font-mono truncate max-w-48">
                           → {entry.mountPath}
                         </span>
                       )}
                       {entry.command && (
-                        <span className="text-xs text-zinc-500 font-mono truncate max-w-48">
+                        <span className="text-xs text-muted-foreground font-mono truncate max-w-48">
                           $ {entry.command}
                         </span>
                       )}
@@ -473,7 +473,7 @@ function CredentialSetRow({
               </EnvironmentVariablesContent>
             </EnvironmentVariables>
           ) : (
-            <p className="text-xs text-zinc-500">No entries yet.</p>
+            <p className="text-xs text-muted-foreground">No entries yet.</p>
           )}
 
           {showAddEntry && (
@@ -523,49 +523,41 @@ function AuditLogViewer() {
     <div className="mt-6">
       <button
         onClick={handleExpand}
-        className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <span className="text-xs">{expanded ? "▼" : "▶"}</span>
         Audit Log
         {auditLog && (
-          <span className="text-xs text-zinc-500">({auditLog.total} entries)</span>
+          <span className="text-xs text-muted-foreground">({auditLog.total} entries)</span>
         )}
       </button>
 
       {expanded && (
-        <div className="mt-2 bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
+        <div className="mt-2 rounded-lg border border-border bg-card overflow-hidden">
           {loading ? (
-            <p className="text-xs text-zinc-500 p-3">Loading audit log…</p>
+            <p className="text-xs text-muted-foreground p-3">Loading audit log…</p>
           ) : auditLog && auditLog.entries.length > 0 ? (
             <div className="max-h-64 overflow-y-auto">
               <table className="w-full text-xs">
-                <thead className="bg-zinc-900 sticky top-0">
+                <thead className="bg-muted sticky top-0">
                   <tr>
-                    <th className="text-left px-3 py-2 text-zinc-400 font-medium">Time</th>
-                    <th className="text-left px-3 py-2 text-zinc-400 font-medium">Action</th>
-                    <th className="text-left px-3 py-2 text-zinc-400 font-medium">Details</th>
+                    <th className="text-left px-3 py-2 text-muted-foreground font-medium">Time</th>
+                    <th className="text-left px-3 py-2 text-muted-foreground font-medium">Action</th>
+                    <th className="text-left px-3 py-2 text-muted-foreground font-medium">Details</th>
                   </tr>
                 </thead>
                 <tbody>
                   {auditLog.entries.map((entry) => (
-                    <tr key={entry.id} className="border-t border-zinc-700">
-                      <td className="px-3 py-1.5 text-zinc-500 whitespace-nowrap">
+                    <tr key={entry.id} className="border-t border-border">
+                      <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
                         {new Date(entry.createdAt).toLocaleString()}
                       </td>
-                      <td className="px-3 py-1.5 text-zinc-300">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-xs ${
-                            entry.action === "accessed"
-                              ? "bg-blue-600/20 text-blue-300"
-                              : entry.action === "created"
-                                ? "bg-green-600/20 text-green-300"
-                                : "bg-red-600/20 text-red-300"
-                          }`}
-                        >
+                      <td className="px-3 py-1.5">
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                           {entry.action}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-zinc-400 font-mono truncate max-w-xs">
+                      <td className="px-3 py-1.5 text-muted-foreground font-mono truncate max-w-xs">
                         {entry.details
                           ? JSON.stringify(entry.details)
                           : "—"}
@@ -576,7 +568,7 @@ function AuditLogViewer() {
               </table>
             </div>
           ) : (
-            <p className="text-xs text-zinc-500 p-3">No audit entries.</p>
+            <p className="text-xs text-muted-foreground p-3">No audit entries.</p>
           )}
         </div>
       )}
@@ -613,9 +605,9 @@ export function Credentials() {
 
   if (!connected) {
     return (
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-200 mb-4">Credentials</h1>
-        <p className="text-zinc-500">
+      <div className="p-6 max-w-4xl">
+        <h1 className="text-lg font-semibold text-foreground mb-4">Credentials</h1>
+        <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage credentials.
         </p>
       </div>
@@ -623,13 +615,13 @@ export function Credentials() {
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-zinc-200">Credentials</h1>
+    <div className="p-6 max-w-4xl h-full flex flex-col">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-lg font-semibold text-foreground">Credentials</h1>
         {!showAddForm && (
           <button
             onClick={() => setShowAddForm(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 rounded text-white transition-colors"
+            className="text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
             + New Set
           </button>
@@ -647,18 +639,18 @@ export function Credentials() {
       )}
 
       {error && (
-        <div className="mb-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
+        <div className="mb-3 px-3 py-2 bg-destructive/10 border border-destructive/30 rounded text-xs text-destructive">
           {error}
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto space-y-2">
         {loading ? (
-          <p className="text-zinc-500 text-sm">Loading credential sets…</p>
+          <p className="text-muted-foreground text-sm">Loading credential sets…</p>
         ) : sets.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-zinc-500 mb-2">No credential sets yet.</p>
-            <p className="text-xs text-zinc-600">
+            <p className="text-muted-foreground mb-2">No credential sets yet.</p>
+            <p className="text-xs text-muted-foreground/60">
               Create a credential set to manage API keys, tokens, and secrets for your sandboxes.
             </p>
           </div>
