@@ -1,61 +1,165 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="1024"
+   height="1024"
+   viewBox="0 0 1024 1024"
+   version="1.1"
+   id="svg17"
+   sodipodi:docname="app-icon.svg"
+   inkscape:version="1.4 (e7c3feb1, 2024-10-09)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview17"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.53188098"
+     inkscape:cx="975.78221"
+     inkscape:cy="551.81518"
+     inkscape:window-width="2288"
+     inkscape:window-height="1186"
+     inkscape:window-x="0"
+     inkscape:window-y="25"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg17" />
+  <defs
+     id="defs16">
     <!-- Rainbow gradient from top-left to bottom-right -->
-    <linearGradient id="rainbow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FF0000"/>
-      <stop offset="16%" stop-color="#FF8800"/>
-      <stop offset="33%" stop-color="#FFDD00"/>
-      <stop offset="50%" stop-color="#00CC44"/>
-      <stop offset="66%" stop-color="#0088FF"/>
-      <stop offset="83%" stop-color="#6644FF"/>
-      <stop offset="100%" stop-color="#CC00FF"/>
+    <linearGradient
+       id="rainbow"
+       x1="0%"
+       y1="0%"
+       x2="100%"
+       y2="100%">
+      <stop
+         offset="0%"
+         stop-color="#FF0000"
+         id="stop1" />
+      <stop
+         offset="16%"
+         stop-color="#FF8800"
+         id="stop2" />
+      <stop
+         offset="33%"
+         stop-color="#FFDD00"
+         id="stop3" />
+      <stop
+         offset="50%"
+         stop-color="#00CC44"
+         id="stop4" />
+      <stop
+         offset="66%"
+         stop-color="#0088FF"
+         id="stop5" />
+      <stop
+         offset="83%"
+         stop-color="#6644FF"
+         id="stop6" />
+      <stop
+         offset="100%"
+         stop-color="#CC00FF"
+         id="stop7" />
     </linearGradient>
     <!-- Darker rainbow for the shield outline -->
-    <linearGradient id="rainbow-dark" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#CC0000"/>
-      <stop offset="16%" stop-color="#CC6600"/>
-      <stop offset="33%" stop-color="#CCAA00"/>
-      <stop offset="50%" stop-color="#009933"/>
-      <stop offset="66%" stop-color="#0066CC"/>
-      <stop offset="83%" stop-color="#4422CC"/>
-      <stop offset="100%" stop-color="#9900CC"/>
+    <linearGradient
+       id="rainbow-dark"
+       x1="0%"
+       y1="0%"
+       x2="100%"
+       y2="100%">
+      <stop
+         offset="0%"
+         stop-color="#CC0000"
+         id="stop8" />
+      <stop
+         offset="16%"
+         stop-color="#CC6600"
+         id="stop9" />
+      <stop
+         offset="33%"
+         stop-color="#CCAA00"
+         id="stop10" />
+      <stop
+         offset="50%"
+         stop-color="#009933"
+         id="stop11" />
+      <stop
+         offset="66%"
+         stop-color="#0066CC"
+         id="stop12" />
+      <stop
+         offset="83%"
+         stop-color="#4422CC"
+         id="stop13" />
+      <stop
+         offset="100%"
+         stop-color="#9900CC"
+         id="stop14" />
     </linearGradient>
     <!-- Dark background gradient -->
-    <radialGradient id="bg" cx="50%" cy="40%" r="60%">
-      <stop offset="0%" stop-color="#1a1a2e"/>
-      <stop offset="100%" stop-color="#0d0d1a"/>
+    <radialGradient
+       id="bg"
+       cx="50%"
+       cy="40%"
+       r="60%">
+      <stop
+         offset="0%"
+         stop-color="#1a1a2e"
+         id="stop15" />
+      <stop
+         offset="100%"
+         stop-color="#0d0d1a"
+         id="stop16" />
     </radialGradient>
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#rainbow"
+       id="linearGradient19"
+       x1="602.22162"
+       y1="513.69501"
+       x2="117.77826"
+       y2="29.25169"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#rainbow"
+       id="linearGradient21"
+       x1="716.65881"
+       y1="633.33459"
+       x2="405.54599"
+       y2="322.22174"
+       gradientUnits="userSpaceOnUse"
+       gradientTransform="translate(-8)" />
   </defs>
-  
   <!-- Superman diamond shape (rotated square with pointed bottom) -->
-  <path 
-    d="M 512 80 L 900 420 L 512 944 L 124 420 Z" 
-    fill="url(#bg)" 
-    stroke="url(#rainbow-dark)" 
-    stroke-width="24"
-    stroke-linejoin="round"
-  />
-  
   <!-- Inner border glow -->
-  <path 
-    d="M 512 120 L 868 410 L 512 900 L 156 410 Z" 
-    fill="none" 
-    stroke="url(#rainbow)" 
-    stroke-width="4"
-    stroke-linejoin="round"
-    opacity="0.5"
-  />
-  
   <!-- Italic V with rainbow gradient -->
-  <text 
-    x="512" 
-    y="580" 
-    text-anchor="middle" 
-    font-family="Georgia, 'Times New Roman', serif" 
-    font-size="520" 
-    font-style="italic" 
-    font-weight="bold"
-    fill="url(#rainbow)"
-    letter-spacing="-20"
-  >V</text>
+  <polygon
+     id="red_shield"
+     fill="#c80000"
+     stroke="#000000"
+     stroke-width="11"
+     points="25,129.4 138.287,20.154 581.744,20.154 695,129.4 360.001,519.846 "
+     transform="matrix(1.4259289,0,0,1.4259289,-1.2454624,155.41677)"
+     style="fill:none;stroke:url(#linearGradient19);stroke-width:21.03891716;stroke-dasharray:none"
+     inkscape:label="shield" />
+  <text
+     xml:space="preserve"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:676.994px;line-height:8.4;font-family:Charter;-inkscape-font-specification:'Charter Bold';text-align:start;letter-spacing:2.55936px;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:url(#linearGradient21);stroke:none;stroke-width:15.602;stroke-opacity:1"
+     x="314.93143"
+     y="703.88361"
+     id="text19"><tspan
+       sodipodi:role="line"
+       id="tspan19"
+       x="314.93143"
+       y="703.88361"
+       style="font-style:italic;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:676.994px;font-family:Charter;-inkscape-font-specification:'Charter Bold Italic';fill:url(#linearGradient21);fill-opacity:1;stroke:none;stroke-width:15.602;stroke-opacity:1">V</tspan></text>
 </svg>
