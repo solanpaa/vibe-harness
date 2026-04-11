@@ -22,6 +22,73 @@ fn state_dir() -> PathBuf {
         .join(".vibe-harness")
 }
 
+/// Check if a process with the given PID is still alive.
+fn is_process_alive(pid: u32) -> bool {
+    // On Unix, signal 0 checks if process exists without sending a signal
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        // Fallback: try connecting to health endpoint instead
+        false
+    }
+}
+
+/// Try to connect to an already-running daemon.
+/// Returns the port if a daemon is alive and healthy.
+fn try_existing_daemon() -> Option<u16> {
+    let pid_file = state_dir().join("daemon.pid");
+    let port_file = state_dir().join("daemon.port");
+
+    // Read PID file and check if process is alive
+    let pid_str = fs::read_to_string(&pid_file).ok()?;
+    let pid: u32 = pid_str.trim().parse().ok()?;
+
+    if !is_process_alive(pid) {
+        // Stale PID file — clean up
+        let _ = fs::remove_file(&pid_file);
+        let _ = fs::remove_file(&port_file);
+        return None;
+    }
+
+    // Process alive — read port
+    let port_str = fs::read_to_string(&port_file).ok()?;
+    let port: u16 = port_str.trim().parse().ok()?;
+
+    // Quick health check to confirm it's actually our daemon
+    if quick_health_check(port) {
+        Some(port)
+    } else {
+        None
+    }
+}
+
+/// Fast non-blocking health check (2s timeout).
+fn quick_health_check(port: u16) -> bool {
+    match std::net::TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_secs(2),
+    ) {
+        Ok(mut stream) => {
+            use std::io::{Read, Write};
+            let req = format!(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            );
+            if stream.write_all(req.as_bytes()).is_ok() {
+                let mut buf = Vec::new();
+                let _ = stream.read_to_end(&mut buf);
+                let response = String::from_utf8_lossy(&buf);
+                response.contains("\"status\":\"ok\"")
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 fn spawn_daemon(app: &AppHandle) -> Result<Child, String> {
     let sidecar_path = app
         .path()
@@ -76,50 +143,73 @@ fn poll_for_port(timeout: Duration) -> Result<u16, String> {
 }
 
 fn health_check(port: u16) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{port}/health");
     let start = Instant::now();
     let timeout = Duration::from_secs(10);
     loop {
         if start.elapsed() > timeout {
             return Err("Health check timed out".into());
         }
-        // Simple TCP-level check using a blocking HTTP GET
-        match std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_secs(2),
-        ) {
-            Ok(mut stream) => {
-                use std::io::{Read, Write};
-                let req = format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-                if stream.write_all(req.as_bytes()).is_ok() {
-                    let mut buf = Vec::new();
-                    let _ = stream.read_to_end(&mut buf);
-                    let response = String::from_utf8_lossy(&buf);
-                    if response.contains("\"status\":\"ok\"") {
-                        println!("Health check passed: {url}");
-                        return Ok(());
-                    }
-                }
-            }
-            Err(_) => {}
+        if quick_health_check(port) {
+            println!("Health check passed on port {port}");
+            return Ok(());
         }
         thread::sleep(Duration::from_millis(300));
     }
+}
+
+/// Tracks whether this GUI instance spawned the daemon.
+struct DaemonOwnership {
+    /// If Some, we spawned it and own the child process.
+    child: std::sync::Mutex<Option<Child>>,
+    /// True if we spawned the daemon (vs reusing existing).
+    we_spawned: std::sync::atomic::AtomicBool,
+}
+
+/// Tauri command: read a file from ~/.vibe-harness/{filename}
+#[tauri::command]
+fn read_state_file(filename: String) -> Result<String, String> {
+    // Prevent path traversal
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return Err("Invalid filename".into());
+    }
+    let path = state_dir().join(&filename);
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read {filename}: {e}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![read_state_file])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Register ownership state early
+            handle.manage(DaemonOwnership {
+                child: std::sync::Mutex::new(None),
+                we_spawned: std::sync::atomic::AtomicBool::new(false),
+            });
+
             // Spawn daemon startup in a background thread so we don't block the UI
             thread::spawn(move || {
+                // Step 1: Check if daemon is already running
+                if let Some(port) = try_existing_daemon() {
+                    println!("Reusing existing daemon on port {port}");
+                    let _ = handle.emit("daemon-connected", DaemonConnected { port });
+                    return;
+                }
+
+                // Step 2: No existing daemon — spawn one
+                println!("No existing daemon found, spawning...");
                 match spawn_daemon(&handle) {
                     Ok(child) => {
                         println!("Daemon spawned with pid {}", child.id());
-                        // Store the child process so we can kill it on exit
-                        handle.manage(DaemonProcess(std::sync::Mutex::new(Some(child))));
+                        if let Some(state) = handle.try_state::<DaemonOwnership>() {
+                            *state.child.lock().unwrap() = Some(child);
+                            state
+                                .we_spawned
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Failed to spawn daemon: {e}");
@@ -128,12 +218,14 @@ pub fn run() {
                     }
                 }
 
+                // Step 3: Wait for port file and health check
                 match poll_for_port(Duration::from_secs(30)) {
                     Ok(port) => {
                         println!("Daemon port: {port}");
                         match health_check(port) {
                             Ok(()) => {
-                                let _ = handle.emit("daemon-connected", DaemonConnected { port });
+                                let _ =
+                                    handle.emit("daemon-connected", DaemonConnected { port });
                             }
                             Err(e) => {
                                 eprintln!("Health check failed: {e}");
@@ -149,25 +241,8 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                // Kill the daemon when the window closes
-                if let Some(state) = window.try_state::<DaemonProcess>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(ref mut child) = *guard {
-                            println!("Killing daemon process {}", child.id());
-                            let _ = child.kill();
-                            let _ = child.wait(); // reap zombie
-                        }
-                    }
-                }
-                // Clean up port/pid files
-                let _ = fs::remove_file(state_dir().join("daemon.port"));
-                let _ = fs::remove_file(state_dir().join("daemon.pid"));
-            }
-        })
+        // Per SAD §2.2.3: daemon survives GUI close.
+        // We do NOT kill daemon on window close — it's a shared service.
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-struct DaemonProcess(std::sync::Mutex<Option<Child>>);
