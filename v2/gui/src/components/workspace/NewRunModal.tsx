@@ -61,7 +61,13 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         setAgents(agentRes.agents);
         setCredentials(credRes.sets);
 
-        // Auto-select first agent if available
+        // Auto-select when only one option
+        if (projRes.projects.length === 1 && !projectId) {
+          setProjectId(projRes.projects[0].id);
+        }
+        if (tmplRes.templates.length > 0 && !workflowTemplateId) {
+          setWorkflowTemplateId(tmplRes.templates[0].id);
+        }
         if (agentRes.agents.length > 0 && !agentDefinitionId) {
           setAgentDefinitionId(agentRes.agents[0].id);
         }
