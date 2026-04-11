@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Routes, Route, NavLink, useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useDaemonStore } from "./stores/daemon";
 import { useStreamingStore } from "./stores/streaming";
 import { WebSocketManager } from "./api/ws";
@@ -27,7 +28,20 @@ function App() {
   const navigate = useNavigate();
   const wsRef = useRef<WebSocketManager | null>(null);
 
-  // Listen for Tauri daemon events
+  // On mount, query Rust for current daemon status (avoids startup race with events)
+  useEffect(() => {
+    invoke<{ port: number } | null>("get_daemon_status")
+      .then((result) => {
+        if (result?.port) {
+          setConnected(result.port);
+        }
+      })
+      .catch(() => {
+        // Command not available or failed — rely on events instead
+      });
+  }, [setConnected]);
+
+  // Listen for Tauri daemon events (handles subsequent status changes)
   useEffect(() => {
     const unlisten = listen<{ port: number }>("daemon-connected", (event) => {
       setConnected(event.payload.port);

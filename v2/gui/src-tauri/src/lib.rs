@@ -1,10 +1,14 @@
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 #[derive(Clone, Serialize)]
 struct DaemonConnected {
@@ -65,7 +69,7 @@ fn try_existing_daemon() -> Option<u16> {
     }
 }
 
-/// Fast non-blocking health check (2s timeout).
+/// Fast non-blocking health check (2s connect + 3s read timeout).
 fn quick_health_check(port: u16) -> bool {
     match std::net::TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse().unwrap(),
@@ -73,6 +77,7 @@ fn quick_health_check(port: u16) -> bool {
     ) {
         Ok(mut stream) => {
             use std::io::{Read, Write};
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
             let req = format!(
                 "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
             );
@@ -89,7 +94,23 @@ fn quick_health_check(port: u16) -> bool {
     }
 }
 
-fn spawn_daemon(app: &AppHandle) -> Result<Child, String> {
+/// Detach spawned process from parent process group (Unix only).
+#[cfg(unix)]
+fn configure_detach(cmd: &mut Command) {
+    // SAFETY: setsid() after fork creates a new session so the daemon
+    // survives GUI exit without receiving SIGHUP.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_detach(_cmd: &mut Command) {}
+
+fn spawn_daemon(app: &AppHandle) -> Result<(), String> {
     let sidecar_path = app
         .path()
         .resource_dir()
@@ -120,10 +141,15 @@ fn spawn_daemon(app: &AppHandle) -> Result<Child, String> {
     let _ = fs::remove_file(state_dir().join("daemon.port"));
     let _ = fs::remove_file(state_dir().join("daemon.pid"));
 
-    Command::new("node")
-        .arg(&script)
+    let mut cmd = Command::new("node");
+    cmd.arg(&script);
+    configure_detach(&mut cmd);
+
+    let child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn daemon: {e}"))
+        .map_err(|e| format!("Failed to spawn daemon: {e}"))?;
+    println!("Daemon spawned with pid {}", child.id());
+    Ok(())
 }
 
 fn poll_for_port(timeout: Duration) -> Result<u16, String> {
@@ -157,12 +183,77 @@ fn health_check(port: u16) -> Result<(), String> {
     }
 }
 
-/// Tracks whether this GUI instance spawned the daemon.
-struct DaemonOwnership {
-    /// If Some, we spawned it and own the child process.
-    child: std::sync::Mutex<Option<Child>>,
-    /// True if we spawned the daemon (vs reusing existing).
-    we_spawned: std::sync::atomic::AtomicBool,
+/// Tracks daemon connection state for the get_daemon_status command.
+struct DaemonState {
+    current_port: AtomicU16,
+    is_connected: AtomicBool,
+}
+
+/// Background monitor: polls daemon health every 5s, restarts after 3 consecutive failures.
+fn start_monitor_loop(handle: AppHandle) {
+    thread::spawn(move || {
+        let mut fail_count = 0u32;
+
+        loop {
+            thread::sleep(Duration::from_secs(5));
+
+            let port = if let Some(state) = handle.try_state::<DaemonState>() {
+                state.current_port.load(Ordering::SeqCst)
+            } else {
+                continue;
+            };
+            if port == 0 {
+                continue;
+            }
+
+            if quick_health_check(port) {
+                fail_count = 0;
+                continue;
+            }
+
+            fail_count += 1;
+            eprintln!("Daemon health check failed ({fail_count}/3)");
+
+            if fail_count < 3 {
+                continue;
+            }
+
+            // 3 consecutive failures — emit error and attempt restart
+            let _ = handle.emit(
+                "daemon-error",
+                DaemonError {
+                    message: "Daemon unresponsive, restarting...".into(),
+                },
+            );
+            if let Some(state) = handle.try_state::<DaemonState>() {
+                state.is_connected.store(false, Ordering::SeqCst);
+            }
+
+            // Reset counter so we wait another 3 failures before retrying
+            fail_count = 0;
+
+            if let Err(e) = spawn_daemon(&handle) {
+                eprintln!("Restart spawn failed: {e}");
+                continue;
+            }
+
+            match poll_for_port(Duration::from_secs(30)) {
+                Ok(new_port) => {
+                    if health_check(new_port).is_ok() {
+                        if let Some(state) = handle.try_state::<DaemonState>() {
+                            state.current_port.store(new_port, Ordering::SeqCst);
+                            state.is_connected.store(true, Ordering::SeqCst);
+                        }
+                        let _ = handle.emit(
+                            "daemon-connected",
+                            DaemonConnected { port: new_port },
+                        );
+                    }
+                }
+                Err(e) => eprintln!("Restart port poll failed: {e}"),
+            }
+        }
+    });
 }
 
 /// Tauri command: read a file from ~/.vibe-harness/{filename}
@@ -176,18 +267,31 @@ fn read_state_file(filename: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("Failed to read {filename}: {e}"))
 }
 
+/// Tauri command: return current daemon port if connected, else null.
+#[tauri::command]
+fn get_daemon_status(
+    state: tauri::State<'_, DaemonState>,
+) -> Result<Option<DaemonConnected>, String> {
+    if state.is_connected.load(Ordering::SeqCst) {
+        let port = state.current_port.load(Ordering::SeqCst);
+        if port > 0 {
+            return Ok(Some(DaemonConnected { port }));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![read_state_file])
+        .invoke_handler(tauri::generate_handler![read_state_file, get_daemon_status])
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Register ownership state early
-            handle.manage(DaemonOwnership {
-                child: std::sync::Mutex::new(None),
-                we_spawned: std::sync::atomic::AtomicBool::new(false),
+            handle.manage(DaemonState {
+                current_port: AtomicU16::new(0),
+                is_connected: AtomicBool::new(false),
             });
 
             // Spawn daemon startup in a background thread so we don't block the UI
@@ -195,27 +299,21 @@ pub fn run() {
                 // Step 1: Check if daemon is already running
                 if let Some(port) = try_existing_daemon() {
                     println!("Reusing existing daemon on port {port}");
+                    if let Some(state) = handle.try_state::<DaemonState>() {
+                        state.current_port.store(port, Ordering::SeqCst);
+                        state.is_connected.store(true, Ordering::SeqCst);
+                    }
                     let _ = handle.emit("daemon-connected", DaemonConnected { port });
+                    start_monitor_loop(handle);
                     return;
                 }
 
                 // Step 2: No existing daemon — spawn one
                 println!("No existing daemon found, spawning...");
-                match spawn_daemon(&handle) {
-                    Ok(child) => {
-                        println!("Daemon spawned with pid {}", child.id());
-                        if let Some(state) = handle.try_state::<DaemonOwnership>() {
-                            *state.child.lock().unwrap() = Some(child);
-                            state
-                                .we_spawned
-                                .store(true, std::sync::atomic::Ordering::SeqCst);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to spawn daemon: {e}");
-                        let _ = handle.emit("daemon-error", DaemonError { message: e });
-                        return;
-                    }
+                if let Err(e) = spawn_daemon(&handle) {
+                    eprintln!("Failed to spawn daemon: {e}");
+                    let _ = handle.emit("daemon-error", DaemonError { message: e });
+                    return;
                 }
 
                 // Step 3: Wait for port file and health check
@@ -224,8 +322,13 @@ pub fn run() {
                         println!("Daemon port: {port}");
                         match health_check(port) {
                             Ok(()) => {
+                                if let Some(state) = handle.try_state::<DaemonState>() {
+                                    state.current_port.store(port, Ordering::SeqCst);
+                                    state.is_connected.store(true, Ordering::SeqCst);
+                                }
                                 let _ =
                                     handle.emit("daemon-connected", DaemonConnected { port });
+                                start_monitor_loop(handle);
                             }
                             Err(e) => {
                                 eprintln!("Health check failed: {e}");
@@ -241,8 +344,14 @@ pub fn run() {
             });
             Ok(())
         })
-        // Per SAD §2.2.3: daemon survives GUI close.
-        // We do NOT kill daemon on window close — it's a shared service.
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Per SAD §2.2.3: daemon survives GUI close.
+    // We do NOT kill daemon on exit — it's a shared service.
+    app.run(|_app_handle, event| {
+        if let RunEvent::ExitRequested { .. } = event {
+            // Intentionally empty — daemon is not terminated.
+        }
+    });
 }

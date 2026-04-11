@@ -31,6 +31,7 @@ async function readStateFile(filename: string): Promise<string | null> {
 }
 
 let cachedPort: number | null = null;
+let cachedToken: string | null = null;
 
 export async function getDaemonPort(): Promise<number | null> {
   if (cachedPort) return cachedPort;
@@ -55,8 +56,17 @@ export function clearCachedPort(): void {
   cachedPort = null;
 }
 
+/** Clear all cached connection state (port + auth token). */
+export function resetConnection(): void {
+  cachedPort = null;
+  cachedToken = null;
+}
+
 export async function getAuthToken(): Promise<string | null> {
-  return readStateFile("auth.token");
+  if (cachedToken !== null) return cachedToken;
+  const token = await readStateFile("auth.token");
+  cachedToken = token;
+  return token;
 }
 
 export class DaemonClient {

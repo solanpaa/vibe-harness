@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useDaemonStore } from "../../stores/daemon";
 
 const HEALTH_POLL_INTERVAL = 10_000;
@@ -6,25 +6,14 @@ const HEALTH_POLL_INTERVAL = 10_000;
 export function DaemonStatus() {
   const { connected, port, lastError, lastHealthCheck, checkHealth } =
     useDaemonStore();
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Always poll, even when disconnected — allows UI to self-heal
   useEffect(() => {
-    if (!connected) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-
-    // Initial check
     checkHealth();
 
-    intervalRef.current = setInterval(checkHealth, HEALTH_POLL_INTERVAL);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [connected, checkHealth]);
+    const interval = setInterval(checkHealth, HEALTH_POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [checkHealth]);
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 text-xs">

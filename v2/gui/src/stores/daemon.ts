@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DaemonClient, setCachedPort, clearCachedPort } from "../api/client";
+import { DaemonClient, setCachedPort, resetConnection, getDaemonPort } from "../api/client";
 import type { HealthResponse } from "@vibe-harness/shared";
 
 interface DaemonState {
@@ -33,7 +33,7 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
   },
 
   setDisconnected: (error?: string) => {
-    clearCachedPort();
+    resetConnection();
     set({
       connected: false,
       lastHealthCheck: null,
@@ -48,16 +48,38 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
 
   checkHealth: async () => {
     const { client } = get();
-    if (!client) return;
+
+    if (!client) {
+      // Self-healing: try to discover a running daemon
+      try {
+        const port = await getDaemonPort();
+        if (!port) return;
+        const tempClient = new DaemonClient(port);
+        const health = await tempClient.health();
+        setCachedPort(port);
+        set({
+          port,
+          connected: true,
+          client: tempClient,
+          lastHealthCheck: health,
+          lastError: null,
+        });
+      } catch {
+        // Daemon not available yet — stay disconnected
+      }
+      return;
+    }
 
     try {
       const health = await client.health();
       set({ lastHealthCheck: health, connected: true, lastError: null });
     } catch (err) {
+      resetConnection();
       set({
         connected: false,
         lastHealthCheck: null,
         lastError: err instanceof Error ? err.message : "Health check failed",
+        client: null,
       });
     }
   },
