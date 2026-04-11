@@ -115,8 +115,13 @@ export class WebSocketManager {
 
   /** Subscribe to a run's streaming output (CDD-api §12.2). */
   subscribe(runId: string, lastSeq?: number): void {
-    this.subscriptions.set(runId, lastSeq ?? 0);
-    this.send({ type: 'subscribe', runId, lastSeq });
+    this.subscriptions.set(runId, lastSeq ?? -1);
+    // Only send lastSeq if we actually have a position to resume from
+    this.send({
+      type: 'subscribe',
+      runId,
+      lastSeq: lastSeq !== undefined && lastSeq >= 0 ? lastSeq : undefined,
+    });
   }
 
   /** Unsubscribe from a run's stream. */
@@ -174,7 +179,12 @@ export class WebSocketManager {
   /** Resubscribe all tracked runs after reconnect with last-seen seq. */
   private resubscribeAll(): void {
     for (const [runId, lastSeq] of this.subscriptions) {
-      this.send({ type: 'subscribe', runId, lastSeq });
+      // Only send lastSeq when we have a real position to resume from
+      this.send({
+        type: 'subscribe',
+        runId,
+        lastSeq: lastSeq >= 0 ? lastSeq : undefined,
+      });
     }
   }
 

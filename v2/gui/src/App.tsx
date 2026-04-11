@@ -6,6 +6,7 @@ import { useDaemonStore } from "./stores/daemon";
 import { useStreamingStore } from "./stores/streaming";
 import { WebSocketManager } from "./api/ws";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useWebSocketBridge } from "./hooks/useWebSocketBridge";
 import { DaemonStatus } from "./components/shared/DaemonStatus";
 import { Workspace } from "./pages/Workspace";
 import { Projects } from "./pages/Projects";
@@ -27,6 +28,9 @@ function App() {
   const { handleMessage, setWsState } = useStreamingStore();
   const navigate = useNavigate();
   const wsRef = useRef<WebSocketManager | null>(null);
+
+  // Bridge WS events (run_status, review_created, etc.) to workspace store
+  useWebSocketBridge(wsRef.current);
 
   // On mount, query Rust for current daemon status (avoids startup race with events)
   useEffect(() => {

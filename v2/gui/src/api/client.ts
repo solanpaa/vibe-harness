@@ -2,6 +2,7 @@ import type {
   HealthResponse,
   WorkflowRunListResponse,
   WorkflowRunDetailResponse,
+  WorkflowRunMessagesResponse,
   ProjectListResponse,
   ProjectDetailResponse,
   ProjectBranchesResponse,

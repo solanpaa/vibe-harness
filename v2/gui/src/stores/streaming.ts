@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import type { ServerMessage, RunOutputMessage } from '@vibe-harness/shared';
 import type { WebSocketManager, WebSocketState } from '../api/ws';
+import type { DaemonClient } from '../api/client';
 
 const MAX_CLIENT_BUFFER = 5_000; // Max events per run on client side
 
@@ -50,6 +51,9 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         set((state) => {
           const buffers = new Map(state.buffers);
           const existing = buffers.get(msg.runId) ?? { events: [], lastSeq: -1 };
+
+          // Drop duplicate or out-of-order events
+          if (existing.lastSeq >= 0 && msg.seq <= existing.lastSeq) return state;
 
           const events = [...existing.events, msg];
           // Trim oldest events if over client buffer limit
@@ -116,3 +120,43 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
     });
   },
 }));
+
+/**
+ * Fetch all messages for a run via REST and replace the streaming buffer.
+ * Call this when `resyncRequired` is set for a runId.
+ */
+export async function resyncFromRest(runId: string, apiClient: DaemonClient): Promise<void> {
+  const { messages } = await apiClient.getRunMessages(runId);
+  const store = useStreamingStore.getState();
+
+  // Convert RunMessage[] to RunOutputMessage[] for the buffer
+  const events: RunOutputMessage[] = messages.map((m, i) => ({
+    type: 'run_output' as const,
+    runId,
+    seq: i,
+    stageName: m.stageName,
+    round: m.round,
+    data: {
+      role: m.role,
+      content: m.content,
+      eventType: (m.metadata?.eventType as RunOutputMessage['data']['eventType']) ?? 'agent_message',
+      metadata: m.metadata ? {
+        toolName: m.metadata.toolName,
+        toolCallId: m.metadata.toolCallId,
+        toolArgs: m.metadata.toolArgs,
+      } : undefined,
+      timestamp: m.createdAt,
+    },
+  }));
+
+  useStreamingStore.setState((state) => {
+    const buffers = new Map(state.buffers);
+    buffers.set(runId, { events, lastSeq: events.length - 1 });
+    const resyncRequired = new Set(state.resyncRequired);
+    resyncRequired.delete(runId);
+    return { buffers, resyncRequired };
+  });
+
+  // Clear the flag via the action as well for consistency
+  store.clearResync(runId);
+}

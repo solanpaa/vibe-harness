@@ -263,33 +263,43 @@ export function subscribe(clientId: string, runId: string, lastSeq?: number): vo
   const client = clients.get(clientId);
   if (!client) return;
 
-  client.subscribedRuns.add(runId);
-  log.debug({ clientId, runId, lastSeq }, 'Client subscribed');
+  log.debug({ clientId, runId, lastSeq }, 'Client subscribing');
 
-  // Replay buffered events if lastSeq provided
+  const buf = runBuffers.get(runId);
+
+  // Replay buffered events if lastSeq provided (resume from known position)
   if (lastSeq !== undefined && lastSeq >= 0) {
-    const buf = runBuffers.get(runId);
-    if (!buf) return;
+    if (buf) {
+      // Check if we can replay (buffer hasn't rolled over past lastSeq)
+      const oldestSeq = buf.events.length > 0 ? buf.events[0].seq : 0;
+      if (lastSeq < oldestSeq) {
+        // Buffer overflow — client must resync via REST
+        client.send({
+          type: 'resync_required',
+          runId,
+          reason: `Event buffer rolled over. Oldest available seq: ${oldestSeq}, requested: ${lastSeq}`,
+        });
+        return;
+      }
 
-    // Check if we can replay (buffer hasn't rolled over past lastSeq)
-    const oldestSeq = buf.events.length > 0 ? buf.events[0].seq : 0;
-    if (lastSeq < oldestSeq) {
-      // Buffer overflow — client must resync via REST
-      client.send({
-        type: 'resync_required',
-        runId,
-        reason: `Event buffer rolled over. Oldest available seq: ${oldestSeq}, requested: ${lastSeq}`,
-      });
-      return;
-    }
-
-    // Replay events after lastSeq
-    for (const event of buf.events) {
-      if (event.seq > lastSeq) {
-        client.send(event);
+      // Replay events after lastSeq
+      for (const event of buf.events) {
+        if (event.seq > lastSeq) {
+          client.send(event);
+        }
       }
     }
+  } else if (buf) {
+    // No lastSeq — replay everything from the buffer
+    for (const event of buf.events) {
+      client.send(event);
+    }
   }
+
+  // Only mark subscribed AFTER replay succeeds — prevents half-subscribed
+  // state if replay fails (e.g. send throws)
+  client.subscribedRuns.add(runId);
+  log.debug({ clientId, runId, lastSeq }, 'Client subscribed');
 }
 
 /**
