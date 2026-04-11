@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { useEffect, useRef, useState } from "react";
 import { useStreamingStore, resyncFromRest } from "../../stores/streaming";
 import { useDaemonStore } from "../../stores/daemon";
+import {
+  Message,
+  MessageContent,
+  MessageResponse,
+} from "@/components/ai-elements/message";
 import type { RunOutputMessage } from "@vibe-harness/shared";
 
 interface RunConversationProps {
@@ -174,15 +177,24 @@ function AssistantMessage({
   content: string;
   isStreaming: boolean;
 }) {
-  if (isStreaming) {
-    return (
-      <Streamdown plugins={{ code }} isAnimating={true}>
-        {content}
-      </Streamdown>
-    );
-  }
   return (
-    <Streamdown plugins={{ code }}>{content}</Streamdown>
+    <Message from="assistant">
+      <MessageContent>
+        <MessageResponse isAnimating={isStreaming}>
+          {content}
+        </MessageResponse>
+      </MessageContent>
+    </Message>
+  );
+}
+
+function UserMessage({ block }: { block: MessageBlock }) {
+  return (
+    <Message from="user">
+      <MessageContent>
+        <MessageResponse>{block.content}</MessageResponse>
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -240,8 +252,7 @@ function ToolResultBlock({ block }: { block: MessageBlock }) {
   );
 }
 
-// Need useState import for collapsible components
-import { useState } from "react";
+// useState is imported at the top
 
 export function RunConversation({ runId, isRunning }: RunConversationProps) {
   const buffer = useStreamingStore((s) => s.buffers.get(runId));
@@ -353,50 +364,15 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
 
           switch (block.type) {
             case "user":
-              return (
-                <div
-                  key={block.id}
-                  className={`rounded-lg px-4 py-3 text-sm ${
-                    block.isIntervention
-                      ? "bg-amber-950/30 border border-amber-500/20 text-amber-200"
-                      : "bg-zinc-800/50 border border-zinc-700/50 text-zinc-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-semibold text-zinc-400">
-                      {block.isIntervention ? "💬 Intervention" : "👤 User"}
-                    </span>
-                    <span className="text-xs text-zinc-600">
-                      {block.stageName}
-                    </span>
-                  </div>
-                  <div className="whitespace-pre-wrap">{block.content}</div>
-                </div>
-              );
+              return <UserMessage key={block.id} block={block} />;
 
             case "assistant":
               return (
-                <div key={block.id} className="pl-1 py-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-semibold text-zinc-400">
-                      🤖 Assistant
-                    </span>
-                    <span className="text-xs text-zinc-600">
-                      {block.stageName}
-                    </span>
-                    {isStreamingBlock && (
-                      <span className="text-xs text-green-400 animate-pulse">
-                        streaming...
-                      </span>
-                    )}
-                  </div>
-                  <div className="prose prose-invert prose-sm max-w-none">
-                    <AssistantMessage
-                      content={block.content}
-                      isStreaming={!!isStreamingBlock}
-                    />
-                  </div>
-                </div>
+                <AssistantMessage
+                  key={block.id}
+                  content={block.content}
+                  isStreaming={!!isStreamingBlock}
+                />
               );
 
             case "tool_call":
@@ -409,12 +385,12 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               return (
                 <details
                   key={block.id}
-                  className="text-xs text-zinc-500 border border-zinc-800/50 rounded-md"
+                  className="text-xs text-muted-foreground border border-border/50 rounded-md"
                 >
-                  <summary className="px-3 py-1.5 cursor-pointer hover:bg-zinc-800/30 transition-colors">
+                  <summary className="px-3 py-1.5 cursor-pointer hover:bg-muted/30 transition-colors">
                     💭 Agent reasoning · {block.stageName}
                   </summary>
-                  <div className="px-3 py-2 italic whitespace-pre-wrap">
+                  <div className="px-3 py-2 italic whitespace-pre-wrap text-muted-foreground/70">
                     {block.content}
                   </div>
                 </details>
@@ -424,13 +400,11 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               return (
                 <div
                   key={block.id}
-                  className="flex items-center gap-3 py-2 text-xs text-zinc-500"
+                  className="flex items-center gap-3 py-2 text-xs text-muted-foreground"
                 >
-                  <div className="flex-1 h-px bg-zinc-700/50" />
-                  <span>
-                    Session · {block.stageName} stage
-                  </span>
-                  <div className="flex-1 h-px bg-zinc-700/50" />
+                  <div className="flex-1 h-px bg-border/50" />
+                  <span>Session · {block.stageName} stage</span>
+                  <div className="flex-1 h-px bg-border/50" />
                 </div>
               );
 
@@ -438,7 +412,7 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               return (
                 <div
                   key={block.id}
-                  className="text-xs text-zinc-600 italic px-3 py-1"
+                  className="text-xs text-muted-foreground/60 italic px-3 py-1"
                 >
                   ⚙️ {block.content.slice(0, 200)}
                   {block.content.length > 200 && "..."}
