@@ -552,15 +552,16 @@ runMessages
 reviews
   id TEXT PK
   workflowRunId TEXT NOT NULL FK → workflowRuns.id
-  stageName TEXT NOT NULL
+  stageName TEXT  -- NULL for consolidation reviews
   round INTEGER NOT NULL DEFAULT 1
+  type TEXT NOT NULL DEFAULT 'stage'  -- 'stage' | 'consolidation'
   status TEXT NOT NULL DEFAULT 'pending_review'
   aiSummary TEXT
   diffSnapshot TEXT
   planMarkdown TEXT
   createdAt TEXT NOT NULL
 
-  UNIQUE(workflowRunId, stageName, round)  -- idempotency
+  UNIQUE(workflowRunId, stageName, round, type)  -- idempotency (stageName NULL for consolidation)
 
 reviewComments
   id TEXT PK
@@ -658,6 +659,7 @@ gitOperations
 // Workflow run lifecycle (driven by use workflow)
 type WorkflowRunStatus = 'pending' | 'provisioning' | 'running' | 'stage_failed'
   | 'awaiting_review' | 'awaiting_proposals' | 'waiting_for_children'
+  | 'children_completed_with_failures'  // some children done, user must decide
   | 'awaiting_conflict_resolution' | 'finalizing'
   | 'completed' | 'failed' | 'cancelled'
 
@@ -665,10 +667,14 @@ type WorkflowRunStatus = 'pending' | 'provisioning' | 'running' | 'stage_failed'
 type StageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 
 // Review lifecycle
+type ReviewType = 'stage' | 'consolidation'
 type ReviewStatus = 'pending_review' | 'approved' | 'changes_requested'
 
 // Parallel group lifecycle
-type ParallelGroupStatus = 'pending' | 'running' | 'consolidating'
+type ParallelGroupStatus = 'pending' | 'running'
+  | 'children_completed'      // all done, ready for consolidation
+  | 'children_mixed'          // some failed — user decision needed
+  | 'consolidating'
   | 'completed' | 'failed' | 'cancelled'
 
 // Proposal lifecycle
@@ -894,9 +900,9 @@ When all children reach a terminal state (completed, failed, or cancelled):
      proceed directly to consolidation
 
 2. User decides via GUI (for mixed results):
-   POST /api/runs/{id}/consolidate-partial  → resumes with { action: 'consolidate_completed' }
-   POST /api/runs/{id}/retry-children       → resumes with { childRunIds: [...] }
-   POST /api/runs/{id}/cancel               → resumes with { action: 'cancel' }
+   POST /api/parallel-groups/{groupId}/consolidate-partial  → resumes with { action: 'consolidate_completed' }
+   POST /api/parallel-groups/{groupId}/retry-children       → resumes with { childRunIds: [...] }
+   POST /api/parallel-groups/{groupId}/cancel               → resumes with { action: 'cancel' }
 
 3. For retry: failed children are restarted. Hook re-suspends until all done again.
    For consolidate_completed: only completed children proceed to consolidation.
@@ -1086,14 +1092,23 @@ gitOperations
 ```
 
 **Finalize phases:** `commit → rebase → merge → cleanup → done`
-**Consolidate phases:** `snapshot_parent → merge_children → merge_to_target → cleanup → done`
+**Consolidate phases:** `snapshot_parent → merge_children → ff_parent → cleanup → done`
 
-During `merge_children` phase, children are merged in `proposals.sortOrder` order (as specified in FR-S9). The `metadata` JSON field tracks `{ targetBranch, mergeOrder: [childRunId...], mergedChildren: [], conflictChild, consolidationBranch }`.
+**Important: Consolidation does NOT merge to target branch.** It only:
+1. `snapshot_parent`: commit parent worktree state before merge
+2. `merge_children`: merge child branches into a consolidation branch (in `proposals.sortOrder`, per FR-S9)
+3. `ff_parent`: fast-forward parent worktree to consolidation branch HEAD
+4. `cleanup`: remove child worktrees/branches
+
+After consolidation + review approval, the **parent workflow continues** with subsequent stages on the updated worktree. The final `merge → targetBranch` happens in the **finalize** operation at the very end of the workflow (last stage approval → FR-R10).
+
+During `merge_children` phase, the `metadata` JSON tracks `{ mergeOrder: [childRunId...], mergedChildren: [], conflictChild, consolidationBranch }`.
 
 On replay/restart, the step reads the journal and resumes from the last completed phase. Each phase is idempotent:
-- `commit`: checks if HEAD has uncommitted changes before committing
+- `commit`/`snapshot_parent`: checks if HEAD has uncommitted changes before committing
 - `rebase`: checks if branch is already rebased onto target
-- `merge`: checks if child branch is already merged into consolidation branch
+- `merge`/`merge_children`: checks if child branch is already merged into consolidation branch
+- `ff_parent`: checks if parent HEAD already matches consolidation HEAD
 - `cleanup`: checks if worktree/branch still exists before removing
 
 ---
