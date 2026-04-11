@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { useDaemonStore } from "../stores/daemon";
 import { useWorkspaceStore } from "../stores/workspace";
 import { RunFeed } from "../components/workspace/RunFeed";
@@ -20,6 +20,10 @@ export function Workspace() {
   const { client, connected } = useDaemonStore();
   const { setRuns, selectedRunId, selectRun, setLoading, newRunModalOpen, setNewRunModalOpen } =
     useWorkspaceStore();
+
+  const [leftWidth, setLeftWidth] = useState(320);
+  const isDragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const ws = useWsRef();
 
@@ -53,6 +57,31 @@ export function Workspace() {
     };
   }, [client, connected, setRuns, setLoading]);
 
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const newWidth = Math.max(200, Math.min(600, e.clientX - rect.left));
+      setLeftWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, []);
+
   const handleSelectRun = useCallback(
     (runId: string) => {
       selectRun(runId);
@@ -76,9 +105,9 @@ export function Workspace() {
   );
 
   return (
-    <div className="flex h-full gap-0">
-      {/* Left panel: run feed (320px) */}
-      <div className="w-80 flex-shrink-0 border-r border-zinc-700/50 pr-4 overflow-hidden">
+    <div ref={containerRef} className="flex h-full">
+      {/* Left panel: run feed */}
+      <div style={{ width: leftWidth }} className="flex-shrink-0 border-r border-zinc-700/50 overflow-hidden">
         {!connected ? (
           <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
             Connect to daemon to see runs
@@ -92,8 +121,14 @@ export function Workspace() {
         )}
       </div>
 
-      {/* Right panel: run detail (flex-1) */}
-      <div className="flex-1 overflow-hidden pl-4">
+      {/* Drag handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 transition-colors"
+      />
+
+      {/* Right panel: run detail */}
+      <div className="flex-1 overflow-hidden">
         {selectedRunId ? (
           <RunDetail runId={selectedRunId} ws={ws} />
         ) : (

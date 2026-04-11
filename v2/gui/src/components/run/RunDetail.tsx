@@ -163,7 +163,7 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
   ];
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full p-4">
       {/* Header */}
       <div className="flex-shrink-0 pb-3 border-b border-zinc-700/50">
         <div className="flex items-start justify-between gap-4">

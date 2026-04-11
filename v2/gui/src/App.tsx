@@ -154,21 +154,18 @@ function MainApp() {
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100">
       {/* Top nav */}
-      <nav className="flex items-center border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
-        <div className="flex items-center gap-1 px-4 py-2">
-          <span className="text-sm font-bold text-blue-400 mr-4">
-            Vibe Harness
-          </span>
+      <nav className="flex items-center h-12 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
+        <div className="flex items-center gap-2 px-4 py-3">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === "/"}
               className={({ isActive }: { isActive: boolean }) =>
-                `px-3 py-1.5 text-sm rounded-md transition-colors ${
+                `px-3 py-1.5 text-sm font-medium transition-colors ${
                   isActive
-                    ? "bg-zinc-700/50 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                    ? "border-b-2 border-blue-400 text-zinc-100 rounded-none pb-[11px]"
+                    : "text-zinc-400 hover:text-zinc-200 pb-[11px]"
                 }`
               }
             >
@@ -176,24 +173,23 @@ function MainApp() {
             </NavLink>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3 pr-4">
           <button
             onClick={() => setCommandPaletteOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700 rounded-md transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700 rounded-md transition-colors"
           >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.35-4.35" />
             </svg>
             <span>Search</span>
             <kbd className="text-[10px] bg-zinc-700/50 px-1 py-0.5 rounded">⌘K</kbd>
           </button>
-          <DaemonStatus />
         </div>
       </nav>
 
       {/* Main content */}
-      <main className="flex-1 overflow-hidden p-4">
+      <main className="flex-1 overflow-hidden">
         <Routes>
           <Route path="/" element={<Workspace />} />
           <Route path="/projects" element={<Projects />} />
@@ -202,6 +198,11 @@ function MainApp() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+
+      {/* Footer */}
+      <footer className="flex items-center justify-end h-7 px-4 border-t border-zinc-800 bg-zinc-900/80 text-xs text-zinc-500">
+        <DaemonStatus />
+      </footer>
 
       {/* Command Palette */}
       <CommandPalette

@@ -16,9 +16,17 @@ export function DaemonStatus() {
   }, [checkHealth]);
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
+    <div className="flex items-center gap-2">
+      {connected && lastHealthCheck && (
+        <span className="text-zinc-600">
+          v{lastHealthCheck.version}
+        </span>
+      )}
+      {connected && port && (
+        <span className="text-zinc-500">:{port}</span>
+      )}
       <span
-        className={`w-2 h-2 rounded-full ${
+        className={`w-1.5 h-1.5 rounded-full ${
           connected
             ? "bg-green-500"
             : lastError
@@ -26,23 +34,13 @@ export function DaemonStatus() {
               : "bg-yellow-500 animate-pulse"
         }`}
       />
-      <span className="text-zinc-400">
+      <span className={connected ? "text-zinc-500" : "text-zinc-400"}>
         {connected
-          ? `Connected :${port}`
+          ? "Connected"
           : lastError
             ? "Disconnected"
-            : "Connecting..."}
+            : "Connecting…"}
       </span>
-      {connected && lastHealthCheck && (
-        <span className="text-zinc-600">
-          v{lastHealthCheck.version} · {Math.floor(lastHealthCheck.uptime)}s
-        </span>
-      )}
-      {lastError && (
-        <span className="text-red-400 truncate max-w-48" title={lastError}>
-          {lastError}
-        </span>
-      )}
     </div>
   );
 }

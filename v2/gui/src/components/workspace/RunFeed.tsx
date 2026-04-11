@@ -36,9 +36,9 @@ export function RunFeed({ selectedRunId, onSelectRun, onNewRun }: RunFeedProps) 
   }, [runs, statusFilter]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full p-3">
       {/* Header: title + new run button */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 px-3 pt-3">
         <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">
           Runs
         </h2>

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Rainbow gradient from top-left to bottom-right -->
+    <linearGradient id="rainbow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF0000"/>
+      <stop offset="16%" stop-color="#FF8800"/>
+      <stop offset="33%" stop-color="#FFDD00"/>
+      <stop offset="50%" stop-color="#00CC44"/>
+      <stop offset="66%" stop-color="#0088FF"/>
+      <stop offset="83%" stop-color="#6644FF"/>
+      <stop offset="100%" stop-color="#CC00FF"/>
+    </linearGradient>
+    <!-- Darker rainbow for the shield outline -->
+    <linearGradient id="rainbow-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#CC0000"/>
+      <stop offset="16%" stop-color="#CC6600"/>
+      <stop offset="33%" stop-color="#CCAA00"/>
+      <stop offset="50%" stop-color="#009933"/>
+      <stop offset="66%" stop-color="#0066CC"/>
+      <stop offset="83%" stop-color="#4422CC"/>
+      <stop offset="100%" stop-color="#9900CC"/>
+    </linearGradient>
+    <!-- Dark background gradient -->
+    <radialGradient id="bg" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0d0d1a"/>
+    </radialGradient>
+  </defs>
+  
+  <!-- Superman diamond shape (rotated square with pointed bottom) -->
+  <path 
+    d="M 512 80 L 900 420 L 512 944 L 124 420 Z" 
+    fill="url(#bg)" 
+    stroke="url(#rainbow-dark)" 
+    stroke-width="24"
+    stroke-linejoin="round"
+  />
+  
+  <!-- Inner border glow -->
+  <path 
+    d="M 512 120 L 868 410 L 512 900 L 156 410 Z" 
+    fill="none" 
+    stroke="url(#rainbow)" 
+    stroke-width="4"
+    stroke-linejoin="round"
+    opacity="0.5"
+  />
+  
+  <!-- Italic V with rainbow gradient -->
+  <text 
+    x="512" 
+    y="580" 
+    text-anchor="middle" 
+    font-family="Georgia, 'Times New Roman', serif" 
+    font-size="520" 
+    font-style="italic" 
+    font-weight="bold"
+    fill="url(#rainbow)"
+    letter-spacing="-20"
+  >V</text>
+</svg>
