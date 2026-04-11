@@ -55,6 +55,15 @@ const createRunSchema = z.object({
   targetBranch: z.string().optional(),
   model: z.string().optional(),
   credentialSetId: z.string().uuid().optional(),
+  attachments: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.string(),
+        dataUrl: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 runs.post('/api/runs', async (c) => {
@@ -78,6 +87,7 @@ runs.post('/api/runs', async (c) => {
     targetBranch,
     model,
     credentialSetId,
+    attachments,
   } = parsed.data;
 
   const db = getDb();
@@ -125,6 +135,7 @@ runs.post('/api/runs', async (c) => {
       targetBranch: targetBranch ?? baseBranch,
       model: model ?? null,
       credentialSetId: credentialSetId ?? null,
+      attachments: attachments?.length ? JSON.stringify(attachments) : null,
     })
     .run();
 

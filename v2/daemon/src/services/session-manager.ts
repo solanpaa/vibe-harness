@@ -83,7 +83,7 @@ export interface SessionManager {
     options?: { model?: string },
   ): Promise<void>;
   stop(runId: string): Promise<void>;
-  sendPrompt(runId: string, message: string): Promise<void>;
+  sendPrompt(runId: string, message: string, attachments?: Array<{ name: string; type: string; dataUrl: string }>): Promise<void>;
   sendIntervention(runId: string, message: string): Promise<void>;
   awaitCompletion(runId: string): Promise<StageResult>;
   isActive(runId: string): boolean;
@@ -508,15 +508,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   // Serialized through the per-run mutex (SAD §5.4).
   // -------------------------------------------------------------------
 
-  async function sendPrompt(runId: string, message: string): Promise<void> {
+  async function sendPrompt(runId: string, message: string, attachments?: Array<{ name: string; type: string; dataUrl: string }>): Promise<void> {
     const session = getSession(runId);
     const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
     logger.child({ runId, op: 'session.sendPrompt' }).info(
-      { promptLength: message.length, preview: truncated },
+      { promptLength: message.length, preview: truncated, attachmentCount: attachments?.length ?? 0 },
       'Sending prompt to agent',
     );
     await session.mutex.runExclusive(async () => {
-      await acp.sendPrompt(session.sandboxName, message);
+      await acp.sendPrompt(session.sandboxName, message, attachments);
     });
   }
 

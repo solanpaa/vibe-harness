@@ -96,6 +96,7 @@ export const workflowRuns = sqliteTable(
     targetBranch: text('target_branch'),
     parentWorktreeCommit: text('parent_worktree_commit'),
     model: text('model'),
+    attachments: text('attachments'),              // JSON: array of {name, type, dataUrl}
     createdAt: createdAt(),
     completedAt: text('completed_at'),
   },

@@ -171,6 +171,7 @@ export async function executeStage(
       model: schema.workflowRuns.model,
       description: schema.workflowRuns.description,
       agentDefinitionId: schema.workflowRuns.agentDefinitionId,
+      attachments: schema.workflowRuns.attachments,
     })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
@@ -240,7 +241,17 @@ export async function executeStage(
     // ── Step 6: Send prompt into ACP session ────────────────────────
     const promptPreview = prompt.length > 500 ? prompt.slice(0, 500) + '…' : prompt;
     log.info({ promptLength: prompt.length, preview: promptPreview }, 'Sending stage prompt to agent');
-    await sessionManager.sendPrompt(runId, prompt);
+
+    // Pass attachments only on first stage, first round
+    let acpAttachments: Array<{ name: string; type: string; dataUrl: string }> | undefined;
+    if (input.isFirstStage && round === 1 && run?.attachments) {
+      try {
+        acpAttachments = JSON.parse(run.attachments);
+        log.info({ count: acpAttachments?.length }, 'Including attachments with prompt');
+      } catch { /* ignore parse errors */ }
+    }
+
+    await sessionManager.sendPrompt(runId, prompt, acpAttachments);
 
     // ── Step 7: Record user prompt in runMessages ───────────────────
     db.insert(schema.runMessages)

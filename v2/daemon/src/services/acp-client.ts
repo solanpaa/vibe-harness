@@ -116,9 +116,15 @@ export interface AcpConnection {
 
 // ── Interface (CDD §5.2) ─────────────────────────────────────────────
 
+export interface AcpAttachment {
+  name: string;
+  type: string;
+  dataUrl: string; // data:mime;base64,...
+}
+
 export interface AcpClient {
   connect(options: AcpConnectOptions, onEvent: AcpEventCallback): Promise<AcpConnection>;
-  sendPrompt(sandboxName: string, message: string): Promise<void>;
+  sendPrompt(sandboxName: string, message: string, attachments?: AcpAttachment[]): Promise<void>;
   sendStop(sandboxName: string): Promise<void>;
   onEvent(sandboxName: string, callback: AcpEventCallback): () => void;
   getSessionId(sandboxName: string): string | null;
@@ -458,7 +464,7 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
   // without awaiting so the caller can use awaitCompletion() separately.
   // When prompt() resolves, we emit a synthetic 'result' event.
   // ------------------------------------------------------------------
-  async function sendPrompt(sandboxName: string, message: string): Promise<void> {
+  async function sendPrompt(sandboxName: string, message: string, attachments?: AcpAttachment[]): Promise<void> {
     const conn = connections.get(sandboxName);
     if (!conn || !conn.isActive) {
       throw new AcpSessionNotActiveError(sandboxName);
@@ -469,12 +475,27 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
 
     const log = logger.child({ sandboxName });
     const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
-    log.info({ promptLength: message.length, preview: truncated }, 'Sending prompt to ACP');
+    log.info({ promptLength: message.length, preview: truncated, attachmentCount: attachments?.length ?? 0 }, 'Sending prompt to ACP');
+
+    // Build content blocks: text first, then images
+    const prompt: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
+      { type: 'text', text: message },
+    ];
+
+    if (attachments?.length) {
+      for (const att of attachments) {
+        if (att.type.startsWith('image/')) {
+          // Extract base64 data from data URL (strip "data:image/png;base64," prefix)
+          const base64Data = att.dataUrl.replace(/^data:[^;]+;base64,/, '');
+          prompt.push({ type: 'image', data: base64Data, mimeType: att.type });
+        }
+      }
+    }
 
     // Fire prompt() without awaiting — it resolves when agent finishes
     conn.acpConnection.prompt({
       sessionId: conn.sessionId,
-      prompt: [{ type: 'text', text: message }],
+      prompt: prompt as any,
     }).then((result) => {
       log.info({ stopReason: result?.stopReason }, 'ACP prompt completed');
       conn.receivedResult = true;

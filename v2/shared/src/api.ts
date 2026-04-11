@@ -125,6 +125,11 @@ export interface CreateWorkflowRunRequest {
   targetBranch?: string;
   title?: string;
   model?: string;
+  attachments?: Array<{
+    name: string;
+    type: string;
+    dataUrl: string;
+  }>;
 }
 
 export interface WorkflowRunListQuery {

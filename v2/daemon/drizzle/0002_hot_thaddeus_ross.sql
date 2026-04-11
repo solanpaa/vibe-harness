@@ -1,0 +1,1 @@
+ALTER TABLE `agent_definitions` ADD `dockerfile` text;

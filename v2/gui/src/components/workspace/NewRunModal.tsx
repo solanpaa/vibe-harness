@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useDaemonStore } from "../../stores/daemon";
 import {
   Select,
@@ -14,6 +14,24 @@ import type {
   CredentialSetListResponse,
   CreateWorkflowRunRequest,
 } from "@vibe-harness/shared";
+
+interface Attachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string; // base64 data URL
+  previewUrl?: string;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 interface NewRunModalProps {
   open: boolean;
@@ -32,6 +50,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const [baseBranch, setBaseBranch] = useState("");
   const [credentialSetId, setCredentialSetId] = useState("");
   const [model, setModel] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Data
   const [projects, setProjects] = useState<ProjectListResponse["projects"]>([]);
@@ -43,6 +62,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   // UI state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Fetch initial data
   useEffect(() => {
@@ -96,6 +118,59 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
       .catch(() => setBranches([]));
   }, [projectId, client]);
 
+  // Handle file selection
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
+    const newAttachments: Attachment[] = [];
+    for (const file of Array.from(files)) {
+      const dataUrl = await readFileAsDataUrl(file);
+      newAttachments.push({
+        id: crypto.randomUUID(),
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        dataUrl,
+        previewUrl: file.type.startsWith("image/") ? dataUrl : undefined,
+      });
+    }
+    setAttachments((prev) => [...prev, ...newAttachments]);
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  // Handle paste (for images)
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        handleFiles(files);
+      }
+    },
+    [handleFiles],
+  );
+
+  // Handle drag & drop
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer.files.length > 0) {
+        handleFiles(e.dataTransfer.files);
+      }
+    },
+    [handleFiles],
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!client || !projectId || !workflowTemplateId || !agentDefinitionId || !description.trim()) {
       setError("Please fill in all required fields");
@@ -114,6 +189,15 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         ...(baseBranch ? { baseBranch } : {}),
         ...(credentialSetId ? { credentialSetId } : {}),
         ...(model ? { model } : {}),
+        ...(attachments.length > 0
+          ? {
+              attachments: attachments.map((a) => ({
+                name: a.name,
+                type: a.type,
+                dataUrl: a.dataUrl,
+              })),
+            }
+          : {}),
       };
 
       const res = await client.createRun(req);
@@ -132,8 +216,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const resetForm = () => {
     setDescription("");
     setBaseBranch("");
-    setTargetBranch("");
     setModel("");
+    setAttachments([]);
+    setExpanded(false);
     setError(null);
   };
 
@@ -147,6 +232,101 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   );
 
   if (!open) return null;
+
+  // Expanded mode: description takes full screen
+  if (expanded) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex flex-col bg-background"
+        onKeyDown={handleKeyDown}
+      >
+        {/* Compact header */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-border/50">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setExpanded(false)}
+              className="text-muted-foreground hover:text-foreground text-sm flex items-center gap-1"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back
+            </button>
+            <span className="text-sm text-muted-foreground">New Run — Description</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground text-lg"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Full description area */}
+        <div
+          className="flex-1 flex flex-col p-6 min-h-0"
+          onDrop={handleDrop}
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        >
+          <textarea
+            ref={textareaRef}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            onPaste={handlePaste}
+            placeholder="Describe what the agent should do...&#10;&#10;Paste images with ⌘V or drag files here."
+            className="flex-1 w-full bg-background text-foreground text-sm placeholder:text-muted-foreground focus:outline-none resize-none"
+            autoFocus
+          />
+
+          {/* Attachments */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-3 border-t border-border/30 mt-3">
+              {attachments.map((a) => (
+                <AttachmentChip key={a.id} attachment={a} onRemove={removeAttachment} />
+              ))}
+            </div>
+          )}
+
+          {/* Bottom toolbar */}
+          <div className="flex items-center justify-between pt-3 mt-auto">
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.txt,.md,.json,.csv"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) handleFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-muted-foreground hover:text-foreground p-1.5 rounded-md hover:bg-accent/50 transition-colors"
+                title="Attach files"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+              <span className="text-xs text-muted-foreground">
+                {attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? "s" : ""} attached` : "Drag & drop or paste images"}
+              </span>
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !projectId || !workflowTemplateId || !agentDefinitionId || !description.trim()}
+              className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {submitting ? "Creating..." : "Create Run"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -226,13 +406,61 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
 
           {/* Description / prompt (required) */}
           <FormField label="Description" required>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe what the agent should do..."
-              rows={4}
-              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50 resize-none"
-            />
+            <div
+              className="relative"
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            >
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onPaste={handlePaste}
+                placeholder="Describe what the agent should do..."
+                rows={4}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50 resize-none pr-16"
+              />
+              <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.txt,.md,.json,.csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files) handleFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent/50 transition-colors"
+                  title="Attach files"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent/50 transition-colors"
+                  title="Expand to fullscreen"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* Attachment previews */}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {attachments.map((a) => (
+                  <AttachmentChip key={a.id} attachment={a} onRemove={removeAttachment} />
+                ))}
+              </div>
+            )}
           </FormField>
 
           {/* Base branch */}
@@ -335,6 +563,48 @@ function FormField({
         {required && <span className="text-red-400 ml-0.5">*</span>}
       </label>
       {children}
+    </div>
+  );
+}
+
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onRemove: (id: string) => void;
+}) {
+  const isImage = attachment.type.startsWith("image/");
+  const sizeStr =
+    attachment.size < 1024
+      ? `${attachment.size}B`
+      : attachment.size < 1024 * 1024
+        ? `${Math.round(attachment.size / 1024)}KB`
+        : `${(attachment.size / (1024 * 1024)).toFixed(1)}MB`;
+
+  return (
+    <div className="group relative flex items-center gap-1.5 bg-muted/50 border border-border rounded-md px-2 py-1 text-xs">
+      {isImage && attachment.previewUrl ? (
+        <img
+          src={attachment.previewUrl}
+          alt={attachment.name}
+          className="w-6 h-6 rounded object-cover"
+        />
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-muted-foreground">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      )}
+      <span className="text-foreground truncate max-w-[120px]">{attachment.name}</span>
+      <span className="text-muted-foreground">{sizeStr}</span>
+      <button
+        onClick={() => onRemove(attachment.id)}
+        className="ml-0.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+        title="Remove"
+      >
+        ✕
+      </button>
     </div>
   );
 }
