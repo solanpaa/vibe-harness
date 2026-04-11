@@ -11,6 +11,7 @@ import {
 import { getOrCreateToken } from "./lib/auth.js";
 import { logger } from "./lib/logger.js";
 import { getDb, closeDb } from "./db/index.js";
+import { replayPendingHookResumes } from "./lib/reconcile.js";
 
 // ── Single-instance guard ───────────────────────────────────────────
 
@@ -44,6 +45,11 @@ logger.info("Auth token ready");
 
 const db = getDb(getDbPath());
 logger.info("Database initialized");
+
+// Replay any pending hook resumes from the outbox (crash recovery)
+replayPendingHookResumes().catch((err) => {
+  logger.error({ err }, "Failed to replay pending hook resumes");
+});
 
 writePidFile();
 logger.info({ pid: process.pid }, "PID file written");

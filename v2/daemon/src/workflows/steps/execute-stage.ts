@@ -138,17 +138,24 @@ export async function executeStage(
   // ── Step 2: Create stageExecution record ────────────────────────────
   const execId = existing?.id ?? crypto.randomUUID();
 
-  // Model resolution (FR-W23): stage.model > run.model > agent default
+  // Model resolution (FR-W23): stage.model > run.model > agentDef.defaultModel > undefined
   const run = db
     .select({
       model: schema.workflowRuns.model,
       description: schema.workflowRuns.description,
+      agentDefinitionId: schema.workflowRuns.agentDefinitionId,
     })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
     .get();
 
-  const resolvedModel = stage.model ?? run?.model ?? undefined;
+  const agentDef = run?.agentDefinitionId
+    ? db.select().from(schema.agentDefinitions)
+        .where(eq(schema.agentDefinitions.id, run.agentDefinitionId))
+        .get()
+    : null;
+
+  const resolvedModel = stage.model ?? run?.model ?? (agentDef as any)?.defaultModel ?? undefined;
 
   if (!existing) {
     db.insert(schema.stageExecutions)

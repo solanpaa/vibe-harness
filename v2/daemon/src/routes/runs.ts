@@ -6,13 +6,18 @@
 // ---------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { start, resumeHook } from 'workflow/api';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
-import { runWorkflowPipeline, type PipelineDeps } from '../workflows/pipeline.js';
-import { stageFailedHook } from '../workflows/hooks.js';
+import { runWorkflowPipeline, setPipelineDeps as setPipelineDepsInternal, type PipelineDeps } from '../workflows/pipeline.js';
+import {
+  stageFailedHook,
+  reviewDecisionHook,
+  conflictResolutionHook,
+  proposalReviewHook,
+} from '../workflows/hooks.js';
 import { z } from 'zod';
 
 const runs = new Hono();
@@ -25,6 +30,8 @@ let pipelineDeps: PipelineDeps | null = null;
 
 export function setPipelineDeps(deps: PipelineDeps): void {
   pipelineDeps = deps;
+  // Also set on the pipeline module so the workflow can resolve deps on replay
+  setPipelineDepsInternal(deps);
 }
 
 function getDeps(): PipelineDeps {
@@ -140,10 +147,9 @@ runs.post('/api/runs', async (c) => {
     })
     .run();
 
-  // Start the durable workflow
-  const deps = getDeps();
+  // Start the durable workflow (only serializable data in input)
   try {
-    await start(runWorkflowPipeline, [{ runId, deps }]);
+    await start(runWorkflowPipeline, [{ runId }]);
   } catch (err) {
     logger.error({ err, runId }, 'Failed to start workflow pipeline');
     db.update(schema.workflowRuns)
@@ -221,7 +227,10 @@ runs.patch('/api/runs/:id/cancel', async (c) => {
   const runId = c.req.param('id');
 
   const run = db
-    .select()
+    .select({
+      status: schema.workflowRuns.status,
+      currentStage: schema.workflowRuns.currentStage,
+    })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
     .get();
@@ -235,6 +244,46 @@ runs.patch('/api/runs/:id/cancel', async (c) => {
       { error: { code: 'CONFLICT', message: `Run is already in terminal state: ${run.status}` } },
       409,
     );
+  }
+
+  // Resume any suspended hooks so the pipeline can exit cleanly
+  try {
+    switch (run.status) {
+      case 'stage_failed': {
+        const hookToken = `failed:${runId}:${run.currentStage}`;
+        await stageFailedHook.resume(hookToken, { action: 'cancel' });
+        break;
+      }
+      case 'awaiting_review': {
+        // Find the pending review for this run to build the hook token
+        const pendingReview = db.select({ id: schema.reviews.id })
+          .from(schema.reviews)
+          .where(and(
+            eq(schema.reviews.workflowRunId, runId),
+            eq(schema.reviews.status, 'pending_review'),
+          ))
+          .orderBy(desc(schema.reviews.createdAt))
+          .limit(1)
+          .get();
+        if (pendingReview) {
+          const hookToken = `review:${pendingReview.id}`;
+          await reviewDecisionHook.resume(hookToken, { action: 'cancel' });
+        }
+        break;
+      }
+      case 'awaiting_conflict_resolution': {
+        const hookToken = `conflict:${runId}:finalize`;
+        await conflictResolutionHook.resume(hookToken, { action: 'cancel' });
+        break;
+      }
+      case 'awaiting_proposals': {
+        const hookToken = `proposals:${runId}:${run.currentStage}`;
+        await proposalReviewHook.resume(hookToken, { proposalIds: [] });
+        break;
+      }
+    }
+  } catch (err) {
+    logger.warn({ err, runId, status: run.status }, 'Failed to resume hook during cancel (best-effort)');
   }
 
   // Stop the session (best-effort)
@@ -288,7 +337,10 @@ runs.post('/api/runs/:id/message', async (c) => {
 
   const db = getDb();
   const run = db
-    .select({ status: schema.workflowRuns.status })
+    .select({
+      status: schema.workflowRuns.status,
+      currentStage: schema.workflowRuns.currentStage,
+    })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
     .get();
@@ -304,6 +356,17 @@ runs.post('/api/runs/:id/message', async (c) => {
     );
   }
 
+  // Resolve current round from latest stageExecution
+  const latestStage = db.select({ round: schema.stageExecutions.round })
+    .from(schema.stageExecutions)
+    .where(and(
+      eq(schema.stageExecutions.workflowRunId, runId),
+      eq(schema.stageExecutions.stageName, run.currentStage ?? ''),
+    ))
+    .orderBy(desc(schema.stageExecutions.round))
+    .limit(1)
+    .get();
+
   try {
     const deps = getDeps();
     await deps.sessionManager.sendIntervention(runId, parsed.data.message);
@@ -312,8 +375,8 @@ runs.post('/api/runs/:id/message', async (c) => {
     db.insert(schema.runMessages)
       .values({
         workflowRunId: runId,
-        stageName: run.status,
-        round: 1,
+        stageName: run.currentStage ?? 'unknown',
+        round: latestStage?.round ?? 1,
         role: 'user',
         content: parsed.data.message,
         isIntervention: true,
@@ -354,9 +417,7 @@ async function resumeStageHook(
     );
   }
 
-  // Find the hook token — look for recent stageFailedHook token pattern
-  // The token format is: `failed:{runId}:{stageName}:{timestamp}`
-  // We resume via the typed hook's resume method
+  // Find the hook token — stable format: `failed:{runId}:{stageName}`
   try {
     // Write to outbox first for crash safety
     const outboxId = crypto.randomUUID();
@@ -370,7 +431,7 @@ async function resumeStageHook(
       })
       .run();
 
-    // Resume the hook — find by token prefix since timestamps vary
+    // Resume the hook
     await stageFailedHook.resume(hookToken, payload);
 
     // Delete from outbox on success

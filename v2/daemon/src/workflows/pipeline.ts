@@ -32,8 +32,22 @@ import { finalize, type FinalizeDeps } from './steps/finalize.js';
 
 export interface PipelineInput {
   runId: string;
-  /** Injected service dependencies. Provided by the route handler at start(). */
-  deps: PipelineDeps;
+}
+
+// Module-level deps holder — initialized by setPipelineDeps() at startup.
+// Pipeline resolves deps here instead of receiving them via workflow input
+// (which must be serializable for replay).
+let _pipelineDeps: PipelineDeps | null = null;
+
+export function setPipelineDeps(deps: PipelineDeps): void {
+  _pipelineDeps = deps;
+}
+
+function resolveDeps(): PipelineDeps {
+  if (!_pipelineDeps) {
+    throw new Error('Pipeline deps not initialized. Call setPipelineDeps() at startup.');
+  }
+  return _pipelineDeps;
 }
 
 export interface PipelineDeps extends ExecuteStageDeps, CreateReviewDeps, FinalizeDeps {}
@@ -73,7 +87,7 @@ interface SplitResult {
 export async function runWorkflowPipeline(input: PipelineInput) {
   "use workflow";
 
-  const { deps } = input;
+  const deps = resolveDeps();
   const ctx = loadContext(input.runId);
 
   updateRunStatus(ctx.runId, 'provisioning');
@@ -93,9 +107,6 @@ export async function runWorkflowPipeline(input: PipelineInput) {
           baseBranch: ctx.baseBranch,
           agentDef: getAgentDef(ctx.agentDefinitionId),
         });
-
-        // Persist worktree path and sandbox info back to DB
-        // (session manager creates these as side effects)
       }
     }
   }
@@ -190,7 +201,7 @@ async function handleStageFailure(
 ): Promise<FailureDecisionResult> {
   updateRunStatus(ctx.runId, 'stage_failed');
 
-  const hookToken = `failed:${ctx.runId}:${stage.name}:${Date.now()}`;
+  const hookToken = `failed:${ctx.runId}:${stage.name}`;
   using hook = stageFailedHook.create({ token: hookToken });
   const decision = await hook;
 
@@ -271,6 +282,16 @@ async function handleReviewGate(
       return currentResult;
     }
 
+    if (decision.action === 'cancel') {
+      updateRunStatus(ctx.runId, 'cancelled');
+      return {
+        status: 'failed',
+        lastAssistantMessage: currentResult.lastAssistantMessage,
+        planMarkdown: currentResult.planMarkdown,
+        error: 'Workflow cancelled during review',
+      };
+    }
+
     // ── request_changes: comments embedded in next stage prompt ────────
     round += 1;
 
@@ -312,7 +333,7 @@ async function handleFinalization(
   if (result.conflict) {
     updateRunStatus(ctx.runId, 'awaiting_conflict_resolution');
 
-    const hookToken = `conflict:${ctx.runId}:finalize:${Date.now()}`;
+    const hookToken = `conflict:${ctx.runId}:finalize`;
     using hook = conflictResolutionHook.create({ token: hookToken });
     const decision = await hook;
 

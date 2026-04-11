@@ -8,6 +8,9 @@
 
 import type { Logger } from 'pino';
 import { Mutex } from '../lib/mutex.js';
+import { getDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import type { SandboxService, SandboxCredentials } from './sandbox.js';
 import type { WorktreeService } from './worktree.js';
 import type { AcpClient, AcpEvent } from './acp-client.js';
@@ -292,6 +295,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     // 5. Register session only after all provisioning succeeds
     sessions.set(runId, session);
+
+    // 6. Persist session state to DB so create-review.ts and finalize.ts can read it
+    const db = getDb();
+    db.update(schema.workflowRuns)
+      .set({
+        sandboxId: sandboxName,
+        worktreePath,
+        branch: branchName,
+      })
+      .where(eq(schema.workflowRuns.id, runId))
+      .run();
+
     log.info({ sandboxName, worktreePath, branchName }, 'Session created');
   }
 

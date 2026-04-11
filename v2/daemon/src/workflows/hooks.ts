@@ -26,12 +26,13 @@ const reviewCommentSchema = z.object({
 
 export type ReviewComment = z.infer<typeof reviewCommentSchema>;
 
-const reviewDecisionResponseSchema = z.discriminatedUnion('action', [
+export const reviewDecisionResponseSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('approve') }),
   z.object({
     action: z.literal('request_changes'),
     comments: z.array(reviewCommentSchema).min(1),
   }),
+  z.object({ action: z.literal('cancel') }),
 ]);
 
 export type ReviewDecisionResponse = z.infer<typeof reviewDecisionResponseSchema>;
@@ -49,7 +50,7 @@ export const reviewDecisionHook = defineHook<ReviewDecisionResponse>({
 //   PATCH /api/runs/:id/cancel      → { action: 'cancel' }
 // -------------------------------------------------------------------------- //
 
-const stageFailedResponseSchema = z.discriminatedUnion('action', [
+export const stageFailedResponseSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('retry') }),
   z.object({ action: z.literal('skip') }),
   z.object({ action: z.literal('cancel') }),
@@ -69,8 +70,8 @@ export const stageFailedHook = defineHook<StageFailedResponse>({
 //   POST /api/proposals/launch → { proposalIds: [...] }
 // -------------------------------------------------------------------------- //
 
-const proposalReviewResponseSchema = z.object({
-  proposalIds: z.array(z.string()).min(1),
+export const proposalReviewResponseSchema = z.object({
+  proposalIds: z.array(z.string()),
 });
 
 export type ProposalReviewResponse = z.infer<typeof proposalReviewResponseSchema>;
@@ -86,7 +87,7 @@ export const proposalReviewHook = defineHook<ProposalReviewResponse>({
 // Skipped if all children completed successfully.
 // -------------------------------------------------------------------------- //
 
-const parallelCompletionResponseSchema = z.discriminatedUnion('action', [
+export const parallelCompletionResponseSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('consolidate_completed') }),
   z.object({
     action: z.literal('retry'),
@@ -107,7 +108,7 @@ export const parallelCompletionHook = defineHook<ParallelCompletionResponse>({
 // Suspends when finalization rebase or consolidation merge hits a conflict.
 // -------------------------------------------------------------------------- //
 
-const conflictResolutionResponseSchema = z.discriminatedUnion('action', [
+export const conflictResolutionResponseSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('retry') }),
   z.object({ action: z.literal('cancel') }),
 ]);
