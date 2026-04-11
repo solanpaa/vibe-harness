@@ -93,8 +93,8 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | ID | Requirement | Priority |
 |----|------------|----------|
 | FR-W1 | User can create workflow templates defining a sequence of stages | Must |
-| FR-W2 | Each stage has: name, type (`standard`/`split`), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean) | Must |
-| FR-W3 | User can start a workflow run against a project with a run description, credential set (optional), base branch (optional, default: current checked-out branch — must be an actual branch ref, not detached HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
+| FR-W2 | Each stage has: name, type (`standard`/`split`), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean), and optional `model` override (e.g., `gpt-4.1-mini` for planning, `claude-opus-4.5` for implementation) | Must |
+| FR-W3 | User can start a workflow run against a project with a run description, model (optional, default for all stages), credential set (optional), base branch (optional, default: current checked-out branch — must be an actual branch ref, not detached HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
 | FR-W4 | System executes stages sequentially. For each stage, the prompt is injected into the agent conversation (or a fresh conversation if `freshSession: true`). All stages share the same sandbox and worktree | Must |
 | FR-W5 | Standard stages with `reviewRequired: true` pause for human review after agent completes | Must |
 | FR-W6 | Standard stages with `autoAdvance: true` proceed to next stage without human review | Must |
@@ -114,6 +114,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | FR-W20 | User can observe real-time streaming agent output via WebSocket (< 100ms perceived latency) | Must |
 | FR-W21 | User can send mid-execution messages (interventions) to the running agent via ACP stdin at any point during any stage | Must |
 | FR-W22 | Credential set selection: workflow run's explicit credential set, or project's default, or none (in that priority order) | Must |
+| FR-W23 | Model selection precedence: stage-level `model` override > workflow run-level `model` > agent definition default. This allows using different LLMs for different stages (e.g., fast model for planning, powerful model for implementation) while the agent CLI tool remains the same | Must |
 
 ### 2.5 Split Execution (Parallel Workflows)
 
