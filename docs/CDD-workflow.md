@@ -1091,15 +1091,11 @@ export async function executeStage(input: ExecuteStageInput): Promise<ExecuteSta
       // Fresh session in the same sandbox/worktree (SAD §5.4, stage 3)
       const context = await buildFreshSessionContext(runId, input.previousResult);
       await sessionManager.fresh(runId, context, { model: resolvedModel });
-    } else if (resolvedModel) {
-      // Continuation — model is NOT passed to sessionManager.continue().
-      // If the stage wants a different model than the current session, warn.
-      log.warn(
-        { resolvedModel },
-        "Stage has model override but freshSession=false; model ignored for continuation. Set freshSession=true to apply a different model."
-      );
+    } else {
+      // Continuation — Copilot CLI supports --model on --continue,
+      // so model changes are applied even in continuation mode
+      await sessionManager.continue(runId, { model: resolvedModel });
     }
-    // else: continuation — session already exists, just send prompt
 
     // ── Step 4: Build prompt (see §5 Prompt Builder) ────────────────
     const prompt = buildStagePrompt({
@@ -2859,4 +2855,4 @@ function formatReviewComments(comments: ReviewComment[]): string {
 
 10. **Durable sleep (Fix #9).** `sleep()` is imported from the `workflow` package, not implemented locally with `setTimeout`. The workflow runtime persists state before sleeping, so daemon crashes during sleep resume correctly.
 
-11. **Model resolution (FR-W23).** Model precedence is `stage.model > run.model > agentDefinition.defaultModel`. The resolved model is passed to `sessionManager.create()` and `sessionManager.fresh()` as `--model <model>` flag. `sessionManager.continue()` does NOT accept a model — continuation reuses the existing session's model. If a stage specifies a different model but `freshSession=false`, the model override is **ignored** and a warning is logged. This intentional limitation keeps continuation semantics simple: to change models mid-workflow, set `freshSession: true` on the stage.
+11. **Model resolution (FR-W23).** Model precedence is `stage.model > run.model > agentDefinition.defaultModel`. The resolved model is passed to `sessionManager.create()`, `sessionManager.fresh()`, and `sessionManager.continue()` as `--model <model>` flag. Copilot CLI supports `--model` on `--continue`, so model changes take effect even in continuation mode without requiring `freshSession: true`. The resolved model is stored on the `stageExecution` record for audit/display.

@@ -92,7 +92,7 @@ The `session-manager` lives in the workflow layer, not the services layer. It is
 interface SessionManager {
   /** Provision sandbox + worktree + ACP session for a new workflow run */
   create(runId: string, options?: { model?: string | null }): Promise<void>;
-  /** Send prompt into existing ACP session (--continue semantics). Model is NOT accepted — continuation reuses the existing session's model */
+  /** Send prompt into existing ACP session (--continue semantics). Model override supported — Copilot CLI accepts --model on --continue */
   continue(runId: string, prompt: string): Promise<void>;
   /** Start fresh ACP session in same sandbox/worktree, inject prior context */
   fresh(runId: string, prompt: string, context: FreshSessionContext, options?: { model?: string | null }): Promise<void>;

@@ -815,7 +815,8 @@ Workflow step (execute-stage.ts):
        → provisions sandbox, creates worktree, starts ACP session with --model flag
      - Continuation (freshSession=false): call sessionManager.continue(runId)
        → sends prompt into existing ACP session via --continue
-       → NOTE: model is NOT passed — continuation reuses the session's model.
+       → Sends prompt into existing ACP session via --continue.
+         If stage has a different model, --model flag is included (Copilot CLI supports model changes on --continue).
          If stage.model differs from the current session's model, a warning is logged.
          Model changes require freshSession=true.
      - Fresh session (freshSession=true): call sessionManager.fresh(runId, context, { model })
