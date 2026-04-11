@@ -90,7 +90,7 @@ function StageEditor({
         <button
           type="button"
           onClick={add}
-          className="px-2 py-1 text-xs rounded-md bg-primary hover:bg-primary/90 text-primary-foreground"
+          className="px-2 py-1 text-xs rounded-md bg-blue-600 hover:bg-blue-500 text-white"
         >
           + Add Stage
         </button>
@@ -327,7 +327,7 @@ function TemplateForm({
         <button
           type="submit"
           disabled={saving}
-          className="px-3 py-1.5 text-sm rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50"
+          className="px-3 py-1.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
         >
           {saving ? "Saving..." : submitLabel}
         </button>
@@ -471,7 +471,7 @@ function TemplateDetail({
         <button
           onClick={() => setEditing(true)}
           disabled={template.isBuiltIn}
-          className="px-3 py-1.5 text-sm rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 text-sm rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title={template.isBuiltIn ? "Cannot edit built-in templates" : ""}
         >
           Edit
@@ -584,7 +584,7 @@ export function Workflows() {
         <h1 className="text-sm font-medium text-foreground">Workflow Templates</h1>
         <button
           onClick={() => setView("create")}
-          className="text-sm px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground"
+          className="text-sm px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white"
         >
           + Create Template
         </button>
