@@ -155,6 +155,10 @@ export class DaemonClient {
     return this.fetch<RunResultResponse>(`/api/runs/${id}/result`);
   }
 
+  async getRunDiff(id: string): Promise<{ diff: string | null }> {
+    return this.fetch<{ diff: string | null }>(`/api/runs/${id}/result/diff`);
+  }
+
   async createRun(data: CreateWorkflowRunRequest): Promise<WorkflowRun> {
     return this.fetch<WorkflowRun>("/api/runs", {
       method: "POST",

@@ -555,4 +555,40 @@ runs.get('/api/runs/:id/result', (c) => {
   });
 });
 
+// ── GET /api/runs/:id/result/diff — Full unified diff for commit ────
+
+runs.get('/api/runs/:id/result/diff', (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+
+  const run = db.select().from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId)).get();
+  if (!run) return c.json({ error: { code: 'NOT_FOUND' } }, 404);
+
+  const gitOp = db.select().from(schema.gitOperations)
+    .where(and(
+      eq(schema.gitOperations.workflowRunId, runId),
+      eq(schema.gitOperations.type, 'finalize'),
+    )).get();
+
+  const metadata = gitOp?.metadata ? JSON.parse(gitOp.metadata) : {};
+  if (!metadata.commitHash) return c.json({ diff: null });
+
+  const project = db.select({ localPath: schema.projects.localPath })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, run.projectId)).get();
+
+  if (!project?.localPath) return c.json({ diff: null });
+
+  try {
+    const diff = execFileSync('git',
+      ['diff', `${metadata.commitHash}~1..${metadata.commitHash}`],
+      { cwd: project.localPath, encoding: 'utf-8', timeout: 10000 },
+    );
+    return c.json({ diff });
+  } catch {
+    return c.json({ diff: null });
+  }
+});
+
 export { runs };
