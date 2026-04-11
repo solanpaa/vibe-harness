@@ -28,23 +28,17 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings" },
 ] as const;
 
-function App() {
+/**
+ * Shared hook: daemon connection + WS setup.
+ * Used by both MainApp and pop-out windows.
+ */
+function useDaemonConnection() {
   const { setConnected, setDisconnected, port } = useDaemonStore();
   const { handleMessage, setWsState } = useStreamingStore();
-  const runs = useWorkspaceStore((s) => s.runs);
-  const selectedRunId = useWorkspaceStore((s) => s.selectedRunId);
-  const selectRun = useWorkspaceStore((s) => s.selectRun);
-  const newRunModalOpen = useWorkspaceStore((s) => s.newRunModalOpen);
-  const setNewRunModalOpen = useWorkspaceStore((s) => s.setNewRunModalOpen);
-  const navigate = useNavigate();
   const wsRef = useRef<WebSocketManager | null>(null);
 
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-
-  // Bridge WS events (run_status, review_created, etc.) to workspace store
   useWebSocketBridge(wsRef.current);
 
-  // On mount, query Rust for current daemon status (avoids startup race with events)
   useEffect(() => {
     invoke<{ port: number } | null>("get_daemon_status")
       .then((result) => {
@@ -52,12 +46,9 @@ function App() {
           setConnected(result.port);
         }
       })
-      .catch(() => {
-        // Command not available or failed — rely on events instead
-      });
+      .catch(() => {});
   }, [setConnected]);
 
-  // Listen for Tauri daemon events (handles subsequent status changes)
   useEffect(() => {
     const unlisten = listen<{ port: number }>("daemon-connected", (event) => {
       setConnected(event.payload.port);
@@ -73,10 +64,8 @@ function App() {
     };
   }, [setConnected, setDisconnected]);
 
-  // Initialize WebSocket when daemon is connected
   useEffect(() => {
     if (!port) {
-      // Disconnect WS if daemon disconnects
       if (wsRef.current) {
         wsRef.current.disconnect();
         wsRef.current = null;
@@ -84,7 +73,6 @@ function App() {
       return;
     }
 
-    // Cache token for synchronous access in WS config
     let cachedToken = '';
     getAuthToken().then((t) => { cachedToken = t ?? ''; });
 
@@ -96,14 +84,12 @@ function App() {
     ws.onMessage(handleMessage);
     ws.onStateChange(setWsState);
 
-    // Connect once token is ready
     getAuthToken().then((token) => {
       cachedToken = token ?? '';
       ws.connect();
     });
 
     wsRef.current = ws;
-    // Expose WS ref for child pages (e.g. Workspace → RunDetail streaming)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__vibeWsRef = ws;
 
@@ -114,6 +100,20 @@ function App() {
       (window as any).__vibeWsRef = null;
     };
   }, [port, handleMessage, setWsState]);
+}
+
+/** Main application shell with sidebar nav. */
+function MainApp() {
+  const runs = useWorkspaceStore((s) => s.runs);
+  const selectedRunId = useWorkspaceStore((s) => s.selectedRunId);
+  const selectRun = useWorkspaceStore((s) => s.selectRun);
+  const newRunModalOpen = useWorkspaceStore((s) => s.newRunModalOpen);
+  const setNewRunModalOpen = useWorkspaceStore((s) => s.setNewRunModalOpen);
+  const navigate = useNavigate();
+
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  useDaemonConnection();
 
   // Global keyboard shortcuts
   const shortcuts = useMemo(() => ({
@@ -211,6 +211,30 @@ function App() {
       />
     </div>
   );
+}
+
+/** Pop-out window shell — no sidebar, just the content with daemon connection (CDD-gui §9). */
+function PopoutApp() {
+  useDaemonConnection();
+
+  return (
+    <Routes>
+      <Route path="/run/:runId" element={<PopoutRunDetail />} />
+      <Route path="/run/:runId/review/:reviewId" element={<PopoutReviewPanel />} />
+    </Routes>
+  );
+}
+
+/**
+ * Root App component.
+ * Detects pop-out windows by route prefix and renders the appropriate shell.
+ * Pop-out windows skip sidebar nav (SAD §2.2.2, CDD-gui §9).
+ */
+function App() {
+  if (isPopoutWindow()) {
+    return <PopoutApp />;
+  }
+  return <MainApp />;
 }
 
 export default App;

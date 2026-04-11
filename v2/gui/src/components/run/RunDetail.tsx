@@ -117,9 +117,12 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
 
   if (!detail) return null;
 
+  const hasReview = detail.status === "awaiting_review" && detail.activeReviewId;
+
   const tabs: { id: TabId; label: string }[] = [
     { id: "conversation", label: "Conversation" },
     { id: "details", label: "Details" },
+    ...(hasReview ? [{ id: "review" as TabId, label: "📋 Review" }] : []),
   ];
 
   return (
@@ -144,6 +147,10 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <PopOutButton
+              route={`/run/${runId}`}
+              title={detail.title || `Run ${detail.id.slice(0, 8)}`}
+            />
             <StatusBadge status={detail.status} size="md" />
             {isRunning && (
               <button
