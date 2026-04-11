@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useDaemonStore } from "../stores/daemon";
 import { useWorkspaceStore } from "../stores/workspace";
 import { RunFeed } from "../components/workspace/RunFeed";
@@ -18,10 +18,9 @@ function useWsRef(): WebSocketManager | null {
 
 export function Workspace() {
   const { client, connected } = useDaemonStore();
-  const { setRuns, selectedRunId, selectRun, setLoading } =
+  const { setRuns, selectedRunId, selectRun, setLoading, newRunModalOpen, setNewRunModalOpen } =
     useWorkspaceStore();
 
-  const [showNewRunModal, setShowNewRunModal] = useState(false);
   const ws = useWsRef();
 
   // Fetch runs on mount and when connection changes
@@ -55,7 +54,7 @@ export function Workspace() {
 
   const handleNewRunCreated = useCallback(
     (runId: string) => {
-      setShowNewRunModal(false);
+      setNewRunModalOpen(false);
       selectRun(runId);
       // Refresh the run list
       if (client) {
@@ -65,7 +64,7 @@ export function Workspace() {
           .catch((err) => console.error("Failed to refresh runs:", err));
       }
     },
-    [client, selectRun, setRuns],
+    [client, selectRun, setRuns, setNewRunModalOpen],
   );
 
   return (
@@ -80,7 +79,7 @@ export function Workspace() {
           <RunFeed
             selectedRunId={selectedRunId}
             onSelectRun={handleSelectRun}
-            onNewRun={() => setShowNewRunModal(true)}
+            onNewRun={() => setNewRunModalOpen(true)}
           />
         )}
       </div>
@@ -95,7 +94,7 @@ export function Workspace() {
             <p className="text-sm">Select a run to view details</p>
             {connected && (
               <button
-                onClick={() => setShowNewRunModal(true)}
+                onClick={() => setNewRunModalOpen(true)}
                 className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 or create a new run →
@@ -107,8 +106,8 @@ export function Workspace() {
 
       {/* New Run Modal */}
       <NewRunModal
-        open={showNewRunModal}
-        onClose={() => setShowNewRunModal(false)}
+        open={newRunModalOpen}
+        onClose={() => setNewRunModalOpen(false)}
         onCreated={handleNewRunCreated}
       />
     </div>

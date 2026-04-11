@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useDaemonStore } from "../../stores/daemon";
 import { useStreamingStore } from "../../stores/streaming";
+import { useWorkspaceStore } from "../../stores/workspace";
 import { StageTimeline } from "./StageTimeline";
 import { RunConversation } from "./RunConversation";
 import { InterventionInput } from "./InterventionInput";
 import { StatusBadge } from "../shared/StatusBadge";
+import { PopOutButton } from "../shared/PopOutButton";
+import { ReviewPanel } from "../review/ReviewPanel";
 import type { WebSocketManager } from "../../api/ws";
 import type {
   WorkflowRunDetailResponse,
@@ -22,7 +25,7 @@ const RUNNING_STATUSES = new Set([
   "waiting_for_children",
 ]);
 
-type TabId = "conversation" | "details";
+type TabId = "conversation" | "details" | "review";
 
 export function RunDetail({ runId, ws }: RunDetailProps) {
   const { client } = useDaemonStore();
@@ -68,7 +71,20 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
     };
   }, [runId, ws, subscribe, unsubscribe]);
 
-  // Handle real-time status updates from workspace store patches
+  // Re-fetch detail when workspace store status changes (via WS bridge)
+  const wsRunStatus = useWorkspaceStore(
+    (s) => s.runs.find((r) => r.id === runId)?.status,
+  );
+
+  useEffect(() => {
+    if (!client || !wsRunStatus || !detail) return;
+    if (wsRunStatus === detail.status) return;
+
+    client
+      .getRun(runId)
+      .then((res) => setDetail(res))
+      .catch((err) => console.error("Failed to refresh run detail:", err));
+  }, [client, runId, wsRunStatus, detail?.status]);
   const isRunning = detail ? RUNNING_STATUSES.has(detail.status) : false;
 
   const handleCancel = useCallback(async () => {

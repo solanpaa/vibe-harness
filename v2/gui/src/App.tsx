@@ -15,6 +15,9 @@ import { Projects } from "./pages/Projects";
 import { Workflows } from "./pages/Workflows";
 import { Credentials } from "./pages/Credentials";
 import { Settings } from "./pages/Settings";
+import { PopoutRunDetail } from "./pages/PopoutRunDetail";
+import { PopoutReviewPanel } from "./pages/PopoutReviewPanel";
+import { isPopoutWindow } from "./lib/popout";
 import { getAuthToken } from "./api/client";
 
 const NAV_ITEMS = [
@@ -31,11 +34,12 @@ function App() {
   const runs = useWorkspaceStore((s) => s.runs);
   const selectedRunId = useWorkspaceStore((s) => s.selectedRunId);
   const selectRun = useWorkspaceStore((s) => s.selectRun);
+  const newRunModalOpen = useWorkspaceStore((s) => s.newRunModalOpen);
+  const setNewRunModalOpen = useWorkspaceStore((s) => s.setNewRunModalOpen);
   const navigate = useNavigate();
   const wsRef = useRef<WebSocketManager | null>(null);
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [showNewRunModal, setShowNewRunModal] = useState(false);
 
   // Bridge WS events (run_status, review_created, etc.) to workspace store
   useWebSocketBridge(wsRef.current);
@@ -112,13 +116,40 @@ function App() {
   }, [port, handleMessage, setWsState]);
 
   // Global keyboard shortcuts
-  useKeyboardShortcuts({
+  const shortcuts = useMemo(() => ({
+    "mod+k": () => setCommandPaletteOpen((v) => !v),
+    "mod+n": () => { navigate("/"); setNewRunModalOpen(true); },
     "mod+1": () => navigate("/"),
     "mod+2": () => navigate("/projects"),
     "mod+3": () => navigate("/workflows"),
     "mod+4": () => navigate("/credentials"),
     "mod+5": () => navigate("/settings"),
-  });
+    "j": () => {
+      if (commandPaletteOpen) return;
+      const idx = runs.findIndex((r) => r.id === selectedRunId);
+      const next = runs[idx + 1];
+      if (next) selectRun(next.id);
+      else if (runs.length > 0 && !selectedRunId) selectRun(runs[0].id);
+    },
+    "k": () => {
+      if (commandPaletteOpen) return;
+      const idx = runs.findIndex((r) => r.id === selectedRunId);
+      const prev = runs[idx - 1];
+      if (prev) selectRun(prev.id);
+    },
+    "escape": () => {
+      if (commandPaletteOpen) { setCommandPaletteOpen(false); return; }
+      if (newRunModalOpen) { setNewRunModalOpen(false); return; }
+      if (selectedRunId) selectRun(null);
+    },
+  }), [navigate, commandPaletteOpen, newRunModalOpen, runs, selectedRunId, selectRun, setNewRunModalOpen]);
+
+  useKeyboardShortcuts(shortcuts);
+
+  const handleNewRunFromPalette = useCallback(() => {
+    navigate("/");
+    setNewRunModalOpen(true);
+  }, [navigate, setNewRunModalOpen]);
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100">
@@ -145,7 +176,18 @@ function App() {
             </NavLink>
           ))}
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setCommandPaletteOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700 rounded-md transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <span>Search</span>
+            <kbd className="text-[10px] bg-zinc-700/50 px-1 py-0.5 rounded">⌘K</kbd>
+          </button>
           <DaemonStatus />
         </div>
       </nav>
@@ -160,6 +202,13 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+
+      {/* Command Palette */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onNewRun={handleNewRunFromPalette}
+      />
     </div>
   );
 }

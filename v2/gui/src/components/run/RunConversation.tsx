@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
-import { useStreamingStore } from "../../stores/streaming";
+import { useStreamingStore, resyncFromRest } from "../../stores/streaming";
+import { useDaemonStore } from "../../stores/daemon";
 import type { RunOutputMessage } from "@vibe-harness/shared";
 
 interface RunConversationProps {
@@ -211,9 +212,18 @@ import { useState } from "react";
 
 export function RunConversation({ runId, isRunning }: RunConversationProps) {
   const buffer = useStreamingStore((s) => s.buffers.get(runId));
+  const needsResync = useStreamingStore((s) => s.resyncRequired.has(runId));
+  const { client } = useDaemonStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Trigger REST resync when server signals buffer gap
+  useEffect(() => {
+    if (needsResync && client) {
+      resyncFromRest(runId, client).catch(console.error);
+    }
+  }, [needsResync, runId, client]);
 
   const events = buffer?.events ?? [];
   const blocks = eventsToBlocks(events);

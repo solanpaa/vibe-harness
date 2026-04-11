@@ -10,7 +10,7 @@
 //   6. Log reconciliation summary
 // ---------------------------------------------------------------------------
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { resumeHook } from 'workflow/api';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
@@ -93,13 +93,15 @@ export async function reconcileOnStartup(
   for (const run of activeRuns) {
     const runLog = log.child({ runId: run.id, status: run.status });
 
-    // Find current running stageExecution
+    // Find current running stageExecution (filtered in SQL)
     const runningStage = db
       .select()
       .from(schema.stageExecutions)
-      .where(eq(schema.stageExecutions.workflowRunId, run.id))
-      .all()
-      .find((se) => se.status === 'running');
+      .where(and(
+        eq(schema.stageExecutions.workflowRunId, run.id),
+        eq(schema.stageExecutions.status, 'running'),
+      ))
+      .all()[0];
 
     if (runningStage) {
       // Mark stageExecution as failed

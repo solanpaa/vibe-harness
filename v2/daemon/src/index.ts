@@ -11,6 +11,8 @@ import {
 import { getOrCreateToken } from "./lib/auth.js";
 import { logger } from "./lib/logger.js";
 import { getDb, closeDb } from "./db/index.js";
+import { eq, and, inArray } from 'drizzle-orm';
+import * as schema from "./db/schema.js";
 import { reconcileOnStartup } from "./lib/reconcile.js";
 import { createSandboxService, type SandboxService } from "./services/sandbox.js";
 import * as streamingService from "./services/streaming-service.js";
@@ -52,27 +54,31 @@ logger.info("Database initialized");
 const sandboxService: SandboxService = createSandboxService({ logger });
 
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
-// stop orphaned sandboxes, replay pending hook resumes
-reconcileOnStartup(sandboxService).catch((err) => {
-  logger.error({ err }, "Startup reconciliation failed");
-});
-
-writePidFile();
-logger.info({ pid: process.pid }, "PID file written");
-
-// NOTE: Port file should ideally be written from Nitro's "listen" callback
-// once the server has actually bound to a port. Nitro 3 alpha does not
-// currently expose a reliable post-bind hook, so we defer briefly to
-// avoid writing the file before the socket is ready.
-// TODO: Replace with Nitro listen hook when available.
+// stop orphaned sandboxes, replay pending hook resumes.
+// Awaited before serving so clients never see stale in-flight state.
 const DEFAULT_PORT = 3000;
 const port = parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
-setTimeout(() => {
-  writePortFile(port);
-  logger.info({ port }, "Port file written (deferred)");
-}, 500);
 
-logger.info("Daemon ready");
+reconcileOnStartup(sandboxService)
+  .catch((err) => {
+    logger.error({ err }, "Startup reconciliation failed");
+  })
+  .then(() => {
+    writePidFile();
+    logger.info({ pid: process.pid }, "PID file written");
+
+    // NOTE: Port file should ideally be written from Nitro's "listen" callback
+    // once the server has actually bound to a port. Nitro 3 alpha does not
+    // currently expose a reliable post-bind hook, so we defer briefly to
+    // avoid writing the file before the socket is ready.
+    // TODO: Replace with Nitro listen hook when available.
+    setTimeout(() => {
+      writePortFile(port);
+      logger.info({ port }, "Port file written (deferred)");
+    }, 500);
+
+    logger.info("Daemon ready");
+  });
 
 // ── Shutdown ────────────────────────────────────────────────────────
 
@@ -81,6 +87,46 @@ let cleanedUp = false;
 async function cleanup(): Promise<void> {
   if (cleanedUp) return;
   cleanedUp = true;
+
+  // Mark active workflow runs as stage_failed so next startup doesn't re-reconcile
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const activeRuns = db
+      .select()
+      .from(schema.workflowRuns)
+      .where(inArray(schema.workflowRuns.status, ['running', 'provisioning']))
+      .all();
+
+    for (const run of activeRuns) {
+      const runningStage = db
+        .select()
+        .from(schema.stageExecutions)
+        .where(and(
+          eq(schema.stageExecutions.workflowRunId, run.id),
+          eq(schema.stageExecutions.status, 'running'),
+        ))
+        .all()[0];
+
+      if (runningStage) {
+        db.update(schema.stageExecutions)
+          .set({ status: 'failed', failureReason: 'daemon_shutdown', completedAt: now })
+          .where(eq(schema.stageExecutions.id, runningStage.id))
+          .run();
+      }
+
+      db.update(schema.workflowRuns)
+        .set({ status: 'stage_failed' })
+        .where(eq(schema.workflowRuns.id, run.id))
+        .run();
+    }
+
+    if (activeRuns.length > 0) {
+      logger.info({ count: activeRuns.length }, "Marked active runs as stage_failed on shutdown");
+    }
+  } catch (err) {
+    logger.error({ err }, "Error marking runs on shutdown");
+  }
 
   // Stop all active sandboxes
   try {
