@@ -580,15 +580,7 @@ export function Workflows() {
 
   return (
     <div className="p-6 max-w-4xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-sm font-medium text-foreground">Workflow Templates</h1>
-        <button
-          onClick={() => setView("create")}
-          className="text-sm px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white"
-        >
-          + Create Template
-        </button>
-      </div>
+      <h1 className="text-sm font-medium text-foreground mb-6">Workflow Templates</h1>
 
       {error && (
         <div className="px-3 py-2 mb-3 rounded bg-destructive/10 border border-destructive/30 text-destructive text-sm">
@@ -600,7 +592,14 @@ export function Workflows() {
         <p className="text-muted-foreground text-sm">Loading...</p>
       ) : templates.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">No workflow templates found.</p>
+          <p className="text-muted-foreground mb-1">No custom templates yet.</p>
+          <p className="text-xs text-muted-foreground/60 mb-3">Built-in templates are available when starting a run.</p>
+          <button
+            onClick={() => setView("create")}
+            className="text-sm text-primary hover:text-primary/80 transition-colors"
+          >
+            Create your first template →
+          </button>
         </div>
       ) : (
         <div className="space-y-2">
@@ -630,6 +629,12 @@ export function Workflows() {
               <StagePipeline stages={t.stages} />
             </button>
           ))}
+          <button
+            onClick={() => setView("create")}
+            className="w-full p-4 rounded-lg border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors text-sm flex items-center justify-center gap-2"
+          >
+            <span>+</span> Create template
+          </button>
         </div>
       )}
     </div>

@@ -295,17 +295,7 @@ export function Projects() {
 
   return (
     <div className="p-6 max-w-4xl h-full flex flex-col">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-sm font-medium text-foreground">Projects</h1>
-        {!showAddForm && (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
-          >
-            + Add Project
-          </button>
-        )}
-      </div>
+      <h1 className="text-sm font-medium text-foreground mb-6">Projects</h1>
 
       {showAddForm && (
         <AddProjectForm
@@ -326,17 +316,30 @@ export function Projects() {
       <div className="flex-1 overflow-y-auto space-y-2">
         {loading ? (
           <p className="text-muted-foreground text-sm">Loading projects…</p>
-        ) : projects.length === 0 ? (
+        ) : projects.length === 0 && !showAddForm ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground mb-2">No projects registered yet.</p>
-            <p className="text-xs text-muted-foreground/60">
-              Add a project by pointing to a local git repository.
-            </p>
+            <p className="text-muted-foreground mb-3">No projects registered yet.</p>
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="text-sm text-primary hover:text-primary/80 transition-colors"
+            >
+              Add your first project →
+            </button>
           </div>
         ) : (
-          projects.map((p) => (
-            <ProjectRow key={p.id} project={p} onDelete={handleDelete} />
-          ))
+          <>
+            {projects.map((p) => (
+              <ProjectRow key={p.id} project={p} onDelete={handleDelete} />
+            ))}
+            {!showAddForm && (
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="w-full p-4 rounded-lg border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors text-sm flex items-center justify-center gap-2"
+              >
+                <span>+</span> Add project
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -616,17 +616,7 @@ export function Credentials() {
 
   return (
     <div className="p-6 max-w-4xl h-full flex flex-col">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-sm font-medium text-foreground">Credentials</h1>
-        {!showAddForm && (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
-          >
-            + New Set
-          </button>
-        )}
-      </div>
+      <h1 className="text-sm font-medium text-foreground mb-6">Credentials</h1>
 
       {showAddForm && (
         <AddSetForm
@@ -647,17 +637,30 @@ export function Credentials() {
       <div className="flex-1 overflow-y-auto space-y-2">
         {loading ? (
           <p className="text-muted-foreground text-sm">Loading credential sets…</p>
-        ) : sets.length === 0 ? (
+        ) : sets.length === 0 && !showAddForm ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground mb-2">No credential sets yet.</p>
-            <p className="text-xs text-muted-foreground/60">
-              Create a credential set to manage API keys, tokens, and secrets for your sandboxes.
-            </p>
+            <p className="text-muted-foreground mb-3">No credential sets yet.</p>
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="text-sm text-primary hover:text-primary/80 transition-colors"
+            >
+              Create one to store API keys and tokens →
+            </button>
           </div>
         ) : (
-          sets.map((s) => (
-            <CredentialSetRow key={s.id} credSet={s} onDeleted={loadSets} />
-          ))
+          <>
+            {sets.map((s) => (
+              <CredentialSetRow key={s.id} credSet={s} onDeleted={loadSets} />
+            ))}
+            {!showAddForm && (
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="w-full p-4 rounded-lg border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors text-sm flex items-center justify-center gap-2"
+              >
+                <span>+</span> Create credential set
+              </button>
+            )}
+          </>
         )}
       </div>
 

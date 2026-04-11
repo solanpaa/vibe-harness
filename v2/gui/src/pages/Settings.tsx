@@ -250,19 +250,9 @@ export function Settings() {
 
       {/* Agent Definitions Section */}
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            Agent Definitions
-          </h2>
-          {!showAddForm && (
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 transition-colors"
-            >
-              + Add Agent
-            </button>
-          )}
-        </div>
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          Agent Definitions
+        </h2>
 
         {showAddForm && (
           <AddAgentForm
@@ -283,14 +273,30 @@ export function Settings() {
         <div className="space-y-2">
           {loading ? (
             <p className="text-muted-foreground text-sm">Loading agents…</p>
-          ) : agents.length === 0 ? (
+          ) : agents.length === 0 && !showAddForm ? (
             <div className="text-center py-12">
-              <p className="text-muted-foreground">No agent definitions found.</p>
+              <p className="text-muted-foreground mb-3">No custom agent definitions yet.</p>
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="text-sm text-primary hover:text-primary/80 transition-colors"
+              >
+                Register your first agent →
+              </button>
             </div>
           ) : (
-            agents.map((a) => (
-              <AgentRow key={a.id} agent={a} onDelete={handleDelete} />
-            ))
+            <>
+              {agents.map((a) => (
+                <AgentRow key={a.id} agent={a} onDelete={handleDelete} />
+              ))}
+              {!showAddForm && (
+                <button
+                  onClick={() => setShowAddForm(true)}
+                  className="w-full p-4 rounded-lg border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors text-sm flex items-center justify-center gap-2"
+                >
+                  <span>+</span> Add agent
+                </button>
+              )}
+            </>
           )}
         </div>
       </section>
