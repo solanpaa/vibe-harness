@@ -124,6 +124,19 @@ function parseDiffSnapshot(raw: string | null): DiffFile[] {
   return files;
 }
 
+/** Determine review artifact type for layout decisions. */
+type ReviewArtifactType = "plan" | "code" | "code+plan" | "empty";
+
+function getArtifactType(review: Review | undefined, diffFiles: DiffFile[]): ReviewArtifactType {
+  if (!review) return "empty";
+  const hasDiff = diffFiles.length > 0;
+  const hasPlan = !!review.planMarkdown;
+  if (hasDiff && hasPlan) return "code+plan";
+  if (hasDiff) return "code";
+  if (hasPlan) return "plan";
+  return "empty";
+}
+
 export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   const { client } = useDaemonStore();
   const { updateRun } = useWorkspaceStore();
@@ -137,8 +150,7 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const [showSummary, setShowSummary] = useState(true);
-  const [showPlan, setShowPlan] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const [actionResult, setActionResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Fetch review detail + all reviews for round selector
@@ -156,9 +168,9 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
       .then(([reviewDetail, reviewList]) => {
         if (cancelled) return;
         setDetail(reviewDetail);
-        setLocalComments(reviewDetail.comments);
-        setAllReviews(reviewList.reviews);
-        setSelectedRound(reviewDetail.review.round);
+        setLocalComments(reviewDetail.comments ?? []);
+        setAllReviews(reviewList.reviews ?? []);
+        setSelectedRound(reviewDetail.review?.round ?? 0);
       })
       .catch((err) => {
         if (!cancelled) setError(err.message ?? "Failed to load review");
@@ -184,7 +196,7 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
       try {
         const d = await client.getReview(target.id);
         setDetail(d);
-        setLocalComments(d.comments);
+        setLocalComments(d.comments ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load round");
       } finally {
@@ -194,16 +206,17 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
     [client, selectedRound, allReviews]
   );
 
-  // Parse diff files from the snapshot
-  const diffFiles = detail?.review.diffSnapshot
+  // Parse diff files — defensive null guards throughout
+  const diffFiles = detail?.review?.diffSnapshot
     ? parseDiffSnapshot(detail.review.diffSnapshot)
     : [];
 
-  const isPending = detail?.review.status === "pending_review";
+  const artifactType = getArtifactType(detail?.review, diffFiles);
+  const isPending = detail?.review?.status === "pending_review";
 
   const handleAddComment = useCallback(
     async (data: CreateReviewCommentRequest) => {
-      if (!client || !detail) return;
+      if (!client || !detail?.review) return;
       try {
         const comment = await client.addComment(detail.review.id, data);
         setLocalComments((prev) => [...prev, comment]);
@@ -215,7 +228,7 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   );
 
   const handleApprove = useCallback(async () => {
-    if (!client || !detail || approving) return;
+    if (!client || !detail?.review || approving) return;
     setApproving(true);
     setActionResult(null);
     try {
@@ -241,9 +254,8 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   }, [client, detail, approving, runId, updateRun]);
 
   const handleRequestChanges = useCallback(async () => {
-    if (!client || !detail || requesting) return;
+    if (!client || !detail?.review || requesting) return;
 
-    // Must have at least one comment
     if (localComments.length === 0) {
       setActionResult({
         type: "error",
@@ -302,7 +314,19 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
     );
   }
 
-  if (!detail) return null;
+  if (!detail?.review) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 text-zinc-500">
+        <span className="text-sm">Review not found</span>
+        <button
+          onClick={onBack}
+          className="text-xs text-zinc-400 hover:text-zinc-200"
+        >
+          ← Back to run
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -318,10 +342,36 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
           onRequestChanges={handleRequestChanges}
           onBack={onBack}
           canApprove={isPending}
-          canRequestChanges={isPending}
+          canRequestChanges={isPending && localComments.length > 0}
           approving={approving}
           requesting={requesting}
         />
+      </div>
+
+      {/* Review facts bar */}
+      <div className="flex-shrink-0 flex items-center gap-4 px-4 py-2 text-xs text-zinc-400 border-b border-zinc-700/30 bg-zinc-900/30">
+        {diffFiles.length > 0 && (
+          <span>
+            {diffFiles.length} file{diffFiles.length !== 1 ? "s" : ""} changed
+          </span>
+        )}
+        {diffFiles.length > 0 && (
+          <span className="text-green-400/70">
+            +{diffFiles.reduce((s, f) => s + f.additions, 0)}
+          </span>
+        )}
+        {diffFiles.length > 0 && (
+          <span className="text-red-400/70">
+            -{diffFiles.reduce((s, f) => s + f.deletions, 0)}
+          </span>
+        )}
+        {detail.review.planMarkdown && (
+          <span className="text-blue-400/70">📋 Plan attached</span>
+        )}
+        {localComments.length > 0 && (
+          <span>{localComments.length} comment{localComments.length !== 1 ? "s" : ""}</span>
+        )}
+        <span className="ml-auto">Round {detail.review.round}</span>
       </div>
 
       {/* Action result banner */}
@@ -337,7 +387,7 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
         </div>
       )}
 
-      {/* AI Summary (collapsible) */}
+      {/* AI Summary (collapsed by default) */}
       {detail.review.aiSummary && (
         <div className="flex-shrink-0 border-b border-zinc-700/30">
           <button
@@ -357,62 +407,112 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
         </div>
       )}
 
-      {/* Plan markdown (collapsible) */}
-      {detail.review.planMarkdown && (
-        <div className="flex-shrink-0 border-b border-zinc-700/30">
-          <button
-            onClick={() => setShowPlan((s) => !s)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            <span className="font-semibold uppercase tracking-wide">
-              Plan
-            </span>
-            <span>{showPlan ? "▼" : "▶"}</span>
-          </button>
-          {showPlan && (
-            <div className="px-4 pb-3 text-sm text-zinc-300 whitespace-pre-wrap font-mono max-h-64 overflow-y-auto">
+      {/* Main content area — artifact-aware layout */}
+      {artifactType === "plan" ? (
+        /* ── Plan-only review: full-page plan document ── */
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-6 py-4">
+            <h3 className="text-sm font-semibold text-zinc-300 mb-3 flex items-center gap-2">
+              <span className="text-blue-400">📋</span>
+              Agent Plan
+              <span className="text-xs font-normal text-zinc-500">
+                — This is a plan-only stage. No code changes expected.
+              </span>
+            </h3>
+            <div className="prose prose-invert prose-sm max-w-none bg-zinc-900/50 rounded-lg p-5 border border-zinc-700/30 whitespace-pre-wrap">
               {detail.review.planMarkdown}
             </div>
-          )}
-        </div>
-      )}
+          </div>
 
-      {/* Diff area: file tree + diff viewer */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* File tree sidebar */}
-        {diffFiles.length > 0 && (
-          <div className="w-56 flex-shrink-0 border-r border-zinc-700/30 overflow-hidden">
-            <FileTree
-              files={diffFiles}
-              selectedFile={selectedFile}
-              onSelectFile={setSelectedFile}
+          {/* Comments for plan review */}
+          <div className="px-6 pb-4">
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">
+              Comments
+            </h3>
+            <GeneralComments
+              comments={localComments}
+              onAddComment={handleAddComment}
+              readOnly={!isPending}
             />
           </div>
-        )}
-
-        {/* Diff viewer */}
-        <div className="flex-1 overflow-hidden">
-          <DiffViewer
-            files={diffFiles}
-            selectedFile={selectedFile}
-            comments={localComments}
-            onAddComment={isPending ? handleAddComment : undefined}
-            readOnly={!isPending}
-          />
         </div>
-      </div>
+      ) : artifactType === "empty" ? (
+        /* ── Empty review: agent produced nothing ── */
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
+          <span className="text-3xl">⚠️</span>
+          <span className="text-sm font-medium">
+            No artifacts produced
+          </span>
+          <span className="text-xs text-zinc-600 max-w-sm text-center">
+            The agent finished this stage but produced no file changes or plan.
+            You can approve to continue or request changes to retry.
+          </span>
 
-      {/* General comments section */}
-      <div className="flex-shrink-0 border-t border-zinc-700/30 p-4 max-h-48 overflow-y-auto">
-        <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">
-          Comments
-        </h3>
-        <GeneralComments
-          comments={localComments}
-          onAddComment={handleAddComment}
-          readOnly={!isPending}
-        />
-      </div>
+          {/* Still allow comments */}
+          <div className="w-full max-w-lg mt-4 px-4">
+            <GeneralComments
+              comments={localComments}
+              onAddComment={handleAddComment}
+              readOnly={!isPending}
+            />
+          </div>
+        </div>
+      ) : (
+        /* ── Code or Code+Plan review ── */
+        <>
+          {/* Plan card (collapsible, secondary to code) */}
+          {artifactType === "code+plan" && detail.review.planMarkdown && (
+            <div className="flex-shrink-0 border-b border-zinc-700/30">
+              <details className="group">
+                <summary className="cursor-pointer w-full flex items-center justify-between px-4 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors list-none">
+                  <span className="font-semibold uppercase tracking-wide flex items-center gap-2">
+                    <span className="text-blue-400">📋</span>
+                    Plan
+                  </span>
+                  <span className="group-open:rotate-90 transition-transform">▶</span>
+                </summary>
+                <div className="px-4 pb-3 text-sm text-zinc-300 whitespace-pre-wrap bg-zinc-900/30 border-t border-zinc-800/50 max-h-64 overflow-y-auto">
+                  {detail.review.planMarkdown}
+                </div>
+              </details>
+            </div>
+          )}
+
+          {/* Diff area: file tree + diff viewer */}
+          <div className="flex-1 flex overflow-hidden">
+            {diffFiles.length > 0 && (
+              <div className="w-56 flex-shrink-0 border-r border-zinc-700/30 overflow-hidden">
+                <FileTree
+                  files={diffFiles}
+                  selectedFile={selectedFile}
+                  onSelectFile={setSelectedFile}
+                />
+              </div>
+            )}
+            <div className="flex-1 overflow-hidden">
+              <DiffViewer
+                files={diffFiles}
+                selectedFile={selectedFile}
+                comments={localComments}
+                onAddComment={isPending ? handleAddComment : undefined}
+                readOnly={!isPending}
+              />
+            </div>
+          </div>
+
+          {/* General comments section */}
+          <div className="flex-shrink-0 border-t border-zinc-700/30 p-4 max-h-48 overflow-y-auto">
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">
+              Comments
+            </h3>
+            <GeneralComments
+              comments={localComments}
+              onAddComment={handleAddComment}
+              readOnly={!isPending}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

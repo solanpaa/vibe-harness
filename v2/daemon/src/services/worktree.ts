@@ -263,6 +263,12 @@ export function createWorktreeService(deps: {
   }
 
   // ── getDiff (read — no lock) ─────────────────────────────────────
+  //
+  // Shows ALL agent work: committed changes since merge-base PLUS any
+  // uncommitted modifications in the working tree.  Uses `git diff
+  // <mergeBase>` (no `..HEAD`) so the working tree is included without
+  // mutating the index.  Untracked new files are captured separately
+  // via `git ls-files --others` and appended as synthetic diffs.
 
   async function getDiff(
     worktreePath: string,
@@ -281,19 +287,60 @@ export function createWorktreeService(deps: {
 
     const mergeBase = mergeBaseResult.stdout.trim();
 
+    // Primary diff: merge-base → working tree (includes committed + uncommitted)
     const diffResult = await git(
-      ['diff', `${mergeBase}..HEAD`],
+      ['diff', mergeBase],
       worktreePath,
     );
 
     const statResult = await git(
-      ['diff', '--stat', `${mergeBase}..HEAD`],
+      ['diff', '--stat', mergeBase],
       worktreePath,
     );
 
-    const rawDiff = diffResult.stdout;
+    let rawDiff = diffResult.stdout;
+
+    // Capture untracked files (new files the agent created but didn't git-add)
+    const untrackedResult = await git(
+      ['ls-files', '--others', '--exclude-standard'],
+      worktreePath,
+    );
+
+    if (untrackedResult.exitCode === 0 && untrackedResult.stdout.trim()) {
+      const untrackedFiles = untrackedResult.stdout.trim().split('\n').filter(Boolean);
+
+      for (const file of untrackedFiles) {
+        // Generate a synthetic diff for each untracked file
+        const fileDiff = await git(
+          ['diff', '--no-index', '/dev/null', file],
+          worktreePath,
+        );
+        // git diff --no-index exits 1 when files differ (expected)
+        if (fileDiff.stdout.trim()) {
+          rawDiff += '\n' + fileDiff.stdout;
+        }
+      }
+    }
+
     const files = diffParser.parseUnifiedDiff(rawDiff);
     const stats = parseDiffStats(statResult.stdout);
+
+    // Adjust stats to account for untracked files
+    if (untrackedResult.exitCode === 0 && untrackedResult.stdout.trim()) {
+      const untrackedCount = untrackedResult.stdout.trim().split('\n').filter(Boolean).length;
+      if (untrackedCount > 0) {
+        // Re-count from parsed files for accuracy
+        let totalInsertions = 0;
+        let totalDeletions = 0;
+        for (const f of files) {
+          totalInsertions += f.additions;
+          totalDeletions += f.deletions;
+        }
+        stats.filesChanged = files.length;
+        stats.insertions = totalInsertions;
+        stats.deletions = totalDeletions;
+      }
+    }
 
     return { rawDiff, files, stats };
   }
