@@ -367,7 +367,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       );
 
       if (acp.isActive(session.sandboxName) && !modelChanged) {
-        log.debug('ACP connection active, same model — ready for continuation');
+        // ACP still active, same model — just re-register event handler
+        // for the new generation (resetCompletionState incremented it)
+        const onEvent = makeEventHandler(session);
+        acp.onEvent(session.sandboxName, onEvent);
+        log.debug('ACP connection active, same model — re-registered event handler for new stage');
         return;
       }
 
