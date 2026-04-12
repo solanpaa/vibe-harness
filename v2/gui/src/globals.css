@@ -16,8 +16,8 @@
   body {
     @apply bg-background text-foreground;
   }
-  html {
-    @apply font-sans;
+  html, body {
+    @apply font-sans overflow-hidden h-full;
   }
 }
 
