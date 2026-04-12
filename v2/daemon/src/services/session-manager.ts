@@ -289,12 +289,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     );
 
     // 2. Provision Docker sandbox (idempotent via getOrCreate)
+    // Mount the PARENT repo (projectPath) as workspace so git worktree
+    // refs resolve correctly. The ACP session cwd will be set to the
+    // worktree path within the mounted directory.
     const sandboxName = sandbox.getSandboxName(runId);
     log.info({ sandboxName }, 'Provisioning sandbox');
     await sandbox.getOrCreate({
       runId,
       image: agentDef.dockerImage,
-      workdir: worktreePath,
+      workdir: projectPath,
       agentSubcommand: 'copilot',
       networkPolicy: 'open',
       credentials,
