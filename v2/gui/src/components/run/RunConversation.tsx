@@ -256,11 +256,10 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
     }
   }, [needsResync, runId, client]);
 
-  // Poll for messages from REST when streaming buffer is empty
+  // Always fetch REST messages — they contain user prompts and review feedback
+  // that aren't in the streaming buffer
   useEffect(() => {
     if (!client) return;
-    // If streaming buffer has events, don't need REST
-    if (buffer?.events?.length) return;
 
     let cancelled = false;
     const fetchMessages = () => {
@@ -297,9 +296,34 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
     fetchMessages();
     const interval = setInterval(fetchMessages, 3000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [client, runId, buffer?.events?.length]);
+  }, [client, runId]);
 
-  const events = buffer?.events?.length ? buffer.events : restMessages;
+  // Merge: use REST as the base (has user prompts + all persisted messages).
+  // If streaming buffer is active, prefer it for the latest stage (more real-time).
+  // User messages from REST are always included since streaming never has them.
+  const events = (() => {
+    const streamEvents = buffer?.events ?? [];
+    if (streamEvents.length === 0) return restMessages;
+    if (restMessages.length === 0) return streamEvents;
+
+    // Extract user messages from REST (prompts, review feedback)
+    const restUserMessages = restMessages.filter(
+      (m) => m.data?.role === 'user' || m.data?.eventType === 'system_prompt'
+    );
+
+    // Merge: REST user messages + streaming agent output, sorted by stage/round/seq
+    const merged = [...restUserMessages, ...streamEvents];
+    // Sort by stageName then round then seq for correct ordering
+    merged.sort((a, b) => {
+      const stageOrder = (a.stageName ?? '').localeCompare(b.stageName ?? '');
+      if (stageOrder !== 0) return stageOrder;
+      const roundOrder = (a.round ?? 0) - (b.round ?? 0);
+      if (roundOrder !== 0) return roundOrder;
+      return (a.seq ?? 0) - (b.seq ?? 0);
+    });
+    return merged;
+  })();
+
   const blocks = eventsToBlocks(events);
 
   // Determine if the last block is still streaming
