@@ -5,6 +5,9 @@ export default defineConfig({
   features: {
     websocket: true,
   },
+  devServer: {
+    port: 19423,
+  },
   routes: {
     "/ws": "./src/ws/run-stream.ts",
     "/**": "./src/index.ts",

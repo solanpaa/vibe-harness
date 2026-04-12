@@ -96,7 +96,7 @@ logger.info("Pipeline deps initialized");
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
 // stop orphaned sandboxes, replay pending hook resumes.
 // Awaited before serving so clients never see stale in-flight state.
-const DEFAULT_PORT = 3000;
+const DEFAULT_PORT = 19423;
 const port = parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
 
 reconcileOnStartup(sandboxService)
