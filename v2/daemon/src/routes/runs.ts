@@ -230,7 +230,10 @@ runs.get('/api/runs/:id', (c) => {
     .where(eq(schema.reviews.workflowRunId, runId))
     .all();
 
-  return c.json({ ...run, stages, reviews });
+  // Derive activeReviewId from pending reviews
+  const activeReview = reviews.find((r) => r.status === 'pending_review');
+
+  return c.json({ ...run, stages, reviews, activeReviewId: activeReview?.id ?? null });
 });
 
 // ── GET /api/runs/:id/messages — Run conversation messages ──────────
