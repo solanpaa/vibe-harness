@@ -97,7 +97,7 @@ logger.info("Pipeline deps initialized");
 // stop orphaned sandboxes, replay pending hook resumes.
 // Awaited before serving so clients never see stale in-flight state.
 const DEFAULT_PORT = 19423;
-const port = parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
+const port = parseInt(process.env.NITRO_PORT ?? process.env.PORT ?? String(DEFAULT_PORT), 10);
 
 reconcileOnStartup(sandboxService)
   .catch((err) => {
