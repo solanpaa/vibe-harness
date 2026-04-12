@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
@@ -50,7 +50,19 @@ reviews.get('/api/reviews/:id', (c) => {
     .where(eq(schema.reviewComments.reviewId, reviewId))
     .all();
 
-  return c.json({ ...review, comments });
+  // Find associated stage execution
+  const stageExecution = db
+    .select()
+    .from(schema.stageExecutions)
+    .where(
+      and(
+        eq(schema.stageExecutions.workflowRunId, review.workflowRunId),
+        eq(schema.stageExecutions.stageName, review.stageName),
+      ),
+    )
+    .get() ?? null;
+
+  return c.json({ review, comments, stageExecution });
 });
 
 // ── POST /api/reviews/:id/approve — Resume reviewDecisionHook ───────
