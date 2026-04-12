@@ -8,6 +8,8 @@ health.get("/health", (c) =>
     status: "ok",
     service: "vibe-harness-daemon",
     version: "0.1.0",
+    pid: process.pid,
+    ready: true,
     uptime: Math.floor((Date.now() - startedAt) / 1000),
   }),
 );

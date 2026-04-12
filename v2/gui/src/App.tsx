@@ -18,7 +18,7 @@ import { Settings } from "./pages/Settings";
 import { PopoutRunDetail } from "./pages/PopoutRunDetail";
 import { PopoutReviewPanel } from "./pages/PopoutReviewPanel";
 import { isPopoutWindow } from "./lib/popout";
-import { getAuthToken } from "./api/client";
+import { getAuthToken, getCachedToken } from "./api/client";
 
 const NAV_ITEMS = [
   { to: "/", label: "Workspace" },
@@ -73,19 +73,23 @@ function useDaemonConnection() {
       return;
     }
 
-    let cachedToken = '';
-    getAuthToken().then((t) => { cachedToken = t ?? ''; });
-
     const ws = new WebSocketManager({
       getUrl: () => `ws://127.0.0.1:${port}/ws`,
-      getAuthToken: () => cachedToken,
+      // getAuthToken is called on each connect/reconnect — resetConnection()
+      // clears the cache so this always returns the latest token.
+      getAuthToken: () => {
+        // Synchronous: returns cached or empty. The cache is populated
+        // before first connect and cleared on reconnect via resetConnection().
+        const cached = getCachedToken();
+        return cached ?? '';
+      },
     });
 
     ws.onMessage(handleMessage);
     ws.onStateChange(setWsState);
 
-    getAuthToken().then((token) => {
-      cachedToken = token ?? '';
+    // Pre-populate token cache, then connect
+    getAuthToken().then(() => {
       ws.connect();
     });
 

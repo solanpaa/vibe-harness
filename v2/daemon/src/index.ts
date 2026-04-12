@@ -5,8 +5,6 @@ import {
   writePidFile,
   readPidFile,
   removePidFile,
-  writePortFile,
-  removePortFile,
 } from "./lib/config.js";
 import { getOrCreateToken } from "./lib/auth.js";
 import { logger } from "./lib/logger.js";
@@ -96,8 +94,6 @@ logger.info("Pipeline deps initialized");
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
 // stop orphaned sandboxes, replay pending hook resumes.
 // Awaited before serving so clients never see stale in-flight state.
-const DEFAULT_PORT = 19423;
-const port = parseInt(process.env.NITRO_PORT ?? process.env.PORT ?? String(DEFAULT_PORT), 10);
 
 reconcileOnStartup(sandboxService)
   .catch((err) => {
@@ -106,17 +102,6 @@ reconcileOnStartup(sandboxService)
   .then(() => {
     writePidFile();
     logger.info({ pid: process.pid }, "PID file written");
-
-    // NOTE: Port file should ideally be written from Nitro's "listen" callback
-    // once the server has actually bound to a port. Nitro 3 alpha does not
-    // currently expose a reliable post-bind hook, so we defer briefly to
-    // avoid writing the file before the socket is ready.
-    // TODO: Replace with Nitro listen hook when available.
-    setTimeout(() => {
-      writePortFile(port);
-      logger.info({ port }, "Port file written (deferred)");
-    }, 500);
-
     logger.info("Daemon ready");
   });
 
@@ -199,7 +184,6 @@ async function cleanup(): Promise<void> {
   }
 
   removePidFile();
-  removePortFile();
 }
 
 async function shutdown(signal: string): Promise<void> {
@@ -215,7 +199,6 @@ process.on("exit", () => {
   if (!cleanedUp) {
     try { closeDb(); } catch { /* best effort */ }
     removePidFile();
-    removePortFile();
   }
 });
 

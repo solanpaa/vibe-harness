@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DaemonClient, setCachedPort, resetConnection, getDaemonPort } from "../api/client";
+import { DaemonClient, resetConnection } from "../api/client";
 import type { HealthResponse } from "@vibe-harness/shared";
 
 interface DaemonState {
@@ -24,7 +24,6 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
 
   setConnected: (port: number) => {
     resetConnection(); // Clear cached token so new client reads fresh token
-    setCachedPort(port);
     set({
       port,
       connected: true,
@@ -51,24 +50,8 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
     const { client } = get();
 
     if (!client) {
-      // Self-healing: try to discover a running daemon
-      try {
-        resetConnection(); // Clear stale token before reconnecting
-        const port = await getDaemonPort();
-        if (!port) return;
-        const tempClient = new DaemonClient(port);
-        const health = await tempClient.health();
-        setCachedPort(port);
-        set({
-          port,
-          connected: true,
-          client: tempClient,
-          lastHealthCheck: health,
-          lastError: null,
-        });
-      } catch {
-        // Daemon not available yet — stay disconnected
-      }
+      // No client — wait for Rust to emit daemon-connected event.
+      // JS does NOT independently discover the daemon.
       return;
     }
 

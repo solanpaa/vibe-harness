@@ -46,45 +46,20 @@ fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-/// Default daemon port — must match daemon's DEFAULT_PORT.
+/// Default daemon port — fixed, no port file needed.
 const DEFAULT_DAEMON_PORT: u16 = 19423;
 
-/// Try to connect to an already-running daemon.
-/// Returns the port if a daemon is alive and healthy.
+/// Try to connect to an already-running daemon on the fixed port.
+/// Validates the response contains our service identifier.
 fn try_existing_daemon() -> Option<u16> {
-    let pid_file = state_dir().join("daemon.pid");
-    let port_file = state_dir().join("daemon.port");
-
-    // Read PID file and check if process is alive
-    if let Ok(pid_str) = fs::read_to_string(&pid_file) {
-        if let Ok(pid) = pid_str.trim().parse::<u32>() {
-            if is_process_alive(pid) {
-                // Process alive — read port
-                if let Ok(port_str) = fs::read_to_string(&port_file) {
-                    if let Ok(port) = port_str.trim().parse::<u16>() {
-                        if quick_health_check(port) {
-                            return Some(port);
-                        }
-                    }
-                }
-            } else {
-                // Stale PID file — clean up
-                let _ = fs::remove_file(&pid_file);
-                let _ = fs::remove_file(&port_file);
-            }
-        }
-    }
-
-    // Fallback: try the default port in case daemon is running
-    // but port/pid files are stale or missing
     if quick_health_check(DEFAULT_DAEMON_PORT) {
-        return Some(DEFAULT_DAEMON_PORT);
+        Some(DEFAULT_DAEMON_PORT)
+    } else {
+        None
     }
-
-    None
 }
 
-/// Fast non-blocking health check (2s connect + 3s read timeout).
+/// Health check: validates service identity, not just any HTTP 200.
 fn quick_health_check(port: u16) -> bool {
     match std::net::TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse().unwrap(),
@@ -100,7 +75,9 @@ fn quick_health_check(port: u16) -> bool {
                 let mut buf = Vec::new();
                 let _ = stream.read_to_end(&mut buf);
                 let response = String::from_utf8_lossy(&buf);
-                response.contains("\"status\":\"ok\"")
+                // Validate it's our daemon, not some random service
+                response.contains("\"service\":\"vibe-harness-daemon\"")
+                    && response.contains("\"ready\":true")
             } else {
                 false
             }
@@ -152,10 +129,6 @@ fn spawn_daemon(app: &AppHandle) -> Result<(), String> {
         }
     };
 
-    // Remove stale port/pid files before spawning
-    let _ = fs::remove_file(state_dir().join("daemon.port"));
-    let _ = fs::remove_file(state_dir().join("daemon.pid"));
-
     let mut cmd = Command::new("node");
     cmd.arg(&script);
     configure_detach(&mut cmd);
@@ -167,32 +140,17 @@ fn spawn_daemon(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn poll_for_port(timeout: Duration) -> Result<u16, String> {
-    let port_file = state_dir().join("daemon.port");
+/// Poll the fixed port until the daemon health check passes.
+fn wait_for_daemon(timeout: Duration) -> Result<u16, String> {
     let start = Instant::now();
+    let port = DEFAULT_DAEMON_PORT;
     loop {
         if start.elapsed() > timeout {
-            return Err("Timed out waiting for daemon port file".into());
-        }
-        if let Ok(contents) = fs::read_to_string(&port_file) {
-            if let Ok(port) = contents.trim().parse::<u16>() {
-                return Ok(port);
-            }
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-}
-
-fn health_check(port: u16) -> Result<(), String> {
-    let start = Instant::now();
-    let timeout = Duration::from_secs(10);
-    loop {
-        if start.elapsed() > timeout {
-            return Err("Health check timed out".into());
+            return Err(format!("Timed out waiting for daemon on port {port}"));
         }
         if quick_health_check(port) {
             println!("Health check passed on port {port}");
-            return Ok(());
+            return Ok(port);
         }
         thread::sleep(Duration::from_millis(300));
     }
@@ -252,20 +210,18 @@ fn start_monitor_loop(handle: AppHandle) {
                 continue;
             }
 
-            match poll_for_port(Duration::from_secs(30)) {
+            match wait_for_daemon(Duration::from_secs(30)) {
                 Ok(new_port) => {
-                    if health_check(new_port).is_ok() {
-                        if let Some(state) = handle.try_state::<DaemonState>() {
-                            state.current_port.store(new_port, Ordering::SeqCst);
-                            state.is_connected.store(true, Ordering::SeqCst);
-                        }
-                        let _ = handle.emit(
-                            "daemon-connected",
-                            DaemonConnected { port: new_port },
-                        );
+                    if let Some(state) = handle.try_state::<DaemonState>() {
+                        state.current_port.store(new_port, Ordering::SeqCst);
+                        state.is_connected.store(true, Ordering::SeqCst);
                     }
+                    let _ = handle.emit(
+                        "daemon-connected",
+                        DaemonConnected { port: new_port },
+                    );
                 }
-                Err(e) => eprintln!("Restart port poll failed: {e}"),
+                Err(e) => eprintln!("Restart failed: {e}"),
             }
         }
     });
@@ -350,28 +306,19 @@ pub fn run() {
                     return;
                 }
 
-                // Step 3: Wait for port file and health check
-                match poll_for_port(Duration::from_secs(30)) {
+                // Step 3: Wait for daemon to become healthy on fixed port
+                match wait_for_daemon(Duration::from_secs(30)) {
                     Ok(port) => {
-                        println!("Daemon port: {port}");
-                        match health_check(port) {
-                            Ok(()) => {
-                                if let Some(state) = handle.try_state::<DaemonState>() {
-                                    state.current_port.store(port, Ordering::SeqCst);
-                                    state.is_connected.store(true, Ordering::SeqCst);
-                                }
-                                let _ =
-                                    handle.emit("daemon-connected", DaemonConnected { port });
-                                start_monitor_loop(handle);
-                            }
-                            Err(e) => {
-                                eprintln!("Health check failed: {e}");
-                                let _ = handle.emit("daemon-error", DaemonError { message: e });
-                            }
+                        println!("Daemon ready on port {port}");
+                        if let Some(state) = handle.try_state::<DaemonState>() {
+                            state.current_port.store(port, Ordering::SeqCst);
+                            state.is_connected.store(true, Ordering::SeqCst);
                         }
+                        let _ = handle.emit("daemon-connected", DaemonConnected { port });
+                        start_monitor_loop(handle);
                     }
                     Err(e) => {
-                        eprintln!("Port polling failed: {e}");
+                        eprintln!("Daemon startup failed: {e}");
                         let _ = handle.emit("daemon-error", DaemonError { message: e });
                     }
                 }

@@ -98,6 +98,11 @@ export async function getAuthToken(): Promise<string | null> {
   return token;
 }
 
+/** Synchronous access to the cached token (for WS connect callbacks). */
+export function getCachedToken(): string | null {
+  return cachedToken;
+}
+
 export class DaemonClient {
   private baseUrl: string;
 

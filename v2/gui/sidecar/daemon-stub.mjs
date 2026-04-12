@@ -66,7 +66,7 @@ if (!fs.existsSync(nitroConfig)) {
     console.log(`daemon-stub (health-only) listening on 127.0.0.1:${port} (pid ${process.pid})`);
   });
 } else {
-  // Start the real Nitro daemon
+  // Start the real Nitro daemon — it manages its own PID file
   console.log(`daemon-stub: starting Nitro daemon from ${daemonDir}`);
 
   const child = spawn("npx", ["nitro", "dev", "--port", String(DEFAULT_PORT)], {
@@ -75,13 +75,10 @@ if (!fs.existsSync(nitroConfig)) {
     env: { ...process.env, NITRO_PORT: String(DEFAULT_PORT) },
   });
 
-  // Write our PID so the Rust side can track us
-  fs.writeFileSync(PID_FILE, String(process.pid));
-
   child.on("exit", (code) => {
     console.log(`daemon-stub: Nitro exited with code ${code}`);
     process.exit(code ?? 1);
   });
 
-  console.log(`daemon-stub listening on 127.0.0.1:${DEFAULT_PORT} (pid ${process.pid})`);
+  console.log(`daemon-stub: launched Nitro on port ${DEFAULT_PORT} (pid ${process.pid})`);
 }
