@@ -298,30 +298,24 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [client, runId]);
 
-  // Merge: use REST as the base (has user prompts + all persisted messages).
-  // If streaming buffer is active, prefer it for the latest stage (more real-time).
-  // User messages from REST are always included since streaming never has them.
+  // Merge: For completed runs, use REST messages in DB order (correct chronological).
+  // During live streaming, prepend REST user messages before streaming events.
   const events = (() => {
     const streamEvents = buffer?.events ?? [];
+
+    // No streaming — use REST messages as-is (DB order is chronological)
     if (streamEvents.length === 0) return restMessages;
+
+    // No REST yet — just streaming
     if (restMessages.length === 0) return streamEvents;
 
-    // Extract user messages from REST (prompts, review feedback)
+    // Streaming active: prepend REST user messages (prompts, review feedback)
+    // before streaming events so they're visible during live execution
     const restUserMessages = restMessages.filter(
       (m) => m.data?.role === 'user' || m.data?.eventType === 'system_prompt'
     );
 
-    // Merge: REST user messages + streaming agent output, sorted by stage/round/seq
-    const merged = [...restUserMessages, ...streamEvents];
-    // Sort by stageName then round then seq for correct ordering
-    merged.sort((a, b) => {
-      const stageOrder = (a.stageName ?? '').localeCompare(b.stageName ?? '');
-      if (stageOrder !== 0) return stageOrder;
-      const roundOrder = (a.round ?? 0) - (b.round ?? 0);
-      if (roundOrder !== 0) return roundOrder;
-      return (a.seq ?? 0) - (b.seq ?? 0);
-    });
-    return merged;
+    return [...restUserMessages, ...streamEvents];
   })();
 
   const blocks = eventsToBlocks(events);
