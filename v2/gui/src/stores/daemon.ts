@@ -23,6 +23,7 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
   client: null,
 
   setConnected: (port: number) => {
+    resetConnection(); // Clear cached token so new client reads fresh token
     setCachedPort(port);
     set({
       port,
@@ -52,6 +53,7 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
     if (!client) {
       // Self-healing: try to discover a running daemon
       try {
+        resetConnection(); // Clear stale token before reconnecting
         const port = await getDaemonPort();
         if (!port) return;
         const tempClient = new DaemonClient(port);
