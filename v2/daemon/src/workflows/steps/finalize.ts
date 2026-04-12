@@ -121,9 +121,22 @@ export async function finalize(
     if (commitResult.committed && commitResult.sha) {
       metadata.commitHash = commitResult.sha;
       metadata.commitMessage = 'Final commit from Vibe Harness workflow';
-      metadata.branch = run.branch;
-      metadata.targetBranch = targetBranch;
     }
+
+    // Always capture the HEAD commit hash (agent may have committed already)
+    if (!metadata.commitHash) {
+      const headResult = await deps.worktreeService.getHeadSha(
+        projectPath,
+        run.worktreePath,
+      );
+      if (headResult) {
+        metadata.commitHash = headResult.sha;
+        metadata.commitMessage = headResult.message;
+      }
+    }
+
+    metadata.branch = run.branch;
+    metadata.targetBranch = targetBranch;
 
     advancePhase(db, journal!.id, 'rebase', metadata);
   }

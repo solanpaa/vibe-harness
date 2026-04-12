@@ -102,6 +102,12 @@ export interface WorktreeService {
   listBranches(projectPath: string): Promise<string[]>;
 
   exists(worktreePath: string): Promise<boolean>;
+
+  /** Get the HEAD commit SHA and message from a worktree. */
+  getHeadSha(
+    projectPath: string,
+    worktreePath: string,
+  ): Promise<{ sha: string; message: string } | null>;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -515,6 +521,17 @@ export function createWorktreeService(deps: {
     return result.exitCode === 0;
   }
 
+  async function getHeadSha(
+    _projectPath: string,
+    worktreePath: string,
+  ): Promise<{ sha: string; message: string } | null> {
+    const result = await git(['log', '-1', '--format=%H%n%s'], worktreePath);
+    if (result.exitCode !== 0) return null;
+    const lines = result.stdout.trim().split('\n');
+    if (lines.length < 2) return null;
+    return { sha: lines[0], message: lines[1] };
+  }
+
   return {
     create,
     remove,
@@ -527,6 +544,7 @@ export function createWorktreeService(deps: {
     isAncestor,
     listBranches,
     exists,
+    getHeadSha,
   };
 }
 
