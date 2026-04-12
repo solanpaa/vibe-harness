@@ -8,6 +8,8 @@
 
 import type { Logger } from 'pino';
 import { Mutex } from '../lib/mutex.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -289,15 +291,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     );
 
     // 2. Provision Docker sandbox (idempotent via getOrCreate)
-    // Mount the PARENT repo (projectPath) as workspace so git worktree
-    // refs resolve correctly. The ACP session cwd will be set to the
-    // worktree path within the mounted directory.
+    // Mount the worktree as main workspace (agent's cwd).
+    // Also mount the parent project's .git dir so git worktree
+    // refs (gitdir: /path/to/.git/worktrees/...) resolve correctly.
     const sandboxName = sandbox.getSandboxName(runId);
-    log.info({ sandboxName }, 'Provisioning sandbox');
+    const extraWorkspaces: string[] = [];
+    const gitDir = join(projectPath, '.git');
+    if (existsSync(gitDir)) {
+      extraWorkspaces.push(gitDir);
+    }
+    log.info({ sandboxName, extraWorkspaces }, 'Provisioning sandbox');
     await sandbox.getOrCreate({
       runId,
       image: agentDef.dockerImage,
-      workdir: projectPath,
+      workdir: worktreePath,
+      extraWorkspaces,
       agentSubcommand: 'copilot',
       networkPolicy: 'open',
       credentials,

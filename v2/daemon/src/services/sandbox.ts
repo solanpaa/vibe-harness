@@ -38,6 +38,8 @@ export interface SandboxCreateOptions {
   image?: string;
   /** Host path to mount as the working directory (worktree path) */
   workdir: string;
+  /** Additional host paths to mount inside the sandbox (e.g. project .git dir for worktree refs) */
+  extraWorkspaces?: string[];
   /** Agent subcommand for docker sandbox (e.g. 'copilot', 'claude', 'codex') */
   agentSubcommand?: string;
   /** Network policy for this project (SAD §6.2) */
@@ -307,6 +309,7 @@ export function createSandboxService(deps: {
       ...(options.image ? ['--template', options.image] : []),
       agentSubcommand,
       options.workdir,
+      ...(options.extraWorkspaces ?? []),
     ];
     log.debug({ cmd: ['docker', ...createArgs] }, 'Full sandbox create command');
 
