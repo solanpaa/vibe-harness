@@ -4,6 +4,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { RunFeed } from "../components/workspace/RunFeed";
 import { NewRunModal } from "../components/workspace/NewRunModal";
 import { RunDetail } from "../components/run/RunDetail";
+import { useRunNotifications } from "../hooks/useRunNotifications";
 import type { WebSocketManager } from "../api/ws";
 
 /**
@@ -26,6 +27,9 @@ export function Workspace() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const ws = useWsRef();
+
+  // Desktop notifications for status transitions
+  useRunNotifications();
 
   // Fetch runs on mount and when connection changes
   useEffect(() => {

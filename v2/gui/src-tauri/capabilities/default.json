@@ -8,6 +8,8 @@
     "shell:allow-execute",
     "shell:allow-spawn",
     "shell:allow-open",
+    "notification:default",
+    "autostart:default",
     "mcp-bridge:default"
   ]
 }

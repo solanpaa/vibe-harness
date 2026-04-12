@@ -12,6 +12,8 @@ import {
   TerminalClearButton,
   TerminalActions,
 } from "@/components/ai-elements/terminal";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 // ── Add Agent Form ──────────────────────────────────────────────────
 
@@ -387,6 +389,127 @@ function AgentRow({
 
 // ── Main Component ──────────────────────────────────────────────────
 
+// ── Autostart Toggle ─────────────────────────────────────────────────
+
+function AutostartToggle() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    isAutostartEnabled()
+      .then(setEnabled)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggle = async () => {
+    setLoading(true);
+    try {
+      if (enabled) {
+        await disableAutostart();
+        setEnabled(false);
+      } else {
+        await enableAutostart();
+        setEnabled(true);
+      }
+    } catch (err) {
+      console.error("Autostart toggle failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center justify-between">
+      <div>
+        <div className="text-sm font-medium text-foreground">Launch at login</div>
+        <div className="text-xs text-muted-foreground">Start Vibe Harness automatically when you log in</div>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={loading}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+          enabled ? "bg-blue-600" : "bg-muted"
+        } ${loading ? "opacity-50" : ""}`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+            enabled ? "translate-x-[18px]" : "translate-x-[3px]"
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
+// ── Notification Toggle ──────────────────────────────────────────────
+
+function NotificationToggle() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [permStatus, setPermStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check if notifications are enabled (stored in localStorage as a simple flag)
+    const stored = localStorage.getItem("vibe-notifications-enabled");
+    setEnabled(stored === "true");
+
+    isPermissionGranted()
+      .then((granted) => setPermStatus(granted ? "granted" : "denied"))
+      .catch(() => setPermStatus("unknown"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggle = async () => {
+    if (!enabled) {
+      // Enabling — request permission if needed
+      const granted = await isPermissionGranted();
+      if (!granted) {
+        const perm = await requestPermission();
+        setPermStatus(perm);
+        if (perm !== "granted") return;
+      }
+      setEnabled(true);
+      localStorage.setItem("vibe-notifications-enabled", "true");
+      // Send test notification
+      sendNotification({
+        title: "Vibe Harness",
+        body: "Notifications enabled! You'll be notified when reviews are ready.",
+      });
+    } else {
+      setEnabled(false);
+      localStorage.setItem("vibe-notifications-enabled", "false");
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center justify-between">
+      <div>
+        <div className="text-sm font-medium text-foreground">Desktop notifications</div>
+        <div className="text-xs text-muted-foreground">
+          Notify when a run needs review or completes
+          {permStatus === "denied" && (
+            <span className="text-amber-400 ml-1">(permission required)</span>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={loading}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+          enabled ? "bg-blue-600" : "bg-muted"
+        } ${loading ? "opacity-50" : ""}`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+            enabled ? "translate-x-[18px]" : "translate-x-[3px]"
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
 export function Settings() {
   const { client, connected } = useDaemonStore();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -435,8 +558,19 @@ export function Settings() {
   }
 
   return (
-    <div className="p-6 max-w-4xl h-full flex flex-col">
+    <div className="p-6 max-w-4xl h-full flex flex-col overflow-y-auto">
       <h1 className="text-sm font-medium text-foreground mb-6">Settings</h1>
+
+      {/* App Preferences Section */}
+      <section className="mb-8">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          App Preferences
+        </h2>
+        <div className="space-y-2">
+          <AutostartToggle />
+          <NotificationToggle />
+        </div>
+      </section>
 
       {/* Agent Definitions Section */}
       <section>

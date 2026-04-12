@@ -20,6 +20,12 @@ struct DaemonError {
     message: String,
 }
 
+#[derive(Clone, Serialize)]
+struct SingleInstancePayload {
+    args: Vec<String>,
+    cwd: String,
+}
+
 fn state_dir() -> PathBuf {
     dirs::home_dir()
         .expect("could not resolve home directory")
@@ -283,8 +289,19 @@ fn get_daemon_status(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Single-instance: must be registered FIRST
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // When a second instance launches, focus the existing window
+            let _ = app.emit("single-instance", SingleInstancePayload { args: argv, cwd });
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+                let _ = window.unminimize();
+            }
+        }))
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_notification::init());
 
     // MCP Bridge — dev-only, enables AI-driven UI automation & debugging
     #[cfg(debug_assertions)]
