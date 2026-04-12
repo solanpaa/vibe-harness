@@ -46,6 +46,9 @@ fn is_process_alive(pid: u32) -> bool {
     }
 }
 
+/// Default daemon port — must match daemon's DEFAULT_PORT.
+const DEFAULT_DAEMON_PORT: u16 = 19423;
+
 /// Try to connect to an already-running daemon.
 /// Returns the port if a daemon is alive and healthy.
 fn try_existing_daemon() -> Option<u16> {
@@ -53,26 +56,32 @@ fn try_existing_daemon() -> Option<u16> {
     let port_file = state_dir().join("daemon.port");
 
     // Read PID file and check if process is alive
-    let pid_str = fs::read_to_string(&pid_file).ok()?;
-    let pid: u32 = pid_str.trim().parse().ok()?;
-
-    if !is_process_alive(pid) {
-        // Stale PID file — clean up
-        let _ = fs::remove_file(&pid_file);
-        let _ = fs::remove_file(&port_file);
-        return None;
+    if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            if is_process_alive(pid) {
+                // Process alive — read port
+                if let Ok(port_str) = fs::read_to_string(&port_file) {
+                    if let Ok(port) = port_str.trim().parse::<u16>() {
+                        if quick_health_check(port) {
+                            return Some(port);
+                        }
+                    }
+                }
+            } else {
+                // Stale PID file — clean up
+                let _ = fs::remove_file(&pid_file);
+                let _ = fs::remove_file(&port_file);
+            }
+        }
     }
 
-    // Process alive — read port
-    let port_str = fs::read_to_string(&port_file).ok()?;
-    let port: u16 = port_str.trim().parse().ok()?;
-
-    // Quick health check to confirm it's actually our daemon
-    if quick_health_check(port) {
-        Some(port)
-    } else {
-        None
+    // Fallback: try the default port in case daemon is running
+    // but port/pid files are stale or missing
+    if quick_health_check(DEFAULT_DAEMON_PORT) {
+        return Some(DEFAULT_DAEMON_PORT);
     }
+
+    None
 }
 
 /// Fast non-blocking health check (2s connect + 3s read timeout).
