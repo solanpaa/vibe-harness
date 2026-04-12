@@ -313,7 +313,7 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
   }
 
   return (
-    <Conversation>
+    <Conversation className="h-full">
       <ConversationContent>
         {blocks.map((block) => {
           const isStreamingBlock =

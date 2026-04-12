@@ -231,7 +231,7 @@ export function RunDetail({ runId, ws }: RunDetailProps) {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden min-h-0">
         {activeTab === "conversation" && (
           <RunConversation runId={runId} isRunning={isRunning} />
         )}
