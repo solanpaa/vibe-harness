@@ -74,10 +74,29 @@ function eventsToBlocks(events: RunOutputMessage[]): MessageBlock[] {
     }
   };
 
+  let currentStage: string | null = null;
+
   for (const event of events) {
     const { data, stageName } = event;
     if (!data) continue;
     const ts = (data as any).timestamp ?? (data.metadata as any)?.timestamp ?? new Date().toISOString();
+
+    // Insert stage boundary when stage changes
+    if (stageName && stageName !== currentStage) {
+      flushAssistant();
+      flushThought();
+      if (currentStage !== null) {
+        // Not the first stage — add a visual separator
+        blocks.push({
+          id: `stage-boundary-${blocks.length}`,
+          type: "session_boundary",
+          content: "",
+          stageName,
+          timestamp: ts,
+        });
+      }
+      currentStage = stageName;
+    }
 
     switch (data.eventType) {
       case "agent_message": {
@@ -387,11 +406,13 @@ export function RunConversation({ runId, isRunning }: RunConversationProps) {
               return (
                 <div
                   key={block.id}
-                  className="flex items-center gap-3 py-2 text-xs text-muted-foreground"
+                  className="flex items-center gap-3 py-3 my-2"
                 >
-                  <div className="flex-1 h-px bg-border/50" />
-                  <span>Session · {block.stageName} stage</span>
-                  <div className="flex-1 h-px bg-border/50" />
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2">
+                    {block.stageName}
+                  </span>
+                  <div className="flex-1 h-px bg-border" />
                 </div>
               );
 
