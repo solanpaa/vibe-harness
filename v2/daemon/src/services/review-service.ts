@@ -294,7 +294,9 @@ export function createReviewService(deps: {
         command: ['find', '/', '-name', 'plan.md', '-path', '*session-state*', '-type', 'f'],
       });
 
-      if (result.exitCode !== 0 || !result.stdout.trim()) {
+      // find exits non-zero when it can't access some dirs (e.g. /root, /proc)
+      // but still outputs valid results — check stdout regardless of exit code
+      if (!result.stdout.trim()) {
         return null;
       }
 
