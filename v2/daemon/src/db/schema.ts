@@ -19,6 +19,14 @@ const updatedAt = () =>
     .notNull()
     .$defaultFn(() => new Date().toISOString());
 
+// ─── settings (key-value singleton) ─────────────────────────────────────
+
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: updatedAt(),
+});
+
 // ─── projects (SAD §4.2, SRD FR-P1–P7) ────────────────────────────────
 
 export const projects = sqliteTable('projects', {
@@ -29,6 +37,7 @@ export const projects = sqliteTable('projects', {
   description: text('description'),
   defaultCredentialSetId: text('default_credential_set_id')
     .references((): any => credentialSets.id, { onDelete: 'set null' }),
+  ghAccount: text('gh_account'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -96,6 +105,7 @@ export const workflowRuns = sqliteTable(
     targetBranch: text('target_branch'),
     parentWorktreeCommit: text('parent_worktree_commit'),
     model: text('model'),
+    ghAccount: text('gh_account'),
     attachments: text('attachments'),              // JSON: array of {name, type, dataUrl}
     createdAt: createdAt(),
     completedAt: text('completed_at'),

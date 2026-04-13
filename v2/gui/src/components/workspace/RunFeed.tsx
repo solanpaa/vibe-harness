@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import type { WorkflowRunStatus, WorkflowRunSummary } from "@vibe-harness/shared";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { useDaemonStore } from "../../stores/daemon";
 import { RunCard } from "./RunCard";
 
 interface RunFeedProps {
@@ -22,6 +23,21 @@ export function RunFeed({ selectedRunId, onSelectRun, onNewRun }: RunFeedProps) 
   const statusFilter = useWorkspaceStore((s) => s.statusFilter);
   const setStatusFilter = useWorkspaceStore((s) => s.setStatusFilter);
   const loading = useWorkspaceStore((s) => s.loading);
+  const removeRun = useWorkspaceStore((s) => s.removeRun);
+  const { client } = useDaemonStore();
+
+  const handleDelete = useCallback(
+    async (runId: string) => {
+      if (!client) return;
+      try {
+        await client.deleteRun(runId);
+        removeRun(runId);
+      } catch (err) {
+        console.error("Failed to delete run:", err);
+      }
+    },
+    [client, removeRun],
+  );
 
   const filteredRuns = useMemo(() => {
     let result: WorkflowRunSummary[] = runs;
@@ -92,6 +108,7 @@ export function RunFeed({ selectedRunId, onSelectRun, onNewRun }: RunFeedProps) 
             run={run}
             isSelected={selectedRunId === run.id}
             onClick={() => onSelectRun(run.id)}
+            onDelete={handleDelete}
           />
         ))}
       </div>

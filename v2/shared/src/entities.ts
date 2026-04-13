@@ -31,6 +31,7 @@ export interface Project {
   localPath: string;
   description: string | null;
   defaultCredentialSetId: string | null;
+  ghAccount: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,6 +87,7 @@ export interface WorkflowRun {
   baseBranch: string | null;
   targetBranch: string | null;
   model: string | null;
+  ghAccount: string | null;
   createdAt: string;
   completedAt: string | null;
 }

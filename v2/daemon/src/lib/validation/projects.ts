@@ -8,12 +8,14 @@ export const createProjectSchema = z.object({
   localPath: nonEmptyString.max(1024),
   description: z.string().max(500).nullable().optional(),
   defaultCredentialSetId: uuidSchema.nullable().optional(),
+  ghAccount: z.string().max(100).nullable().optional(),
 });
 
 export const updateProjectSchema = z.object({
   name: nonEmptyString.max(100).optional(),
   description: z.string().max(500).nullable().optional(),
   defaultCredentialSetId: uuidSchema.nullable().optional(),
+  ghAccount: z.string().max(100).nullable().optional(),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;

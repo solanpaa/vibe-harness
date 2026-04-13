@@ -31,7 +31,7 @@ projects.post('/api/projects', async (c) => {
     );
   }
 
-  const { name, localPath, description, defaultCredentialSetId } = parsed.data;
+  const { name, localPath, description, defaultCredentialSetId, ghAccount } = parsed.data;
 
   // Check path exists
   if (!existsSync(localPath)) {
@@ -82,6 +82,7 @@ projects.post('/api/projects', async (c) => {
       gitUrl,
       description: description ?? null,
       defaultCredentialSetId: defaultCredentialSetId ?? null,
+      ghAccount: ghAccount ?? null,
     })
     .returning()
     .get();
@@ -157,6 +158,7 @@ projects.patch('/api/projects/:id', async (c) => {
   if (parsed.data.description !== undefined) updates.description = parsed.data.description;
   if (parsed.data.defaultCredentialSetId !== undefined)
     updates.defaultCredentialSetId = parsed.data.defaultCredentialSetId;
+  if (parsed.data.ghAccount !== undefined) updates.ghAccount = parsed.data.ghAccount;
 
   const updated = db
     .update(schema.projects)

@@ -26,6 +26,7 @@ export interface LaunchChildrenInput {
   projectId: string;
   agentDefinitionId: string;
   credentialSetId: string | null;
+  ghAccount: string | null;
 }
 
 export interface LaunchChildrenOutput {
@@ -49,7 +50,7 @@ function resolveGlobalDeps(): LaunchChildrenDeps {
 export async function launchChildren(
   input: LaunchChildrenInput,
 ): Promise<LaunchChildrenOutput> {
-  const { parentRunId, selectedProposalIds, projectId, agentDefinitionId, credentialSetId } = input;
+  const { parentRunId, selectedProposalIds, projectId, agentDefinitionId, credentialSetId, ghAccount } = input;
   const log = logger.child({ parentRunId });
   const db = getDb();
   const deps = resolveGlobalDeps();
@@ -107,6 +108,7 @@ export async function launchChildren(
       projectId,
       agentDefinitionId,
       credentialSetId,
+      ghAccount,
       deps,
       log,
     );
@@ -168,6 +170,7 @@ export async function launchChildren(
     projectId,
     agentDefinitionId,
     credentialSetId,
+    ghAccount,
     deps,
     log,
     snapshotCommit,
@@ -186,6 +189,7 @@ async function launchMissingChildren(
   projectId: string,
   agentDefinitionId: string,
   credentialSetId: string | null,
+  ghAccount: string | null,
   deps: LaunchChildrenDeps,
   log: any,
   snapshotCommit?: string,
@@ -275,6 +279,7 @@ async function launchMissingChildren(
         branch: childBranch,
         worktreePath: null, // Created by sessionManager.create()
         credentialSetId,
+        ghAccount,
         baseBranch: parentBranch ?? null,
         targetBranch: parentBranch ?? null,
         parentWorktreeCommit: snapshotCommit ?? null,

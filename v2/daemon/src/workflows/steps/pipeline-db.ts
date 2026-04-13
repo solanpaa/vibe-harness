@@ -22,6 +22,7 @@ export interface PipelineContext {
   baseBranch: string;
   targetBranch: string;
   credentialSetId: string | null;
+  ghAccount: string | null;
   stages: WorkflowStage[];
 }
 
@@ -91,6 +92,25 @@ export async function loadPipelineContext(runId: string): Promise<PipelineContex
     'Pipeline context loaded',
   );
 
+  // Resolve ghAccount: run-level → project-level → global settings default
+  let ghAccount: string | null = run.ghAccount ?? null;
+  if (!ghAccount) {
+    const project = db
+      .select({ ghAccount: schema.projects.ghAccount })
+      .from(schema.projects)
+      .where(eq(schema.projects.id, run.projectId))
+      .get();
+    ghAccount = project?.ghAccount ?? null;
+  }
+  if (!ghAccount) {
+    const setting = db
+      .select({ value: schema.settings.value })
+      .from(schema.settings)
+      .where(eq(schema.settings.key, 'defaultGhAccount'))
+      .get();
+    ghAccount = setting?.value ?? null;
+  }
+
   return {
     runId,
     projectId: run.projectId,
@@ -99,6 +119,7 @@ export async function loadPipelineContext(runId: string): Promise<PipelineContex
     baseBranch: run.baseBranch ?? 'main',
     targetBranch: run.targetBranch ?? run.baseBranch ?? 'main',
     credentialSetId: run.credentialSetId,
+    ghAccount,
     stages,
   };
 }
@@ -275,6 +296,7 @@ export async function provisionSession(input: {
   agentDefinitionId: string;
   baseBranch: string;
   model?: string;
+  ghAccount?: string | null;
 }): Promise<void> {
   const log = logger.child({ runId: input.runId, op: 'provisionSession' });
   log.info(
@@ -328,6 +350,7 @@ export async function provisionSession(input: {
       commandTemplate: agent.commandTemplate,
       dockerImage: agent.dockerImage ?? undefined,
     },
+    ghAccount: input.ghAccount,
   });
 
   log.info('Session provisioned successfully');

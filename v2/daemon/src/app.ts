@@ -9,6 +9,8 @@ import { credentials } from "./routes/credentials.js";
 import { runs } from "./routes/runs.js";
 import { reviews } from "./routes/reviews.js";
 import { proposals } from "./routes/proposals.js";
+import { settingsRoute } from "./routes/settings.js";
+import { ghAccounts } from "./routes/gh-accounts.js";
 
 const app = new Hono();
 
@@ -31,5 +33,7 @@ app.route("/", credentials);
 app.route("/", runs);
 app.route("/", reviews);
 app.route("/", proposals);
+app.route("/", settingsRoute);
+app.route("/", ghAccounts);
 
 export default app;

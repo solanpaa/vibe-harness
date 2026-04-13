@@ -80,6 +80,18 @@ export async function runWorkflowPipeline(input: PipelineInput) {
 
   const ctx = await loadPipelineContext(input.runId);
 
+  try {
+    await runPipelineBody(ctx);
+  } catch (err) {
+    // Unhandled error (e.g. provisioning failure after retries exhausted).
+    // Mark the run as failed so the UI reflects the terminal state.
+    await updateRunStatus(ctx.runId, 'failed');
+    await stopSession({ runId: ctx.runId });
+    throw err; // Re-throw so the workflow runtime records the failure
+  }
+}
+
+async function runPipelineBody(ctx: PipelineContext) {
   await updateRunStatus(ctx.runId, 'provisioning');
 
   // Provision session for the first stage (runs as a step with Node.js access)
@@ -92,6 +104,7 @@ export async function runWorkflowPipeline(input: PipelineInput) {
       agentDefinitionId: ctx.agentDefinitionId,
       baseBranch: ctx.baseBranch,
       model: resolvedModel,
+      ghAccount: ctx.ghAccount,
     });
   }
 
@@ -357,6 +370,7 @@ async function handleSplitStage(
     projectId: ctx.projectId,
     agentDefinitionId: ctx.agentDefinitionId,
     credentialSetId: ctx.credentialSetId,
+    ghAccount: ctx.ghAccount,
   });
 
   await updateRunStatus(ctx.runId, 'waiting_for_children');

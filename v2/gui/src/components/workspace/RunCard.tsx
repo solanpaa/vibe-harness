@@ -1,16 +1,26 @@
 import type { WorkflowRunSummary } from "@vibe-harness/shared";
 import { StatusBadge } from "../shared/StatusBadge";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from "../ui/context-menu";
+
+const DELETABLE_STATUSES = ["completed", "failed", "cancelled", "stage_failed", "children_completed_with_failures"];
 
 interface RunCardProps {
   run: WorkflowRunSummary;
   isSelected: boolean;
   onClick: () => void;
+  onDelete?: (runId: string) => void;
 }
 
-export function RunCard({ run, isSelected, onClick }: RunCardProps) {
+export function RunCard({ run, isSelected, onClick, onDelete }: RunCardProps) {
   const isLive = run.status === "running" || run.status === "provisioning";
+  const canDelete = DELETABLE_STATUSES.includes(run.status);
 
-  return (
+  const card = (
     <button
       onClick={onClick}
       className={`w-full text-left px-3 py-2.5 rounded-md mb-1 transition-colors border ${
@@ -46,6 +56,25 @@ export function RunCard({ run, isSelected, onClick }: RunCardProps) {
         </div>
       )}
     </button>
+  );
+
+  if (!onDelete) return card;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger>
+        {card}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          variant="destructive"
+          disabled={!canDelete}
+          onClick={() => onDelete(run.id)}
+        >
+          Delete run
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

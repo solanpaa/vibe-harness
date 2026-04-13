@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { start, resumeHook } from 'workflow/api';
 import { execFileSync } from 'node:child_process';
 import { getDb } from '../db/index.js';
@@ -55,6 +55,7 @@ const createRunSchema = z.object({
   targetBranch: z.string().optional(),
   model: z.string().optional(),
   credentialSetId: z.string().uuid().optional(),
+  ghAccount: z.string().max(100).optional(),
   attachments: z
     .array(
       z.object({
@@ -87,6 +88,7 @@ runs.post('/api/runs', async (c) => {
     targetBranch,
     model,
     credentialSetId,
+    ghAccount,
     attachments,
   } = parsed.data;
 
@@ -135,6 +137,7 @@ runs.post('/api/runs', async (c) => {
       targetBranch: targetBranch ?? baseBranch,
       model: model ?? null,
       credentialSetId: credentialSetId ?? null,
+      ghAccount: ghAccount ?? null,
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
     })
     .run();
@@ -606,3 +609,116 @@ runs.get('/api/runs/:id/result/diff', (c) => {
 });
 
 export { runs };
+
+// ── DELETE /api/runs/:id — Delete a terminal-state run and its descendants ──
+
+const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled', 'stage_failed', 'children_completed_with_failures'];
+
+runs.delete('/api/runs/:id', (c) => {
+  const db = getDb();
+  const runId = c.req.param('id');
+  const log = logger.child({ runId, op: 'deleteRun' });
+
+  const run = db
+    .select()
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+
+  if (!run) {
+    return c.json(
+      { error: { code: 'NOT_FOUND', message: 'Workflow run not found' } },
+      404,
+    );
+  }
+
+  if (!TERMINAL_STATUSES.includes(run.status)) {
+    return c.json(
+      { error: { code: 'RUN_ACTIVE', message: `Cannot delete run in '${run.status}' state` } },
+      409,
+    );
+  }
+
+  // Collect all run IDs to delete (the run + all descendants via parentRunId)
+  const allRunIds: string[] = [];
+  const queue = [runId];
+  while (queue.length > 0) {
+    const currentId = queue.pop()!;
+    allRunIds.push(currentId);
+    const children = db
+      .select({ id: schema.workflowRuns.id })
+      .from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.parentRunId, currentId))
+      .all();
+    for (const child of children) {
+      queue.push(child.id);
+    }
+  }
+
+  log.info({ runCount: allRunIds.length }, 'Deleting run tree');
+
+  // Collect review IDs for cascade to reviewComments
+  const reviewIds = db
+    .select({ id: schema.reviews.id })
+    .from(schema.reviews)
+    .where(inArray(schema.reviews.workflowRunId, allRunIds))
+    .all()
+    .map((r) => r.id);
+
+  // Delete in FK-safe order (all within a single transaction)
+  db.transaction((tx) => {
+    if (reviewIds.length > 0) {
+      tx.delete(schema.reviewComments)
+        .where(inArray(schema.reviewComments.reviewId, reviewIds))
+        .run();
+    }
+
+    tx.delete(schema.reviews)
+      .where(inArray(schema.reviews.workflowRunId, allRunIds))
+      .run();
+
+    tx.delete(schema.stageExecutions)
+      .where(inArray(schema.stageExecutions.workflowRunId, allRunIds))
+      .run();
+
+    tx.delete(schema.gitOperations)
+      .where(inArray(schema.gitOperations.workflowRunId, allRunIds))
+      .run();
+
+    // Nullify proposal references to runs being deleted
+    for (const id of allRunIds) {
+      tx.update(schema.proposals)
+        .set({ launchedWorkflowRunId: null })
+        .where(eq(schema.proposals.launchedWorkflowRunId, id))
+        .run();
+    }
+
+    // Delete proposals belonging to these runs (cascade handles runMessages)
+    tx.delete(schema.proposals)
+      .where(inArray(schema.proposals.workflowRunId, allRunIds))
+      .run();
+
+    // Nullify audit log references (don't delete audit records)
+    for (const id of allRunIds) {
+      tx.update(schema.credentialAuditLog)
+        .set({ workflowRunId: null })
+        .where(eq(schema.credentialAuditLog.workflowRunId, id))
+        .run();
+    }
+
+    // Clean up parallel groups sourced from these runs
+    tx.delete(schema.parallelGroups)
+      .where(inArray(schema.parallelGroups.sourceWorkflowRunId, allRunIds))
+      .run();
+
+    // Delete runs (children first via reversed order since queue is BFS)
+    for (const id of allRunIds.reverse()) {
+      tx.delete(schema.workflowRuns)
+        .where(eq(schema.workflowRuns.id, id))
+        .run();
+    }
+  });
+
+  log.info('Run tree deleted');
+  return c.body(null, 204);
+});

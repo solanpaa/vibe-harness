@@ -15,6 +15,7 @@ import { reconcileOnStartup } from "./lib/reconcile.js";
 import { createSandboxService, type SandboxService } from "./services/sandbox.js";
 import { createWorktreeService } from "./services/worktree.js";
 import { createAcpClient } from "./services/acp-client.js";
+import { createGhAccountService } from "./services/gh-accounts.js";
 import { createSessionManager } from "./services/session-manager.js";
 import { createReviewService } from "./services/review-service.js";
 import { createProposalService } from "./services/proposal-service.js";
@@ -61,7 +62,8 @@ const sandboxService: SandboxService = createSandboxService({ logger });
 
 // Create all services needed by the workflow pipeline
 const worktreeService = createWorktreeService({ logger, diffParser: { parseUnifiedDiff } });
-const acpClient = createAcpClient({ logger });
+const ghAccountService = createGhAccountService();
+const acpClient = createAcpClient({ logger, ghAccountService });
 const branchNamer = createBranchNamer({ logger });
 const sessionManager = createSessionManager({
   sandbox: sandboxService,

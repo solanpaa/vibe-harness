@@ -28,12 +28,14 @@ export interface CreateProjectRequest {
   gitUrl?: string;
   description?: string;
   defaultCredentialSetId?: string;
+  ghAccount?: string;
 }
 
 export interface UpdateProjectRequest {
   name?: string;
   description?: string;
   defaultCredentialSetId?: string | null;
+  ghAccount?: string | null;
 }
 
 export interface ProjectListResponse {
@@ -125,6 +127,7 @@ export interface CreateWorkflowRunRequest {
   targetBranch?: string;
   title?: string;
   model?: string;
+  ghAccount?: string;
   attachments?: Array<{
     name: string;
     type: string;
@@ -459,4 +462,26 @@ export interface PrerequisiteCheck {
 export interface PrerequisitesResponse {
   checks: PrerequisiteCheck[];
   allPassed: boolean;
+}
+
+// ─── GitHub Accounts ───────────────────────────────────────────────────
+
+export interface GhAccount {
+  username: string;
+  hostname: string;
+  isActive: boolean;
+}
+
+export interface GhAccountListResponse {
+  accounts: GhAccount[];
+}
+
+// ─── Settings ──────────────────────────────────────────────────────────
+
+export interface SettingsResponse {
+  settings: Record<string, string>;
+}
+
+export interface UpdateSettingsRequest {
+  settings: Record<string, string>;
 }

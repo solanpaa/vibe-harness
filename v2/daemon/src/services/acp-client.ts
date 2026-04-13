@@ -7,7 +7,7 @@
 // commands via stdin.
 // ---------------------------------------------------------------------------
 
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import type { Logger } from 'pino';
 import * as acp from '@agentclientprotocol/sdk';
@@ -16,6 +16,7 @@ import {
   AcpSessionNotActiveError,
   AcpConnectionNotFoundError,
 } from '../lib/errors.js';
+import type { GhAccountService } from './gh-accounts.js';
 
 // ── Types (CDD §5.1) ─────────────────────────────────────────────────
 
@@ -105,6 +106,8 @@ export interface AcpConnectOptions {
   model?: string | null;
   /** Worktree path inside the sandbox (used as cwd for session/new) */
   worktreePath?: string;
+  /** GitHub account username for token resolution (overrides default) */
+  ghAccount?: string | null;
 }
 
 export interface AcpConnection {
@@ -143,68 +146,10 @@ interface ActiveConnection {
   receivedResult: boolean;
 }
 
-// ── GitHub token helper ───────────────────────────────────────────────
-
-// Fallback token resolution — used when no explicit GITHUB_TOKEN in envVars.
-// The session-manager calls connect() with envVars that may include
-// GITHUB_TOKEN from credentials; this covers the case where none is provided.
-function resolveGitHubToken(): string | undefined {
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
-  if (process.env.GH_TOKEN) return process.env.GH_TOKEN;
-  try {
-    const token = execSync('gh auth token', { encoding: 'utf-8', timeout: 5_000 }).trim();
-    if (token) return token;
-  } catch {
-    // gh CLI not available — that's fine
-  }
-  return undefined;
-}
-
-// ── Session wait helper ───────────────────────────────────────────────
-
-const SESSION_TIMEOUT_MS = 30_000;
-
-function waitForSession(conn: ActiveConnection, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (conn.sessionId) {
-      resolve();
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      conn.listeners.delete(checkListener);
-      reject(new AcpConnectionError('Timeout waiting for ACP session initialization'));
-    }, timeoutMs);
-
-    const checkListener: AcpEventCallback = (event) => {
-      if (event.type === 'session_update' && conn.sessionId) {
-        clearTimeout(timeout);
-        conn.listeners.delete(checkListener);
-        resolve();
-      }
-    };
-
-    conn.listeners.add(checkListener);
-
-    // Also fail if process exits before session is established
-    conn.process.on('close', (code) => {
-      clearTimeout(timeout);
-      conn.listeners.delete(checkListener);
-      if (!conn.sessionId) {
-        reject(
-          new AcpConnectionError(
-            `ACP process exited with code ${code} before session established`,
-          ),
-        );
-      }
-    });
-  });
-}
-
 // ── Factory (CDD §5.3) ───────────────────────────────────────────────
 
-export function createAcpClient(deps: { logger: Logger }): AcpClient {
-  const { logger } = deps;
+export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAccountService }): AcpClient {
+  const { logger, ghAccountService } = deps;
   const connections = new Map<string, ActiveConnection>();
 
   // ------------------------------------------------------------------
@@ -214,7 +159,7 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
     options: AcpConnectOptions,
     onEvent: AcpEventCallback,
   ): Promise<AcpConnection> {
-    const { sandboxName, isContinuation, env: extraEnv, model } = options;
+    const { sandboxName, isContinuation, env: extraEnv, model, ghAccount } = options;
     const log = logger.child({ sandboxName });
 
     // Tear down any existing connection for this sandbox to avoid orphaned processes
@@ -231,8 +176,8 @@ export function createAcpClient(deps: { logger: Logger }): AcpClient {
     // Build environment variable flags for docker sandbox exec
     const envArgs: string[] = [];
 
-    // GitHub token
-    const ghToken = resolveGitHubToken();
+    // GitHub token — resolved via gh account service (respects account override)
+    const ghToken = await ghAccountService.resolveToken(ghAccount);
     if (ghToken) {
       envArgs.push('-e', `GITHUB_TOKEN=${ghToken}`);
     }

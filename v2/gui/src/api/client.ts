@@ -180,6 +180,10 @@ export class DaemonClient {
     });
   }
 
+  async deleteRun(id: string): Promise<void> {
+    await this.fetch<void>(`/api/runs/${id}`, { method: "DELETE" });
+  }
+
   async sendIntervention(runId: string, message: string): Promise<SendInterventionResponse> {
     return this.fetch<SendInterventionResponse>(`/api/runs/${runId}/message`, {
       method: "POST",

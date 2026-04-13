@@ -53,6 +53,8 @@ export interface SessionCreateOptions {
   baseBranch?: string;
   credentials?: SandboxCredentials;
   agentDef: AgentDefinition;
+  /** GitHub account username for token resolution */
+  ghAccount?: string | null;
 }
 
 // ── Internal session state ───────────────────────────────────────────
@@ -72,6 +74,8 @@ interface ActiveSession {
   currentModel: string | undefined;
   /** Monotonic counter — incremented each stage start to discard stale results */
   generation: number;
+  /** GitHub account for token resolution (persisted across reconnects) */
+  ghAccount: string | null;
 }
 
 // ── Interface ────────────────────────────────────────────────────────
@@ -257,6 +261,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       credentials,
       agentDef,
       model,
+      ghAccount,
     } = options;
 
     log.info(
@@ -325,14 +330,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       pendingCompletion: null,
       currentModel: model,
       generation: 0,
+      ghAccount: ghAccount ?? null,
     };
 
     // 4. Connect ACP (new session, not continuation)
     const env = sandbox.getEnvVars(sandboxName);
     const onEvent = makeEventHandler(session);
-    log.info({ model }, 'Connecting ACP session');
+    log.info({ model, ghAccount }, 'Connecting ACP session');
     await acp.connect(
-      { sandboxName, isContinuation: false, env, model, worktreePath },
+      { sandboxName, isContinuation: false, env, model, worktreePath, ghAccount },
       onEvent,
     );
 
@@ -402,6 +408,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           env,
           model: newModel ?? session.currentModel,
           worktreePath: session.worktreePath,
+          ghAccount: session.ghAccount,
         },
         onEvent,
       );
@@ -448,6 +455,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           env,
           model: newModel,
           worktreePath: session.worktreePath,
+          ghAccount: session.ghAccount,
         },
         onEvent,
       );

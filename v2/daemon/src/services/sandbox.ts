@@ -313,7 +313,7 @@ export function createSandboxService(deps: {
     ];
     log.debug({ cmd: ['docker', ...createArgs] }, 'Full sandbox create command');
 
-    const createResult = await execCommand('docker', createArgs);
+    const createResult = await execCommand('docker', createArgs, { timeout: 360_000 });
     log.debug(
       { exitCode: createResult.exitCode, stdout: createResult.stdout.slice(0, 300), stderr: createResult.stderr.slice(0, 300) },
       'Sandbox create result',

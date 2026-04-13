@@ -27,6 +27,8 @@ interface WorkspaceState {
   setLoading: (loading: boolean) => void;
   /** Patch a single run in the list (e.g. from a WS status event). */
   updateRun: (runId: string, patch: Partial<WorkflowRunSummary>) => void;
+  /** Remove a run from the list (e.g. after deletion). */
+  removeRun: (runId: string) => void;
   addNotification: (notification: AppNotification) => void;
   dismissNotification: (id: string) => void;
   addPendingReview: (runId: string) => void;
@@ -51,6 +53,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   updateRun: (runId, patch) =>
     set((state) => ({
       runs: state.runs.map((r) => (r.id === runId ? { ...r, ...patch } : r)),
+    })),
+
+  removeRun: (runId) =>
+    set((state) => ({
+      runs: state.runs.filter((r) => r.id !== runId),
+      selectedRunId: state.selectedRunId === runId ? null : state.selectedRunId,
     })),
 
   addNotification: (notification) =>
