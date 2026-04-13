@@ -45,6 +45,9 @@ import type {
   ConsolidatePartialResponse,
   RetryChildrenResponse,
   CancelGroupResponse,
+  GhAccountListResponse,
+  SettingsResponse,
+  UpdateSettingsRequest,
 } from "@vibe-harness/shared";
 
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
@@ -455,6 +458,25 @@ export class DaemonClient {
   async cancelGroup(id: string): Promise<CancelGroupResponse> {
     return this.fetch<CancelGroupResponse>(`/api/parallel-groups/${id}/cancel`, {
       method: "POST",
+    });
+  }
+
+  // ── GitHub Accounts ─────────────────────────────────────────────────
+
+  async listGhAccounts(): Promise<GhAccountListResponse> {
+    return this.fetch<GhAccountListResponse>("/api/gh-accounts");
+  }
+
+  // ── Settings ────────────────────────────────────────────────────────
+
+  async getSettings(): Promise<SettingsResponse> {
+    return this.fetch<SettingsResponse>("/api/settings");
+  }
+
+  async updateSettings(data: UpdateSettingsRequest): Promise<SettingsResponse> {
+    return this.fetch<SettingsResponse>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify(data),
     });
   }
 }

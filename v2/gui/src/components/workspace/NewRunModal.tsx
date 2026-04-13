@@ -50,6 +50,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const [baseBranch, setBaseBranch] = useState("");
   const [credentialSetId, setCredentialSetId] = useState("");
   const [model, setModel] = useState("");
+  const [ghAccount, setGhAccount] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Data
@@ -57,6 +58,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const [templates, setTemplates] = useState<WorkflowTemplateListResponse["templates"]>([]);
   const [agents, setAgents] = useState<AgentDefinitionListResponse["agents"]>([]);
   const [credentials, setCredentials] = useState<CredentialSetListResponse["sets"]>([]);
+  const [ghAccounts, setGhAccounts] = useState<Array<{ username: string; hostname: string; isActive: boolean }>>([]);
   const [branches, setBranches] = useState<string[]>([]);
 
   // UI state
@@ -75,12 +77,14 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
       client.listWorkflowTemplates(),
       client.listAgents(),
       client.listCredentialSets(),
+      client.listGhAccounts(),
     ])
-      .then(([projRes, tmplRes, agentRes, credRes]) => {
+      .then(([projRes, tmplRes, agentRes, credRes, ghRes]) => {
         setProjects(projRes.projects);
         setTemplates(tmplRes.templates);
         setAgents(agentRes.agents);
         setCredentials(credRes.sets);
+        setGhAccounts(ghRes.accounts);
 
         // Auto-select when only one option
         if (projRes.projects.length === 1 && !projectId) {
@@ -189,6 +193,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         ...(baseBranch ? { baseBranch } : {}),
         ...(credentialSetId ? { credentialSetId } : {}),
         ...(model ? { model } : {}),
+        ...(ghAccount ? { ghAccount } : {}),
         ...(attachments.length > 0
           ? {
               attachments: attachments.map((a) => ({
@@ -210,13 +215,14 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     }
   }, [
     client, projectId, workflowTemplateId, agentDefinitionId,
-    description, baseBranch, credentialSetId, model, onCreated,
+    description, baseBranch, credentialSetId, model, ghAccount, onCreated,
   ]);
 
   const resetForm = () => {
     setDescription("");
     setBaseBranch("");
     setModel("");
+    setGhAccount("");
     setAttachments([]);
     setExpanded(false);
     setError(null);
@@ -520,6 +526,24 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
               className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
             />
           </FormField>
+
+          {/* GitHub Account */}
+          {ghAccounts.length > 0 && (
+            <FormField label="GitHub Account">
+              <select
+                value={ghAccount}
+                onChange={(e) => setGhAccount(e.target.value)}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring/50"
+              >
+                <option value="">Default</option>
+                {ghAccounts.map((acc) => (
+                  <option key={acc.username} value={acc.username}>
+                    {acc.username}{acc.isActive ? " (active)" : ""} — {acc.hostname}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
 
           {/* Error */}
           {error && (

@@ -138,6 +138,9 @@ function ProjectRow({
   const [branches, setBranches] = useState<ProjectBranchesResponse | null>(null);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [ghAccounts, setGhAccounts] = useState<Array<{ username: string; hostname: string; isActive: boolean }>>([]);
+  const [ghAccount, setGhAccount] = useState<string>(project.ghAccount || "");
+  const [savingGhAccount, setSavingGhAccount] = useState(false);
 
   const loadBranches = useCallback(async () => {
     if (!client || branches) return;
@@ -151,6 +154,24 @@ function ProjectRow({
       setLoadingBranches(false);
     }
   }, [client, project.id, branches]);
+
+  useEffect(() => {
+    if (!expanded || !client || ghAccounts.length > 0) return;
+    client.listGhAccounts().then((res) => setGhAccounts(res.accounts)).catch(() => {});
+  }, [expanded, client, ghAccounts.length]);
+
+  const handleGhAccountChange = async (value: string) => {
+    if (!client) return;
+    setSavingGhAccount(true);
+    try {
+      await client.updateProject(project.id, { ghAccount: value || null });
+      setGhAccount(value);
+    } catch {
+      // silently fail
+    } finally {
+      setSavingGhAccount(false);
+    }
+  };
 
   const handleExpand = () => {
     const next = !expanded;
@@ -239,6 +260,25 @@ function ProjectRow({
           ) : (
             <p className="text-xs text-muted-foreground">Failed to load branches</p>
           )}
+          <div className="mt-3 pt-3 border-t border-border">
+            <h4 className="text-xs font-semibold text-muted-foreground mb-2">GitHub Account</h4>
+            <div className="flex items-center gap-3">
+              <select
+                value={ghAccount}
+                onChange={(e) => handleGhAccountChange(e.target.value)}
+                disabled={savingGhAccount}
+                className="bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              >
+                <option value="">Default (from settings)</option>
+                {ghAccounts.map((acc) => (
+                  <option key={acc.username} value={acc.username}>
+                    {acc.username}{acc.isActive ? " (active)" : ""} — {acc.hostname}
+                  </option>
+                ))}
+              </select>
+              {savingGhAccount && <span className="text-xs text-muted-foreground">Saving…</span>}
+            </div>
+          </div>
         </div>
       )}
     </div>

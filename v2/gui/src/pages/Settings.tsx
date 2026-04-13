@@ -15,6 +15,87 @@ import {
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
+// ── GitHub Account Selector ──────────────────────────────────────────
+
+function GhAccountSelector() {
+  const { client } = useDaemonStore();
+  const [accounts, setAccounts] = useState<Array<{ username: string; hostname: string; isActive: boolean }>>([]);
+  const [defaultAccount, setDefaultAccount] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!client) return;
+    setLoading(true);
+    Promise.all([
+      client.listGhAccounts(),
+      client.getSettings(),
+    ]).then(([ghData, settingsData]) => {
+      setAccounts(ghData.accounts);
+      setDefaultAccount(settingsData.settings.defaultGhAccount || "");
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to load accounts");
+    }).finally(() => {
+      setLoading(false);
+    });
+  }, [client]);
+
+  const handleChange = async (value: string) => {
+    if (!client) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await client.updateSettings({
+        settings: { defaultGhAccount: value },
+      });
+      setDefaultAccount(value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save setting");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-muted-foreground text-sm">Loading accounts…</p>;
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <p className="text-muted-foreground text-sm">
+        No GitHub accounts found. Run <code className="text-xs bg-muted px-1 py-0.5 rounded">gh auth login</code> to add accounts.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3">
+        <label className="text-sm text-muted-foreground whitespace-nowrap">Default Account</label>
+        <select
+          value={defaultAccount}
+          onChange={(e) => handleChange(e.target.value)}
+          disabled={saving}
+          className="bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+        >
+          <option value="">Auto (active account)</option>
+          {accounts.map((acc) => (
+            <option key={acc.username} value={acc.username}>
+              {acc.username}{acc.isActive ? " (active)" : ""} — {acc.hostname}
+            </option>
+          ))}
+        </select>
+        {saving && <span className="text-xs text-muted-foreground">Saving…</span>}
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <p className="text-xs text-muted-foreground">
+        Controls which <code className="bg-muted px-1 py-0.5 rounded">gh</code> CLI account is used for GitHub tokens. Can be overridden per project or per run.
+      </p>
+    </div>
+  );
+}
+
 // ── Add Agent Form ──────────────────────────────────────────────────
 
 function AddAgentForm({
@@ -570,6 +651,14 @@ export function Settings() {
           <AutostartToggle />
           <NotificationToggle />
         </div>
+      </section>
+
+      {/* GitHub Account Section */}
+      <section className="mb-8">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          GitHub Account
+        </h2>
+        <GhAccountSelector />
       </section>
 
       {/* Agent Definitions Section */}
