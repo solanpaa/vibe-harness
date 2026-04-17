@@ -17,6 +17,7 @@ import {
   AcpConnectionNotFoundError,
 } from '../lib/errors.js';
 import { shellQuote } from './sandbox.js';
+import { assertValidEnvVarKey } from '../lib/validation/shared.js';
 import type { GhAccountService } from './gh-accounts.js';
 
 // ── Types (CDD §5.1) ─────────────────────────────────────────────────
@@ -203,12 +204,16 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     // /etc/sandbox-persistent.sh is auto-sourced by the login shell, so any
     // persistent credentials injected at sandbox-create time are already set.
     const exportLines = Object.entries(perExecEnv)
-      .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+      .map(([k, v]) => {
+        assertValidEnvVarKey(k);
+        return `export ${k}=${shellQuote(v)}`;
+      })
       .join('; ');
     const copilotCmd = `exec copilot ${copilotArgs.map(shellQuote).join(' ')}`;
     const script = exportLines ? `${exportLines}; ${copilotCmd}` : copilotCmd;
 
-    const fullArgs = ['exec', sandboxName, 'bash', '-lc', script];
+    // -i keeps stdin open so the ACP stdio protocol can flow.
+    const fullArgs = ['exec', '-i', sandboxName, 'bash', '-lc', script];
     const redactedScript = exportLines
       ? exportLines
           .replace(/export GITHUB_TOKEN=[^;]+/g, 'export GITHUB_TOKEN=<redacted>')
@@ -219,7 +224,7 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
       { isContinuation, model, hasGhToken: !!ghToken, envKeyCount: Object.keys(extraEnv ?? {}).length },
       'Starting ACP session',
     );
-    log.debug({ cmd: ['sbx', 'exec', sandboxName, 'bash', '-lc', redactedScript] }, 'Spawning sbx exec');
+    log.debug({ cmd: ['sbx', 'exec', '-i', sandboxName, 'bash', '-lc', redactedScript] }, 'Spawning sbx exec');
 
     const child = spawn(
       'sbx',

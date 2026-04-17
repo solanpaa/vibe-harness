@@ -132,10 +132,20 @@ export interface WorkflowRun {
    * for this run. Read-only after first write. Null for non-split runs.
    */
   splitConfig: SplitConfigSnapshot | null;
-  /** Per-run override of project's sandboxMemory; null = inherit project default. */
-  sandboxMemory: string | null;
-  /** Per-run override of project's sandboxCpus; null = inherit project default. */
-  sandboxCpus: number | null;
+  /**
+   * Per-run sandbox memory override. API tri-state:
+   *   undefined → inherit project default (DB column was null)
+   *   null      → explicit "use sbx default" (overrides project default)
+   *   string    → use this value (e.g. "8g")
+   */
+  sandboxMemory?: string | null;
+  /**
+   * Per-run sandbox CPU override. API tri-state:
+   *   undefined → inherit project default (DB column was null)
+   *   null      → explicit "use sbx default" (overrides project default)
+   *   number    → use this value (0 = sbx auto)
+   */
+  sandboxCpus?: number | null;
   createdAt: string;
   completedAt: string | null;
 }

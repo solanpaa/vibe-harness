@@ -6,6 +6,8 @@ import {
 import {
   sandboxMemorySchema,
   sandboxCpusSchema,
+  envVarKeySchema,
+  assertValidEnvVarKey,
 } from '../../src/lib/validation/shared.js';
 
 describe('sandboxMemorySchema', () => {
@@ -95,5 +97,32 @@ describe('serializeRunSandboxFields', () => {
       sandboxMemory: '4g',
       sandboxCpus: 2,
     });
+  });
+});
+
+describe('envVarKeySchema / assertValidEnvVarKey', () => {
+  it('accepts POSIX identifier names', () => {
+    expect(envVarKeySchema.parse('FOO')).toBe('FOO');
+    expect(envVarKeySchema.parse('GITHUB_TOKEN')).toBe('GITHUB_TOKEN');
+    expect(envVarKeySchema.parse('_x')).toBe('_x');
+    expect(envVarKeySchema.parse('a1_b2')).toBe('a1_b2');
+  });
+
+  it('rejects shell-injection attempts and other invalid names', () => {
+    for (const bad of [
+      '',
+      '1FOO',
+      'FOO BAR',
+      'FOO=1',
+      'FOO; rm -rf /',
+      'FOO\nrm -rf /',
+      'FOO`id`',
+      'FOO$(id)',
+      'FOO-BAR',
+      'FOO.BAR',
+    ]) {
+      expect(() => envVarKeySchema.parse(bad)).toThrow();
+      expect(() => assertValidEnvVarKey(bad)).toThrow();
+    }
   });
 });

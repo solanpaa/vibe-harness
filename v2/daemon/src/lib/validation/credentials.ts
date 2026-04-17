@@ -1,7 +1,7 @@
 // daemon/src/lib/validation/credentials.ts — CDD §8
 
 import { z } from 'zod';
-import { nonEmptyString, uuidSchema } from './shared.js';
+import { nonEmptyString, uuidSchema, envVarKeySchema } from './shared.js';
 
 export const credentialEntryTypeSchema = z.enum([
   'env_var',
@@ -26,6 +26,19 @@ export const createCredentialEntrySchema = z
     command: z.string().max(4096).optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === 'env_var') {
+      // env-var names are interpolated into shell scripts (bash -lc 'export …'
+      // and /etc/sandbox-persistent.sh). Enforce POSIX identifier rules to
+      // prevent shell-injection via the key field.
+      const r = envVarKeySchema.safeParse(data.key);
+      if (!r.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['key'],
+          message: r.error.issues[0]?.message ?? 'Invalid environment variable name',
+        });
+      }
+    }
     if (data.type === 'file_mount' || data.type === 'host_dir_mount') {
       if (!data.mountPath || data.mountPath.trim() === '') {
         ctx.addIssue({

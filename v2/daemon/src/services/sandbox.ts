@@ -23,6 +23,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
 import { Mutex } from '../lib/mutex.js';
 import { execCommand, type ExecResult } from '../lib/shell.js';
+import { assertValidEnvVarKey } from '../lib/validation/shared.js';
 import {
   SandboxProvisionError,
   SandboxAlreadyExistsError,
@@ -140,6 +141,9 @@ export function shellQuote(value: string): string {
  *   1. exports caller-supplied per-exec env vars (persistent ones are sourced
  *      automatically from /etc/sandbox-persistent.sh by the login shell)
  *   2. execs the requested command via `exec` so signals and exit codes pass through
+ *
+ * Env-var keys are validated against POSIX identifier rules to prevent
+ * shell-injection via the key (values are safely single-quoted).
  */
 function buildLoginShellCommand(
   command: string[],
@@ -147,7 +151,10 @@ function buildLoginShellCommand(
 ): string[] {
   const exports = extraEnv
     ? Object.entries(extraEnv)
-        .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+        .map(([k, v]) => {
+          assertValidEnvVarKey(k);
+          return `export ${k}=${shellQuote(v)}`;
+        })
         .join('; ')
     : '';
   const exec = `exec ${command.map(shellQuote).join(' ')}`;
@@ -211,12 +218,19 @@ export function createSandboxService(deps: {
     // 1. Persistent env vars
     if (creds.envVars.length > 0) {
       const exportLines = creds.envVars
-        .map(({ key, value }) => `export ${key}=${shellQuote(value)}`)
+        .map(({ key, value }) => {
+          // Defence-in-depth: route validation already enforces this, but the
+          // builder must never produce an injection-prone export line.
+          assertValidEnvVarKey(key);
+          return `export ${key}=${shellQuote(value)}`;
+        })
         .join('\n');
+      // /etc/sandbox-persistent.sh is owned by root in sbx images; require
+      // -u root so the append succeeds regardless of the default exec user.
       const script = `cat >> /etc/sandbox-persistent.sh <<'__VIBE_EOF__'\n${exportLines}\n__VIBE_EOF__`;
       log.debug({ envKeyCount: creds.envVars.length }, 'Writing persistent env vars');
       const result = await execCommand('sbx', [
-        'exec', sandboxName,
+        'exec', '-u', 'root', sandboxName,
         'bash', '-lc', script,
       ]);
       if (result.exitCode !== 0) {
@@ -229,11 +243,12 @@ export function createSandboxService(deps: {
       }
     }
 
-    // 2. Docker logins (use docker CLI inside sandbox)
+    // 2. Docker logins (use docker CLI inside sandbox); -i keeps stdin open
+    //    so --password-stdin can read the password we pipe in.
     for (const login of creds.dockerLogins) {
       log.debug({ registry: login.registry }, 'Injecting Docker login');
       const child = spawn('sbx', [
-        'exec', sandboxName,
+        'exec', '-i', sandboxName,
         'docker', 'login', login.registry,
         '--username', login.username,
         '--password-stdin',
@@ -255,6 +270,40 @@ export function createSandboxService(deps: {
         child.on('error', reject);
         child.stdin!.end(login.password);
       });
+    }
+
+    // 3. Restore containerPath semantics for file/host-dir mounts.
+    //    sbx mounts host paths at the same absolute path inside the sandbox;
+    //    if the credential entry asks for a different containerPath, create a
+    //    symlink so consumers find the credential where they expect.
+    const linkPairs: Array<{ hostPath: string; containerPath: string; isFile: boolean }> = [];
+    for (const m of creds.fileMounts) {
+      if (m.containerPath && m.containerPath !== m.hostPath) {
+        linkPairs.push({ hostPath: m.hostPath, containerPath: m.containerPath, isFile: true });
+      }
+    }
+    for (const m of creds.hostDirMounts) {
+      if (m.containerPath && m.containerPath !== m.hostPath) {
+        linkPairs.push({ hostPath: m.hostPath, containerPath: m.containerPath, isFile: false });
+      }
+    }
+    if (linkPairs.length > 0) {
+      const lines = linkPairs.map(({ hostPath, containerPath }) =>
+        `mkdir -p ${shellQuote(containerPath.replace(/\/[^/]*$/, '') || '/')} && ln -sfn ${shellQuote(hostPath)} ${shellQuote(containerPath)}`,
+      );
+      log.debug({ count: linkPairs.length }, 'Creating containerPath symlinks for credential mounts');
+      const result = await execCommand('sbx', [
+        'exec', '-u', 'root', sandboxName,
+        'bash', '-lc', lines.join(' && '),
+      ]);
+      if (result.exitCode !== 0) {
+        throw new SandboxExecError(
+          sandboxName,
+          'credential containerPath symlink',
+          result.exitCode,
+          result.stderr,
+        );
+      }
     }
   }
 
@@ -408,7 +457,7 @@ export function createSandboxService(deps: {
     const shellCmd = buildLoginShellCommand(options.command, options.env);
 
     const child = spawn('sbx', [
-      'exec',
+      'exec', '-i',
       ...workdirArgs,
       sandboxName,
       ...shellCmd,
@@ -473,14 +522,18 @@ export function createSandboxService(deps: {
     );
 
     if (stopResult.exitCode !== 0) {
-      log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      const rmArgs = ['rm', sandboxName];
-      log.debug({ cmd: ['sbx', ...rmArgs] }, 'Running sbx rm');
-      await execCommand('sbx', rmArgs);
+      log.warn({ stderr: stopResult.stderr }, 'sbx stop returned non-zero (may already be stopped)');
+    }
+
+    // Always remove — `sbx stop` only suspends the VM. Without rm, stopped
+    // sandboxes accumulate on the host.
+    const rmResult = await execCommand('sbx', ['rm', sandboxName]);
+    if (rmResult.exitCode !== 0) {
+      log.warn({ stderr: rmResult.stderr }, 'sbx rm returned non-zero (may already be removed)');
     }
 
     activeSandboxes.delete(sandboxName);
-    log.info('Sandbox stopped');
+    log.info('Sandbox stopped and removed');
   }
 
   async function remove(sandboxName: string): Promise<void> {
@@ -496,39 +549,59 @@ export function createSandboxService(deps: {
   }
 
   /**
-   * List all vibe-prefixed sandboxes via `sbx ls --format json`.
+   * List all vibe-prefixed sandboxes via `sbx ls --json`.
    *
-   * sbx ls --format json emits one JSON object per line (NDJSON). Field names
-   * are normalized below to the SandboxInfo shape; sbx may use slightly
+   * sbx ls --json emits a single JSON document. Recent CLI versions wrap the
+   * list in `{"sandboxes": [...]}`, while older / alternative versions emit a
+   * top-level array or NDJSON. We handle all three shapes for resilience.
+   * Field names are normalized to the SandboxInfo shape; sbx may use slightly
    * different field names (e.g. `Name`, `Status`, `Workspace`, `Image`) — we
-   * accept either casing for resilience.
+   * accept either casing.
    */
   async function listSandboxes(): Promise<SandboxInfo[]> {
-    const result = await execCommand('sbx', ['ls', '--format', 'json']);
+    const result = await execCommand('sbx', ['ls', '--json']);
 
     if (result.exitCode !== 0 || !result.stdout.trim()) {
       return [];
     }
 
-    const items: SandboxInfo[] = [];
-    for (const line of result.stdout.trim().split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const raw = JSON.parse(line) as Record<string, unknown>;
-        const name = String(raw.name ?? raw.Name ?? '');
-        if (!name.startsWith('vibe-')) continue;
-        const statusRaw = String(raw.status ?? raw.Status ?? 'unknown').toLowerCase();
-        const status: SandboxInfo['status'] =
-          statusRaw === 'running' || statusRaw === 'stopped' ? statusRaw : 'unknown';
-        items.push({
-          name,
-          status,
-          image: String(raw.image ?? raw.Image ?? raw.template ?? raw.Template ?? ''),
-          created: String(raw.created ?? raw.Created ?? raw.createdAt ?? ''),
-        });
-      } catch {
-        // Skip malformed lines
+    const trimmed = result.stdout.trim();
+
+    let raws: Array<Record<string, unknown>> = [];
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) {
+        raws = parsed as Array<Record<string, unknown>>;
+      } else if (parsed && typeof parsed === 'object') {
+        const obj = parsed as Record<string, unknown>;
+        const list = (obj.sandboxes ?? obj.Sandboxes ?? obj.items ?? obj.Items) as unknown;
+        if (Array.isArray(list)) raws = list as Array<Record<string, unknown>>;
       }
+    } catch {
+      // Fallback: NDJSON
+      for (const line of trimmed.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          raws.push(JSON.parse(line) as Record<string, unknown>);
+        } catch {
+          /* skip malformed lines */
+        }
+      }
+    }
+
+    const items: SandboxInfo[] = [];
+    for (const raw of raws) {
+      const name = String(raw.name ?? raw.Name ?? '');
+      if (!name.startsWith('vibe-')) continue;
+      const statusRaw = String(raw.status ?? raw.Status ?? 'unknown').toLowerCase();
+      const status: SandboxInfo['status'] =
+        statusRaw === 'running' || statusRaw === 'stopped' ? statusRaw : 'unknown';
+      items.push({
+        name,
+        status,
+        image: String(raw.image ?? raw.Image ?? raw.template ?? raw.Template ?? ''),
+        created: String(raw.created ?? raw.Created ?? raw.createdAt ?? ''),
+      });
     }
     return items;
   }
@@ -563,7 +636,11 @@ export function createSandboxService(deps: {
     }
   }
 
-  /** Stop a sandbox by name, bypassing active-map check (reconciliation/shutdown). */
+  /**
+   * Stop and remove a sandbox by name, bypassing active-map check
+   * (used by reconciliation/shutdown). `sbx stop` only suspends the VM —
+   * it must be followed by `sbx rm` or stopped sandboxes will accumulate.
+   */
   async function forceStop(sandboxName: string): Promise<void> {
     const log = logger.child({ sandboxName });
     log.info('Force-stopping sandbox');
@@ -575,14 +652,18 @@ export function createSandboxService(deps: {
     );
 
     if (stopResult.exitCode !== 0) {
-      log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      const rmArgs = ['rm', sandboxName];
-      log.debug({ cmd: ['sbx', ...rmArgs] }, 'Running sbx rm (force)');
-      await execCommand('sbx', rmArgs);
+      log.warn({ stderr: stopResult.stderr }, 'sbx stop returned non-zero (may already be stopped)');
+    }
+
+    const rmArgs = ['rm', sandboxName];
+    log.debug({ cmd: ['sbx', ...rmArgs] }, 'Running sbx rm');
+    const rmResult = await execCommand('sbx', rmArgs);
+    if (rmResult.exitCode !== 0) {
+      log.warn({ stderr: rmResult.stderr }, 'sbx rm returned non-zero (may already be removed)');
     }
 
     activeSandboxes.delete(sandboxName);
-    log.info('Sandbox force-stopped');
+    log.info('Sandbox force-stopped and removed');
   }
 
   // ── Public interface ────────────────────────────────────────────

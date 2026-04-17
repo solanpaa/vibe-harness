@@ -17,6 +17,7 @@ import { runWorkflowPipeline } from '../pipeline.js';
 import { logger } from '../../lib/logger.js';
 import type { WorktreeService } from '../../services/worktree.js';
 import type { BranchNamer } from '../../services/branch-namer.js';
+import { resolveSandboxResources } from '../../lib/sandbox-resources.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -210,7 +211,10 @@ async function launchMissingChildren(
     parentBranch = parentRun!.branch;
   }
 
-  // Always load parent's sandbox VM resource overrides so children inherit them.
+  // Always load parent's sandbox VM resource overrides AND the project defaults
+  // so children inherit the parent's *resolved* values. Snapshotting the
+  // resolved values means a project-default change between parent creation
+  // and child creation cannot drift VM sizing across siblings.
   const parentSandboxResources = db
     .select({
       sandboxMemory: schema.workflowRuns.sandboxMemory,
@@ -219,6 +223,32 @@ async function launchMissingChildren(
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, parentRunId))
     .get();
+  const projectSandboxDefaults = db
+    .select({
+      sandboxMemory: schema.projects.sandboxMemory,
+      sandboxCpus: schema.projects.sandboxCpus,
+    })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId))
+    .get();
+  const resolvedParent = resolveSandboxResources(
+    {
+      sandboxMemory: projectSandboxDefaults?.sandboxMemory ?? null,
+      sandboxCpus: projectSandboxDefaults?.sandboxCpus ?? null,
+    },
+    {
+      sandboxMemory: parentSandboxResources?.sandboxMemory ?? null,
+      sandboxCpus: parentSandboxResources?.sandboxCpus ?? null,
+    },
+  );
+  // Re-encode resolved values into row-sentinel form for child rows:
+  //   undefined → "" / -1 (explicit "use sbx default", overrides any future
+  //   project-default change)
+  //   value     → value
+  const childSandboxMemoryRow: string | null =
+    resolvedParent.memory === undefined ? '' : resolvedParent.memory;
+  const childSandboxCpusRow: number | null =
+    resolvedParent.cpus === undefined ? -1 : resolvedParent.cpus;
 
   // Load selected proposals in sort order
   const selectedProposals = selectedProposalIds.length > 0
@@ -293,10 +323,10 @@ async function launchMissingChildren(
         baseBranch: parentBranch ?? null,
         targetBranch: parentBranch ?? null,
         parentWorktreeCommit: snapshotCommit ?? null,
-        // Inherit parent's per-run sandbox VM resource overrides (if any).
-        // null/undefined column on parent → null on child → resolves to project default at provision time.
-        sandboxMemory: parentSandboxResources?.sandboxMemory ?? null,
-        sandboxCpus: parentSandboxResources?.sandboxCpus ?? null,
+        // Inherit parent's *resolved* sandbox VM resources (snapshot at split
+        // time) so child siblings cannot drift if the project default changes.
+        sandboxMemory: childSandboxMemoryRow,
+        sandboxCpus: childSandboxCpusRow,
       })
       .run();
 
