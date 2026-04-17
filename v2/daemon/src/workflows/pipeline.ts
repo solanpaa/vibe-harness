@@ -413,7 +413,13 @@ async function runSplitSubPipeline(
   // ── 1. Splitter agent execution (with retry-on-failure semantics) ──
   let splitterResult = await executeStage({
     runId: ctx.runId,
-    stage: { ...splitterStage, requiresSplitMcp: true } as any,
+    stage: {
+      name: splitterStage.name,
+      promptTemplate: splitterStage.promptTemplate,
+      freshSession: splitterStage.freshSession,
+      model: splitterStage.model,
+      requiresSplitMcp: true,
+    },
     stageIndex: sourceStageIndex,
     round: 1,
     isFirstStage: false,
