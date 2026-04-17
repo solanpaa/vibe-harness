@@ -16,14 +16,14 @@ import type { Logger } from 'pino';
 
 export async function checkSbxAvailable(logger: Logger): Promise<boolean> {
   try {
-    const result = await execCommand('sbx', ['--version'], { timeout: 5_000 });
+    const result = await execCommand('sbx', ['version'], { timeout: 5_000 });
     if (result.exitCode === 0) {
       logger.info({ version: result.stdout.trim() }, 'sbx CLI detected');
       return true;
     }
     logger.warn(
       { stderr: result.stderr },
-      'sbx CLI returned non-zero exit code on --version. Install/upgrade: https://docs.docker.com/ai/sandboxes/',
+      'sbx CLI returned non-zero exit code on `sbx version`. Install/upgrade: https://docs.docker.com/ai/sandboxes/',
     );
     return false;
   } catch (err) {
