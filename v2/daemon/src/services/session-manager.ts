@@ -57,6 +57,10 @@ export interface SessionCreateOptions {
   ghAccount?: string | null;
   /** MCP servers to register (for split stages) */
   mcpServers?: import('@agentclientprotocol/sdk').McpServer[];
+  /** Resolved sbx --memory value (e.g. "8g"). undefined → omit flag (sbx default). */
+  sandboxMemory?: string;
+  /** Resolved sbx --cpus value. undefined → omit flag (sbx default). */
+  sandboxCpus?: number;
 }
 
 // ── Internal session state ───────────────────────────────────────────
@@ -264,6 +268,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       agentDef,
       model,
       ghAccount,
+      sandboxMemory,
+      sandboxCpus,
     } = options;
 
     log.info(
@@ -297,7 +303,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       startPoint,
     );
 
-    // 2. Provision Docker sandbox (idempotent via getOrCreate)
+    // 2. Provision sbx sandbox (idempotent via getOrCreate)
     // Mount the worktree as main workspace (agent's cwd).
     // Also mount the parent project's .git dir so git worktree
     // refs (gitdir: /path/to/.git/worktrees/...) resolve correctly.
@@ -307,15 +313,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (existsSync(gitDir)) {
       extraWorkspaces.push(gitDir);
     }
-    log.info({ sandboxName, extraWorkspaces }, 'Provisioning sandbox');
+    log.info({ sandboxName, extraWorkspaces, sandboxMemory, sandboxCpus }, 'Provisioning sandbox');
     await sandbox.getOrCreate({
       runId,
       image: agentDef.dockerImage,
       workdir: worktreePath,
       extraWorkspaces,
       agentSubcommand: 'copilot',
-      networkPolicy: 'open',
       credentials,
+      memory: sandboxMemory,
+      cpus: sandboxCpus,
     });
 
     // 3. Build session state (added to map only after ACP connects)

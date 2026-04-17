@@ -7,7 +7,11 @@ import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
 
-// MCP bridge script injected into Docker sandbox (adapted from v1)
+// MCP bridge script injected into the sbx sandbox (adapted from v1).
+// Note: sbx routes traffic from inside the sandbox via host.docker.internal
+// → localhost on the host. The host-side `sbx policy allow network
+// localhost:<daemonPort>` rule is added by the daemon at startup
+// (see lib/sbx-prereqs.ts).
 const MCP_BRIDGE_JS = `#!/usr/bin/env node
 const { execSync } = require("child_process");
 const readline = require("readline");
@@ -120,6 +124,11 @@ const COPILOT_CLI_AGENT = {
 # Extends the official Copilot CLI sandbox with development tools.
 #
 # Build: docker build -t vibe-harness/copilot:latest -f Dockerfile .
+# Use with: sbx create --template vibe-harness/copilot:latest copilot <workspace>
+#
+# NOTE: The FROM image below targets the legacy Docker Desktop sandbox
+# template registry. When using the sbx CLI, replace it with the appropriate
+# sbx base image — see https://docs.docker.com/ai/sandboxes/agents/custom-environments/
 
 FROM docker/sandbox-templates:copilot
 

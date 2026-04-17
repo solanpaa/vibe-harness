@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // ACP Client Service (CDD §5)
 //
-// Manages NDJSON communication with Copilot CLI running inside Docker
-// sandboxes. Spawns `docker sandbox exec -i` processes, parses the ACP
-// event stream from stdout, and provides methods to send prompts/stop
-// commands via stdin.
+// Manages NDJSON communication with Copilot CLI running inside sbx
+// sandboxes. Spawns `sbx exec ... bash -lc 'copilot --acp ...'` processes,
+// parses the ACP event stream from stdout, and provides methods to send
+// prompts/stop commands via stdin.
 // ---------------------------------------------------------------------------
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -16,6 +16,7 @@ import {
   AcpSessionNotActiveError,
   AcpConnectionNotFoundError,
 } from '../lib/errors.js';
+import { shellQuote } from './sandbox.js';
 import type { GhAccountService } from './gh-accounts.js';
 
 // ── Types (CDD §5.1) ─────────────────────────────────────────────────
@@ -175,45 +176,53 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     if (isContinuation) copilotArgs.push('--continue');
     if (model) copilotArgs.push('--model', model);
 
-    // Build environment variable flags for docker sandbox exec
-    const envArgs: string[] = [];
+    // Per-exec env vars (in addition to those persisted in
+    // /etc/sandbox-persistent.sh during sandbox create).
+    const perExecEnv: Record<string, string> = {
+      // Node memory limit (always set)
+      NODE_OPTIONS: '--max-old-space-size=3072',
+    };
 
     // GitHub token — resolved via gh account service (respects account override)
     const ghToken = await ghAccountService.resolveToken(ghAccount);
     if (ghToken) {
-      envArgs.push('-e', `GITHUB_TOKEN=${ghToken}`);
+      perExecEnv.GITHUB_TOKEN = ghToken;
     }
-
-    // Node memory limit
-    envArgs.push('-e', 'NODE_OPTIONS=--max-old-space-size=3072');
 
     // Caller-supplied env vars
     if (extraEnv) {
       for (const [key, value] of Object.entries(extraEnv)) {
-        envArgs.push('-e', `${key}=${value}`);
+        perExecEnv[key] = value;
       }
     }
 
-    // Build the full command args for logging (redact token values)
-    const fullArgs = [
-      'sandbox', 'exec', '-i',
-      ...envArgs,
-      sandboxName,
-      'copilot', ...copilotArgs,
-    ];
-    const redactedArgs = fullArgs.map(arg =>
-      arg.startsWith('GITHUB_TOKEN=') ? 'GITHUB_TOKEN=<redacted>'
-      : arg.startsWith('GH_TOKEN=') ? 'GH_TOKEN=<redacted>'
-      : arg,
-    );
+    // Build a `bash -lc` script:
+    //   1. exports the per-exec env vars
+    //   2. execs copilot so signals/exit codes pass through
+    //
+    // /etc/sandbox-persistent.sh is auto-sourced by the login shell, so any
+    // persistent credentials injected at sandbox-create time are already set.
+    const exportLines = Object.entries(perExecEnv)
+      .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+      .join('; ');
+    const copilotCmd = `exec copilot ${copilotArgs.map(shellQuote).join(' ')}`;
+    const script = exportLines ? `${exportLines}; ${copilotCmd}` : copilotCmd;
+
+    const fullArgs = ['exec', sandboxName, 'bash', '-lc', script];
+    const redactedScript = exportLines
+      ? exportLines
+          .replace(/export GITHUB_TOKEN=[^;]+/g, 'export GITHUB_TOKEN=<redacted>')
+          .replace(/export GH_TOKEN=[^;]+/g, 'export GH_TOKEN=<redacted>')
+        + `; ${copilotCmd}`
+      : copilotCmd;
     log.info(
       { isContinuation, model, hasGhToken: !!ghToken, envKeyCount: Object.keys(extraEnv ?? {}).length },
       'Starting ACP session',
     );
-    log.debug({ cmd: ['docker', ...redactedArgs] }, 'Spawning docker sandbox exec');
+    log.debug({ cmd: ['sbx', 'exec', sandboxName, 'bash', '-lc', redactedScript] }, 'Spawning sbx exec');
 
     const child = spawn(
-      'docker',
+      'sbx',
       fullArgs,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );

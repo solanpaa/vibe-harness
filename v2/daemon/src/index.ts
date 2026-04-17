@@ -12,6 +12,7 @@ import { getDb, closeDb } from "./db/index.js";
 import { eq, and, inArray } from 'drizzle-orm';
 import * as schema from "./db/schema.js";
 import { reconcileOnStartup } from "./lib/reconcile.js";
+import { checkSbxAvailable, ensureLocalhostPolicy } from "./lib/sbx-prereqs.js";
 import { createSandboxService, type SandboxService } from "./services/sandbox.js";
 import { createWorktreeService } from "./services/worktree.js";
 import { createAcpClient } from "./services/acp-client.js";
@@ -96,8 +97,16 @@ logger.info("Pipeline deps initialized");
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
 // stop orphaned sandboxes, replay pending hook resumes.
 // Awaited before serving so clients never see stale in-flight state.
+//
+// Also runs sbx prereq checks (CLI present, network policy allows
+// localhost:<daemonPort> for the in-sandbox MCP bridge).
 
-reconcileOnStartup(sandboxService)
+const daemonPort = Number(process.env.NITRO_PORT ?? 19423);
+
+Promise.all([
+  checkSbxAvailable(logger).then((ok) => ok ? ensureLocalhostPolicy(daemonPort, logger) : undefined),
+  reconcileOnStartup(sandboxService),
+])
   .catch((err) => {
     logger.error({ err }, "Startup reconciliation failed");
   })

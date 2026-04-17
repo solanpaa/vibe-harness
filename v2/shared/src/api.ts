@@ -29,6 +29,10 @@ export interface CreateProjectRequest {
   description?: string;
   defaultCredentialSetId?: string;
   ghAccount?: string;
+  /** Optional default sbx --memory for sandboxes. e.g. "8g", "1024m". */
+  sandboxMemory?: string | null;
+  /** Optional default sbx --cpus for sandboxes. 0 = sbx auto. */
+  sandboxCpus?: number | null;
 }
 
 export interface UpdateProjectRequest {
@@ -36,6 +40,8 @@ export interface UpdateProjectRequest {
   description?: string;
   defaultCredentialSetId?: string | null;
   ghAccount?: string | null;
+  sandboxMemory?: string | null;
+  sandboxCpus?: number | null;
 }
 
 export interface ProjectListResponse {
@@ -128,6 +134,20 @@ export interface CreateWorkflowRunRequest {
   title?: string;
   model?: string;
   ghAccount?: string;
+  /**
+   * Per-run override of the project's default sbx --memory.
+   * - omitted/undefined → inherit project default
+   * - null              → explicit override: omit the flag (use sbx default)
+   * - string            → use this value
+   */
+  sandboxMemory?: string | null;
+  /**
+   * Per-run override of the project's default sbx --cpus.
+   * - omitted/undefined → inherit project default
+   * - null              → explicit override: omit the flag (use sbx default)
+   * - number            → use this value (0 = sbx auto)
+   */
+  sandboxCpus?: number | null;
   attachments?: Array<{
     name: string;
     type: string;

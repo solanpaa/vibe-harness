@@ -210,6 +210,16 @@ async function launchMissingChildren(
     parentBranch = parentRun!.branch;
   }
 
+  // Always load parent's sandbox VM resource overrides so children inherit them.
+  const parentSandboxResources = db
+    .select({
+      sandboxMemory: schema.workflowRuns.sandboxMemory,
+      sandboxCpus: schema.workflowRuns.sandboxCpus,
+    })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, parentRunId))
+    .get();
+
   // Load selected proposals in sort order
   const selectedProposals = selectedProposalIds.length > 0
     ? db
@@ -283,6 +293,10 @@ async function launchMissingChildren(
         baseBranch: parentBranch ?? null,
         targetBranch: parentBranch ?? null,
         parentWorktreeCommit: snapshotCommit ?? null,
+        // Inherit parent's per-run sandbox VM resource overrides (if any).
+        // null/undefined column on parent → null on child → resolves to project default at provision time.
+        sandboxMemory: parentSandboxResources?.sandboxMemory ?? null,
+        sandboxCpus: parentSandboxResources?.sandboxCpus ?? null,
       })
       .run();
 

@@ -20,3 +20,23 @@ export const gitRefSchema = z
 export const uuidSchema = z.string().uuid();
 
 export const nonEmptyString = z.string().trim().min(1, 'Must not be empty');
+
+/**
+ * sbx --memory value, e.g. "1024m", "8g", "32G".
+ * Format: positive integer followed by m, M, g, or G (binary units).
+ * null is allowed to mean "use sbx default" (caller should distinguish
+ * undefined = inherit from project).
+ */
+export const sandboxMemorySchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[1-9]\d*(m|M|g|G)$/,
+    'Memory must be a positive integer followed by m, M, g, or G (e.g. "1024m", "8g")',
+  )
+  .max(16);
+
+/**
+ * sbx --cpus value: non-negative integer. 0 = sbx auto.
+ */
+export const sandboxCpusSchema = z.number().int().min(0).max(256);

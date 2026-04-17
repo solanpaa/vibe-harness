@@ -31,7 +31,7 @@ projects.post('/api/projects', async (c) => {
     );
   }
 
-  const { name, localPath, description, defaultCredentialSetId, ghAccount } = parsed.data;
+  const { name, localPath, description, defaultCredentialSetId, ghAccount, sandboxMemory, sandboxCpus } = parsed.data;
 
   // Check path exists
   if (!existsSync(localPath)) {
@@ -83,6 +83,8 @@ projects.post('/api/projects', async (c) => {
       description: description ?? null,
       defaultCredentialSetId: defaultCredentialSetId ?? null,
       ghAccount: ghAccount ?? null,
+      sandboxMemory: sandboxMemory ?? null,
+      sandboxCpus: sandboxCpus ?? null,
     })
     .returning()
     .get();
@@ -159,6 +161,8 @@ projects.patch('/api/projects/:id', async (c) => {
   if (parsed.data.defaultCredentialSetId !== undefined)
     updates.defaultCredentialSetId = parsed.data.defaultCredentialSetId;
   if (parsed.data.ghAccount !== undefined) updates.ghAccount = parsed.data.ghAccount;
+  if (parsed.data.sandboxMemory !== undefined) updates.sandboxMemory = parsed.data.sandboxMemory;
+  if (parsed.data.sandboxCpus !== undefined) updates.sandboxCpus = parsed.data.sandboxCpus;
 
   const updated = db
     .update(schema.projects)

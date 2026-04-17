@@ -30,6 +30,8 @@ import {
   consolidateConflictToken,
 } from '../workflows/hookTokens.js';
 import { z } from 'zod';
+import { sandboxMemorySchema, sandboxCpusSchema } from '../lib/validation/shared.js';
+import { serializeRunSandboxFields } from '../lib/sandbox-resources.js';
 
 const runs = new Hono();
 
@@ -65,6 +67,12 @@ const createRunSchema = z.object({
   model: z.string().optional(),
   credentialSetId: z.string().uuid().optional(),
   ghAccount: z.string().max(100).optional(),
+  // sandboxMemory / sandboxCpus follow tri-state semantics:
+  //   undefined → inherit project default
+  //   null      → explicit override: omit the flag (use sbx default)
+  //   value     → use this value
+  sandboxMemory: sandboxMemorySchema.nullable().optional(),
+  sandboxCpus: sandboxCpusSchema.nullable().optional(),
   attachments: z
     .array(
       z.object({
@@ -98,6 +106,8 @@ runs.post('/api/runs', async (c) => {
     model,
     credentialSetId,
     ghAccount,
+    sandboxMemory,
+    sandboxCpus,
     attachments,
   } = parsed.data;
 
@@ -131,6 +141,17 @@ runs.post('/api/runs', async (c) => {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Agent definition not found' } }, 404);
   }
 
+  // Resolve tri-state for persistence:
+  //   - if caller passed `sandboxMemory: null` (explicit override → use sbx default),
+  //     persist the sentinel "" (empty string) so we can distinguish from "inherit project".
+  //   - if caller omitted, persist null (= inherit project at run time).
+  //   - if caller passed a value, persist it.
+  // Same for sandboxCpus, with -1 as the "explicit override → sbx default" sentinel.
+  const memoryToPersist =
+    sandboxMemory === undefined ? null : sandboxMemory === null ? '' : sandboxMemory;
+  const cpusToPersist =
+    sandboxCpus === undefined ? null : sandboxCpus === null ? -1 : sandboxCpus;
+
   // Create the workflow run record
   const runId = crypto.randomUUID();
   db.insert(schema.workflowRuns)
@@ -147,6 +168,8 @@ runs.post('/api/runs', async (c) => {
       model: model ?? null,
       credentialSetId: credentialSetId ?? null,
       ghAccount: ghAccount ?? null,
+      sandboxMemory: memoryToPersist,
+      sandboxCpus: cpusToPersist,
       attachments: attachments?.length ? JSON.stringify(attachments) : null,
     })
     .run();
@@ -192,7 +215,7 @@ runs.post('/api/runs', async (c) => {
     .where(eq(schema.workflowRuns.id, runId))
     .get();
 
-  return c.json(created, 201);
+  return c.json(created ? serializeRunSandboxFields(created) : created, 201);
 });
 
 // ── GET /api/runs — List workflow runs ───────────────────────────────
@@ -211,7 +234,7 @@ runs.get('/api/runs', (c) => {
     return true;
   });
 
-  return c.json({ runs: allRuns });
+  return c.json({ runs: allRuns.map(serializeRunSandboxFields) });
 });
 
 // ── GET /api/runs/:id — Run detail with stage executions ────────────
@@ -245,7 +268,7 @@ runs.get('/api/runs/:id', (c) => {
   // Derive activeReviewId from pending reviews
   const activeReview = reviews.find((r) => r.status === 'pending_review');
 
-  return c.json({ ...run, stages, reviews, activeReviewId: activeReview?.id ?? null });
+  return c.json({ ...serializeRunSandboxFields(run), stages, reviews, activeReviewId: activeReview?.id ?? null });
 });
 
 // ── GET /api/runs/:id/messages — Run conversation messages ──────────

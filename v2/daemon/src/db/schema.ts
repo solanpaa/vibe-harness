@@ -38,6 +38,10 @@ export const projects = sqliteTable('projects', {
   defaultCredentialSetId: text('default_credential_set_id')
     .references((): any => credentialSets.id, { onDelete: 'set null' }),
   ghAccount: text('gh_account'),
+  /** Default sbx --memory value for this project's sandboxes (e.g. "8g", "1024m"). null = use sbx default. */
+  sandboxMemory: text('sandbox_memory'),
+  /** Default sbx --cpus value for this project's sandboxes. 0 = sbx auto. null = omit flag. */
+  sandboxCpus: integer('sandbox_cpus'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -108,6 +112,10 @@ export const workflowRuns = sqliteTable(
     ghAccount: text('gh_account'),
     attachments: text('attachments'),              // JSON: array of {name, type, dataUrl}
     splitConfigJson: text('split_config_json'),    // JSON: SplitConfigSnapshot (set once at split-time)
+    /** Per-run override for sbx --memory. undefined column value means inherit from project. */
+    sandboxMemory: text('sandbox_memory'),
+    /** Per-run override for sbx --cpus. undefined column value means inherit from project. */
+    sandboxCpus: integer('sandbox_cpus'),
     createdAt: createdAt(),
     completedAt: text('completed_at'),
   },

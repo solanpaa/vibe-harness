@@ -19,6 +19,8 @@ function AddProjectForm({
   const [localPath, setLocalPath] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [sandboxMemory, setSandboxMemory] = useState("");
+  const [sandboxCpus, setSandboxCpus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,6 +46,16 @@ function AddProjectForm({
         localPath: localPath.trim(),
       };
       if (description.trim()) data.description = description.trim();
+      if (sandboxMemory.trim()) data.sandboxMemory = sandboxMemory.trim();
+      if (sandboxCpus.trim()) {
+        const n = Number(sandboxCpus);
+        if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+          setError("CPUs must be a non-negative integer (0 = sbx auto)");
+          setSubmitting(false);
+          return;
+        }
+        data.sandboxCpus = n;
+      }
 
       await client.createProject(data);
       onCreated();
@@ -100,6 +112,39 @@ function AddProjectForm({
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">
+            Sandbox memory
+          </label>
+          <input
+            type="text"
+            value={sandboxMemory}
+            onChange={(e) => setSandboxMemory(e.target.value)}
+            placeholder="e.g. 8g"
+            pattern="[1-9][0-9]*[mMgG]"
+            title="Binary size, e.g. 1024m or 8g"
+            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+          />
+          <p className="text-[10px] text-muted-foreground mt-0.5">Leave blank for sbx default (~50% host RAM, max 32g).</p>
+        </div>
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">
+            Sandbox CPUs
+          </label>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={sandboxCpus}
+            onChange={(e) => setSandboxCpus(e.target.value)}
+            placeholder="e.g. 4"
+            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+          />
+          <p className="text-[10px] text-muted-foreground mt-0.5">0 or blank = sbx auto (host CPUs − 1).</p>
+        </div>
+      </div>
+
       {error && (
         <p className="text-xs text-destructive">{error}</p>
       )}
@@ -141,6 +186,12 @@ function ProjectRow({
   const [ghAccounts, setGhAccounts] = useState<Array<{ username: string; hostname: string; isActive: boolean }>>([]);
   const [ghAccount, setGhAccount] = useState<string>(project.ghAccount || "");
   const [savingGhAccount, setSavingGhAccount] = useState(false);
+  const [sandboxMemory, setSandboxMemory] = useState<string>(project.sandboxMemory ?? "");
+  const [sandboxCpus, setSandboxCpus] = useState<string>(
+    project.sandboxCpus !== null && project.sandboxCpus !== undefined ? String(project.sandboxCpus) : "",
+  );
+  const [savingResources, setSavingResources] = useState(false);
+  const [resourcesError, setResourcesError] = useState<string | null>(null);
 
   const loadBranches = useCallback(async () => {
     if (!client || branches) return;
@@ -170,6 +221,39 @@ function ProjectRow({
       // silently fail
     } finally {
       setSavingGhAccount(false);
+    }
+  };
+
+  const handleSaveResources = async () => {
+    if (!client) return;
+    setResourcesError(null);
+
+    const memTrim = sandboxMemory.trim();
+    const cpuTrim = sandboxCpus.trim();
+    let cpusValue: number | null = null;
+    if (cpuTrim) {
+      const n = Number(cpuTrim);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+        setResourcesError("CPUs must be a non-negative integer");
+        return;
+      }
+      cpusValue = n;
+    }
+    if (memTrim && !/^[1-9]\d*[mMgG]$/.test(memTrim)) {
+      setResourcesError("Memory must look like 1024m or 8g");
+      return;
+    }
+
+    setSavingResources(true);
+    try {
+      await client.updateProject(project.id, {
+        sandboxMemory: memTrim || null,
+        sandboxCpus: cpusValue,
+      });
+    } catch (err) {
+      setResourcesError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingResources(false);
     }
   };
 
@@ -277,6 +361,46 @@ function ProjectRow({
                 ))}
               </select>
               {savingGhAccount && <span className="text-xs text-muted-foreground">Saving…</span>}
+            </div>
+          </div>
+          <div className="mt-3 pt-3 border-t border-border">
+            <h4 className="text-xs font-semibold text-muted-foreground mb-2">Sandbox VM Defaults</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-muted-foreground mb-1">Memory</label>
+                <input
+                  type="text"
+                  value={sandboxMemory}
+                  onChange={(e) => setSandboxMemory(e.target.value)}
+                  placeholder="e.g. 8g"
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-muted-foreground mb-1">CPUs</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={sandboxCpus}
+                  onChange={(e) => setSandboxCpus(e.target.value)}
+                  placeholder="e.g. 4"
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={handleSaveResources}
+                disabled={savingResources}
+                className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
+              >
+                {savingResources ? "Saving…" : "Save"}
+              </button>
+              {resourcesError && <span className="text-xs text-destructive">{resourcesError}</span>}
+              <span className="text-[10px] text-muted-foreground ml-auto">
+                Blank = sbx defaults. Per-run overrides available in New Run.
+              </span>
             </div>
           </div>
         </div>

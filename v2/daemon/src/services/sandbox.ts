@@ -1,8 +1,22 @@
 // ---------------------------------------------------------------------------
 // Sandbox Service (CDD §3)
 //
-// Manages Docker sandbox lifecycle — create, exec, stop, list.
+// Manages sbx (Docker AI Sandboxes) lifecycle — create, exec, stop, list.
 // One sandbox per workflow run, named vibe-<runId prefix>.
+//
+// CLI: https://docs.docker.com/ai/sandboxes/
+//   sbx create [--name N] [--template IMG] [--memory M] [--cpus N] AGENT WORKSPACE [WORKSPACE...]
+//   sbx exec [--workdir W] NAME -- CMD ...
+//   sbx stop NAME
+//   sbx rm NAME
+//   sbx ls --format json
+//
+// Custom env vars (`/etc/sandbox-persistent.sh`):
+//   sbx supports per-supported-service credentials via `sbx secret` + a host-side
+//   proxy. For *custom* env vars (not bound to a known service), the documented
+//   pattern is to append `export KEY=VAL` to `/etc/sandbox-persistent.sh` inside
+//   the sandbox; this file is sourced on every shell login. Subsequent execs
+//   must run inside `bash -lc` for the file to be sourced.
 // ---------------------------------------------------------------------------
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -16,61 +30,57 @@ import {
   SandboxExecError,
 } from '../lib/errors.js';
 
-// ── Public types (CDD §3.1) ──────────────────────────────────────────
-
-export type NetworkPolicy = 'open' | 'localhost_only' | 'allowlist';
+// ── Public types ─────────────────────────────────────────────────────
 
 export interface SandboxCredentials {
-  /** -e KEY=VALUE pairs for env_var and command_extract types */
+  /** KEY=VALUE pairs to inject as persistent env vars inside the sandbox */
   envVars: Array<{ key: string; value: string }>;
-  /** Read-only host-file bind mounts (file_mount type) */
+  /** Read-only host-file bind mounts — passed as extra workspaces with :ro */
   fileMounts: Array<{ hostPath: string; containerPath: string }>;
   /** Docker registry login commands to run inside sandbox */
   dockerLogins: Array<{ registry: string; username: string; password: string }>;
-  /** Read-only host directory bind mounts */
+  /** Read-only host directory bind mounts — passed as extra workspaces with :ro */
   hostDirMounts: Array<{ hostPath: string; containerPath: string }>;
 }
 
 export interface SandboxCreateOptions {
   /** Workflow run ID — used to derive sandbox name: vibe-<first12chars> */
   runId: string;
-  /** Docker image to use as template (from agent definition). Optional — agent default used if not set. */
+  /** Container image to use as template (from agent definition). Optional — agent default used if not set. */
   image?: string;
   /** Host path to mount as the working directory (worktree path) */
   workdir: string;
   /** Additional host paths to mount inside the sandbox (e.g. project .git dir for worktree refs) */
   extraWorkspaces?: string[];
-  /** Agent subcommand for docker sandbox (e.g. 'copilot', 'claude', 'codex') */
+  /** sbx agent subcommand (e.g. 'copilot', 'claude', 'codex') */
   agentSubcommand?: string;
-  /** Network policy for this project (SAD §6.2) */
-  networkPolicy: NetworkPolicy;
-  /** Network allowlist hosts (only used when networkPolicy is 'allowlist') */
-  networkAllowlist?: string[];
   /** Credential injection args built by CredentialVault.buildSandboxCredentials() */
   credentials?: SandboxCredentials;
+  /** Optional sbx --memory flag value (e.g. "8g", "1024m"). Omitted if undefined. */
+  memory?: string;
+  /** Optional sbx --cpus flag value (0 = sbx auto). Omitted if undefined. */
+  cpus?: number;
 }
 
 /**
  * Tracked state for a running sandbox.
- * Persisted in-memory for the lifetime of the sandbox.
+ *
+ * envVars are persisted in-memory so that callers can re-inject after a daemon
+ * restart if needed. The sbx implementation also writes them to
+ * `/etc/sandbox-persistent.sh` inside the sandbox so they survive across exec
+ * invocations and daemon restarts.
  */
 export interface SandboxState {
   runId: string;
   sandboxName: string;
   pid?: number;
-  /**
-   * Env vars from credential injection (env_var + command_extract types).
-   * Persisted here so that session-manager can pass them on EVERY
-   * execInteractive() / execCommand() call — not just on create().
-   * Docker sandbox exec does not inherit env vars from create().
-   */
   envVars: Array<{ key: string; value: string }>;
 }
 
 export interface SandboxExecOptions {
   /** Command and arguments to run inside the sandbox */
   command: string[];
-  /** Environment variables to set for this exec invocation */
+  /** Environment variables to set for this exec invocation only (in addition to persistent ones) */
   env?: Record<string, string>;
   /** Working directory inside the sandbox */
   workdir?: string;
@@ -105,7 +115,7 @@ export interface SandboxService {
   ): Promise<ExecResult>;
   getEnvVars(sandboxName: string): Record<string, string>;
   stop(sandboxName: string, forceKillTimeout?: number): Promise<void>;
-  /** Remove a sandbox entirely (docker sandbox rm). */
+  /** Remove a sandbox entirely (sbx rm). */
   remove(sandboxName: string): Promise<void>;
   /** Stop a sandbox by name regardless of active tracking (for reconciliation/shutdown). */
   forceStop(sandboxName: string): Promise<void>;
@@ -113,6 +123,44 @@ export interface SandboxService {
   isActive(sandboxName: string): boolean;
   getSandboxName(runId: string): string;
   reconcileFromDocker(): Promise<void>;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Posix-shell-quote a single argument so it survives `bash -lc`.
+ * Single-quotes the value and escapes embedded single quotes.
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Build a `bash -lc` argv that:
+ *   1. exports caller-supplied per-exec env vars (persistent ones are sourced
+ *      automatically from /etc/sandbox-persistent.sh by the login shell)
+ *   2. execs the requested command via `exec` so signals and exit codes pass through
+ */
+function buildLoginShellCommand(
+  command: string[],
+  extraEnv?: Record<string, string>,
+): string[] {
+  const exports = extraEnv
+    ? Object.entries(extraEnv)
+        .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+        .join('; ')
+    : '';
+  const exec = `exec ${command.map(shellQuote).join(' ')}`;
+  const script = exports ? `${exports}; ${exec}` : exec;
+  return ['bash', '-lc', script];
+}
+
+/**
+ * Format a single workspace argument for `sbx create`:
+ * either "/path/to/dir" or "/path/to/dir:ro".
+ */
+function formatWorkspace(path: string, readOnly = false): string {
+  return readOnly ? `${path}:ro` : path;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -124,7 +172,7 @@ export function createSandboxService(deps: {
 
   /**
    * In-memory map of active sandboxes.
-   * Rebuilt from Docker state on daemon restart via reconcileFromDocker().
+   * Rebuilt from sbx state on daemon restart via reconcileFromDocker().
    */
   const activeSandboxes = new Map<string, SandboxState>();
 
@@ -137,99 +185,55 @@ export function createSandboxService(deps: {
     return `vibe-${runId.slice(0, 12)}`;
   }
 
-  /** Build -e KEY=VALUE args from SandboxState.envVars + caller overrides */
-  function buildEnvArgs(
-    sandboxName: string,
-    extraEnv?: Record<string, string>,
-  ): string[] {
-    const state = activeSandboxes.get(sandboxName);
-    const allEnv: Record<string, string> = {};
-
-    // Persisted env vars from credential injection (base layer)
-    if (state) {
-      for (const { key, value } of state.envVars) {
-        allEnv[key] = value;
-      }
-    }
-
-    // Caller-provided env vars (override layer)
-    if (extraEnv) {
-      Object.assign(allEnv, extraEnv);
-    }
-
-    return Object.entries(allEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-  }
-
-  function buildHostDirMountArgs(
-    mounts: Array<{ hostPath: string; containerPath: string }>,
-  ): string[] {
-    return mounts.flatMap((m) => ['-v', `${m.hostPath}:${m.containerPath}:ro`]);
-  }
-
   function assertSandboxExists(sandboxName: string): void {
     if (!activeSandboxes.has(sandboxName)) {
       throw new SandboxNotFoundError(sandboxName);
     }
   }
 
-  // ── Network proxy configuration ─────────────────────────────────
-
-  async function configureNetworkProxy(
-    sandboxName: string,
-    policy: NetworkPolicy,
-    allowlist?: string[],
-  ): Promise<void> {
-    const args = ['sandbox', 'network', 'proxy', sandboxName];
-
-    switch (policy) {
-      case 'open':
-        args.push('--allow-host', '*');
-        break;
-      case 'localhost_only':
-        args.push('--allow-host', 'localhost');
-        break;
-      case 'allowlist':
-        for (const host of allowlist ?? []) {
-          args.push('--allow-host', host);
-        }
-        break;
-    }
-
-    const log = logger.child({ sandboxName });
-    log.debug({ cmd: ['docker', ...args], policy }, 'Configuring network proxy');
-    const result = await execCommand('docker', args);
-    log.debug({ exitCode: result.exitCode }, 'Network proxy result');
-    if (result.exitCode !== 0) {
-      throw new SandboxProvisionError(
-        sandboxName,
-        `Network proxy setup failed: ${result.stderr}`,
-      );
-    }
-  }
-
-  // ── Credential injection ────────────────────────────────────────
+  // ── Credential injection (persistent env file) ───────────────────
 
   /**
-   * Inject credentials into a running sandbox. (SAD §6.2, SRD FR-C4)
+   * Inject credentials into a freshly-created sandbox. (SAD §6.2, SRD FR-C4)
    *
-   * Order matters:
-   *   1. Docker logins (use mounted config files)
-   *   2. Env vars are injected at exec time, not here
+   * Order:
+   *   1. Append env vars to /etc/sandbox-persistent.sh (sourced on every shell login)
+   *   2. Run docker logins inside sandbox
    *
-   * Note: file_mount and host_dir_mount entries are bind-mounted at sandbox
-   * create time via -v flags (see buildHostDirMountArgs); they are not handled
-   * here.
+   * file_mount and host_dir_mount entries are passed as `--workspace path:ro` at
+   * create time (see formatWorkspace); they are not handled here.
    */
   async function injectCredentials(
     sandboxName: string,
     creds: SandboxCredentials,
     log: Logger,
   ): Promise<void> {
-    // Docker logins: docker login --password-stdin inside sandbox
+    // 1. Persistent env vars
+    if (creds.envVars.length > 0) {
+      const exportLines = creds.envVars
+        .map(({ key, value }) => `export ${key}=${shellQuote(value)}`)
+        .join('\n');
+      const script = `cat >> /etc/sandbox-persistent.sh <<'__VIBE_EOF__'\n${exportLines}\n__VIBE_EOF__`;
+      log.debug({ envKeyCount: creds.envVars.length }, 'Writing persistent env vars');
+      const result = await execCommand('sbx', [
+        'exec', sandboxName,
+        'bash', '-lc', script,
+      ]);
+      if (result.exitCode !== 0) {
+        throw new SandboxExecError(
+          sandboxName,
+          'persistent env var injection',
+          result.exitCode,
+          result.stderr,
+        );
+      }
+    }
+
+    // 2. Docker logins (use docker CLI inside sandbox)
     for (const login of creds.dockerLogins) {
       log.debug({ registry: login.registry }, 'Injecting Docker login');
-      const child = spawn('docker', [
-        'sandbox', 'exec', '-i', sandboxName,
+      const child = spawn('sbx', [
+        'exec', sandboxName,
         'docker', 'login', login.registry,
         '--username', login.username,
         '--password-stdin',
@@ -265,24 +269,49 @@ export function createSandboxService(deps: {
       return sandboxName;
     }
 
-    // Step 1: Create sandbox with docker sandbox create
-    // API: docker sandbox create [--name NAME] [--template IMAGE] AGENT WORKSPACE
+    // Step 1: sbx create
+    // sbx create [flags] AGENT PATH [PATH...]
     const agentSubcommand = options.agentSubcommand ?? 'copilot';
-    log.info({ agentSubcommand, workdir: options.workdir, image: options.image }, 'Creating Docker sandbox');
+
+    // Build extra workspaces. Includes:
+    //   - explicit extraWorkspaces from caller (e.g. parent .git dir)
+    //   - read-only host-dir mounts from credentials (file_mount + host_dir_mount)
+    const extraWorkspaces = [...(options.extraWorkspaces ?? [])];
+    if (options.credentials) {
+      for (const m of options.credentials.fileMounts) {
+        extraWorkspaces.push(formatWorkspace(m.hostPath, true));
+      }
+      for (const m of options.credentials.hostDirMounts) {
+        extraWorkspaces.push(formatWorkspace(m.hostPath, true));
+      }
+    }
+
+    log.info(
+      {
+        agentSubcommand,
+        workdir: options.workdir,
+        image: options.image,
+        memory: options.memory,
+        cpus: options.cpus,
+      },
+      'Creating sbx sandbox',
+    );
     const createArgs = [
-      'sandbox', 'create',
+      'create',
       '--name', sandboxName,
       ...(options.image ? ['--template', options.image] : []),
+      ...(options.memory ? ['--memory', options.memory] : []),
+      ...(options.cpus !== undefined ? ['--cpus', String(options.cpus)] : []),
       agentSubcommand,
       options.workdir,
-      ...(options.extraWorkspaces ?? []),
+      ...extraWorkspaces,
     ];
-    log.debug({ cmd: ['docker', ...createArgs] }, 'Full sandbox create command');
+    log.debug({ cmd: ['sbx', ...createArgs] }, 'Full sbx create command');
 
-    const createResult = await execCommand('docker', createArgs, { timeout: 360_000 });
+    const createResult = await execCommand('sbx', createArgs, { timeout: 360_000 });
     log.debug(
       { exitCode: createResult.exitCode, stdout: createResult.stdout.slice(0, 300), stderr: createResult.stderr.slice(0, 300) },
-      'Sandbox create result',
+      'sbx create result',
     );
 
     if (createResult.exitCode !== 0) {
@@ -292,27 +321,18 @@ export function createSandboxService(deps: {
       } else {
         throw new SandboxProvisionError(
           sandboxName,
-          `docker sandbox create failed: ${createResult.stderr}`,
+          `sbx create failed: ${createResult.stderr}`,
         );
       }
     }
 
-    // Step 2: Configure network proxy (SAD §6.2)
-    log.info({ networkPolicy: options.networkPolicy, allowlistCount: options.networkAllowlist?.length ?? 0 }, 'Configuring network proxy');
-    await configureNetworkProxy(
-      sandboxName,
-      options.networkPolicy,
-      options.networkAllowlist,
-    );
-    log.info('Network proxy configured');
-
-    // Step 3: Inject credentials (must happen before ACP session starts)
+    // Step 2: Inject credentials (must happen before ACP session starts)
     if (options.credentials) {
       const credSummary = {
         envVarCount: options.credentials.envVars.length,
         envVarKeys: options.credentials.envVars.map(e => e.key),
         fileMountCount: options.credentials.fileMounts.length,
-        fileMountPaths: options.credentials.fileMounts.map(f => f.containerPath),
+        fileMountPaths: options.credentials.fileMounts.map(f => f.hostPath),
         dockerLoginCount: options.credentials.dockerLogins.length,
         dockerLoginRegistries: options.credentials.dockerLogins.map(l => l.registry),
         hostDirMountCount: options.credentials.hostDirMounts.length,
@@ -322,7 +342,7 @@ export function createSandboxService(deps: {
       log.info('Credentials injected');
     }
 
-    // Step 4: Register sandbox with persisted env vars
+    // Step 3: Register sandbox
     const envVars = options.credentials?.envVars ?? [];
     activeSandboxes.set(sandboxName, {
       runId: options.runId,
@@ -350,11 +370,11 @@ export function createSandboxService(deps: {
         return sandboxName;
       }
 
-      // 2. Exists in Docker (e.g., after daemon restart + workflow replay)
+      // 2. Exists in sbx (e.g., after daemon restart + workflow replay)
       const liveSandboxes = await listSandboxes();
       const existing = liveSandboxes.find((s) => s.name === sandboxName);
       if (existing && existing.status === 'running') {
-        log.info('Sandbox found in Docker (reconciliation), populating state');
+        log.info('Sandbox found in sbx (reconciliation), populating state');
         const envVars = options.credentials?.envVars ?? [];
         activeSandboxes.set(sandboxName, {
           runId: options.runId,
@@ -384,16 +404,14 @@ export function createSandboxService(deps: {
   ): Promise<SandboxProcess> {
     assertSandboxExists(sandboxName);
 
-    const envArgs = buildEnvArgs(sandboxName, options.env);
-    const workdirArgs = options.workdir ? ['-w', options.workdir] : [];
+    const workdirArgs = options.workdir ? ['--workdir', options.workdir] : [];
+    const shellCmd = buildLoginShellCommand(options.command, options.env);
 
-    const child = spawn('docker', [
-      'sandbox', 'exec',
-      '-i',
-      ...envArgs,
+    const child = spawn('sbx', [
+      'exec',
       ...workdirArgs,
       sandboxName,
-      ...options.command,
+      ...shellCmd,
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -407,15 +425,14 @@ export function createSandboxService(deps: {
   ): Promise<ExecResult> {
     assertSandboxExists(sandboxName);
 
-    const envArgs = buildEnvArgs(sandboxName, options.env);
-    const workdirArgs = options.workdir ? ['-w', options.workdir] : [];
+    const workdirArgs = options.workdir ? ['--workdir', options.workdir] : [];
+    const shellCmd = buildLoginShellCommand(options.command, options.env);
 
-    const result = await execCommand('docker', [
-      'sandbox', 'exec',
-      ...envArgs,
+    const result = await execCommand('sbx', [
+      'exec',
       ...workdirArgs,
       sandboxName,
-      ...options.command,
+      ...shellCmd,
     ]);
 
     if (options.expectZero && result.exitCode !== 0) {
@@ -450,16 +467,16 @@ export function createSandboxService(deps: {
 
     log.info('Stopping sandbox');
     const stopResult = await execCommand(
-      'docker',
-      ['sandbox', 'stop', sandboxName],
+      'sbx',
+      ['stop', sandboxName],
       { timeout: forceKillTimeout },
     );
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      const rmArgs = ['sandbox', 'rm', sandboxName];
-      log.debug({ cmd: ['docker', ...rmArgs] }, 'Running sandbox rm');
-      await execCommand('docker', rmArgs);
+      const rmArgs = ['rm', sandboxName];
+      log.debug({ cmd: ['sbx', ...rmArgs] }, 'Running sbx rm');
+      await execCommand('sbx', rmArgs);
     }
 
     activeSandboxes.delete(sandboxName);
@@ -470,31 +487,50 @@ export function createSandboxService(deps: {
     const log = logger.child({ sandboxName });
     log.info('Removing sandbox');
     try {
-      await execCommand('docker', ['sandbox', 'rm', sandboxName]);
+      await execCommand('sbx', ['rm', sandboxName]);
       log.info('Sandbox removed');
     } catch (err) {
-      log.warn({ err }, 'Sandbox rm failed (may already be removed)');
+      log.warn({ err }, 'sbx rm failed (may already be removed)');
     }
     activeSandboxes.delete(sandboxName);
   }
 
+  /**
+   * List all vibe-prefixed sandboxes via `sbx ls --format json`.
+   *
+   * sbx ls --format json emits one JSON object per line (NDJSON). Field names
+   * are normalized below to the SandboxInfo shape; sbx may use slightly
+   * different field names (e.g. `Name`, `Status`, `Workspace`, `Image`) — we
+   * accept either casing for resilience.
+   */
   async function listSandboxes(): Promise<SandboxInfo[]> {
-    const result = await execCommand('docker', [
-      'sandbox', 'ls',
-      '--filter', 'name=vibe-',
-      '--format', 'json',
-    ]);
+    const result = await execCommand('sbx', ['ls', '--format', 'json']);
 
     if (result.exitCode !== 0 || !result.stdout.trim()) {
       return [];
     }
 
-    // docker sandbox ls --format json outputs one JSON object per line
-    return result.stdout
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as SandboxInfo);
+    const items: SandboxInfo[] = [];
+    for (const line of result.stdout.trim().split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const raw = JSON.parse(line) as Record<string, unknown>;
+        const name = String(raw.name ?? raw.Name ?? '');
+        if (!name.startsWith('vibe-')) continue;
+        const statusRaw = String(raw.status ?? raw.Status ?? 'unknown').toLowerCase();
+        const status: SandboxInfo['status'] =
+          statusRaw === 'running' || statusRaw === 'stopped' ? statusRaw : 'unknown';
+        items.push({
+          name,
+          status,
+          image: String(raw.image ?? raw.Image ?? raw.template ?? raw.Template ?? ''),
+          created: String(raw.created ?? raw.Created ?? raw.createdAt ?? ''),
+        });
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return items;
   }
 
   async function reconcileFromDocker(): Promise<void> {
@@ -509,21 +545,20 @@ export function createSandboxService(deps: {
       }
 
       if (!activeSandboxes.has(info.name)) {
-        // Sandbox exists in Docker but not tracked — add to map.
+        // Sandbox exists in sbx but not tracked — add to map.
         // runId is extracted from the sandbox name (vibe-<runIdPrefix>).
         //
-        // NOTE: envVars will be empty for reconciled sandboxes because
-        // credential values cannot be recovered from Docker state.
-        // When a workflow replays via getOrCreate(), the caller must
-        // re-supply credentials in the SandboxCreateOptions so that
-        // envVars are populated for subsequent exec calls.
+        // NOTE: envVars will be empty in the in-memory state for reconciled
+        // sandboxes — but the actual env vars are still live inside the
+        // sandbox via /etc/sandbox-persistent.sh, so subsequent `sbx exec`
+        // invocations (which run via `bash -lc`) will see them automatically.
         const runIdPrefix = info.name.replace('vibe-', '');
         activeSandboxes.set(info.name, {
           runId: runIdPrefix,
           sandboxName: info.name,
           envVars: [],
         });
-        log.info({ sandboxName: info.name }, 'Reconciled sandbox from Docker');
+        log.info({ sandboxName: info.name }, 'Reconciled sandbox from sbx');
       }
     }
   }
@@ -534,16 +569,16 @@ export function createSandboxService(deps: {
     log.info('Force-stopping sandbox');
 
     const stopResult = await execCommand(
-      'docker',
-      ['sandbox', 'stop', sandboxName],
+      'sbx',
+      ['stop', sandboxName],
       { timeout: 15_000 },
     );
 
     if (stopResult.exitCode !== 0) {
       log.warn({ stderr: stopResult.stderr }, 'Graceful stop failed, force removing');
-      const rmArgs = ['sandbox', 'rm', sandboxName];
-      log.debug({ cmd: ['docker', ...rmArgs] }, 'Running sandbox rm (force)');
-      await execCommand('docker', rmArgs);
+      const rmArgs = ['rm', sandboxName];
+      log.debug({ cmd: ['sbx', ...rmArgs] }, 'Running sbx rm (force)');
+      await execCommand('sbx', rmArgs);
     }
 
     activeSandboxes.delete(sandboxName);

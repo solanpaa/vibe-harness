@@ -11,6 +11,7 @@ import { getDb } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
+import { resolveSandboxResources } from '../../lib/sandbox-resources.js';
 
 // ── Types (shared with pipeline.ts) ────────────────────────────────────────
 
@@ -393,8 +394,20 @@ export async function provisionSession(input: {
   const agent = db.select().from(schema.agentDefinitions).where(eq(schema.agentDefinitions.id, input.agentDefinitionId)).get();
   if (!agent) throw new Error(`Agent definition ${input.agentDefinitionId} not found`);
 
+  // Resolve sbx VM resources: per-run override > project default > omit
+  const resolvedResources = resolveSandboxResources(
+    { sandboxMemory: project.sandboxMemory, sandboxCpus: project.sandboxCpus },
+    { sandboxMemory: run.sandboxMemory, sandboxCpus: run.sandboxCpus },
+  );
+
   log.info(
-    { projectPath: project.localPath, branchName: run.branch, agentCommand: agent.commandTemplate },
+    {
+      projectPath: project.localPath,
+      branchName: run.branch,
+      agentCommand: agent.commandTemplate,
+      sandboxMemory: resolvedResources.memory,
+      sandboxCpus: resolvedResources.cpus,
+    },
     'Calling sessionManager.create',
   );
 
@@ -408,6 +421,8 @@ export async function provisionSession(input: {
       dockerImage: agent.dockerImage ?? undefined,
     },
     ghAccount: input.ghAccount,
+    sandboxMemory: resolvedResources.memory,
+    sandboxCpus: resolvedResources.cpus,
   });
 
   log.info('Session provisioned successfully');

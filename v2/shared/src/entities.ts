@@ -67,6 +67,10 @@ export interface Project {
   description: string | null;
   defaultCredentialSetId: string | null;
   ghAccount: string | null;
+  /** Default sbx --memory value (e.g. "8g", "1024m"). null = use sbx default. */
+  sandboxMemory: string | null;
+  /** Default sbx --cpus value. 0 = sbx auto. null = omit flag. */
+  sandboxCpus: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -128,6 +132,10 @@ export interface WorkflowRun {
    * for this run. Read-only after first write. Null for non-split runs.
    */
   splitConfig: SplitConfigSnapshot | null;
+  /** Per-run override of project's sandboxMemory; null = inherit project default. */
+  sandboxMemory: string | null;
+  /** Per-run override of project's sandboxCpus; null = inherit project default. */
+  sandboxCpus: number | null;
   createdAt: string;
   completedAt: string | null;
 }

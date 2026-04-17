@@ -51,6 +51,10 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   const [credentialSetId, setCredentialSetId] = useState("");
   const [model, setModel] = useState("");
   const [ghAccount, setGhAccount] = useState("");
+  const [sandboxMemory, setSandboxMemory] = useState("");
+  const [sandboxCpus, setSandboxCpus] = useState("");
+  const [overrideSandboxMemory, setOverrideSandboxMemory] = useState(false);
+  const [overrideSandboxCpus, setOverrideSandboxCpus] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Data
@@ -194,6 +198,20 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         ...(credentialSetId ? { credentialSetId } : {}),
         ...(model ? { model } : {}),
         ...(ghAccount ? { ghAccount } : {}),
+        // Sandbox VM resource overrides — tri-state per CreateWorkflowRunRequest:
+        //   field omitted → inherit project default
+        //   field = null → force sbx default (override project)
+        //   field = value → use this value
+        ...(overrideSandboxMemory
+          ? { sandboxMemory: sandboxMemory.trim() ? sandboxMemory.trim() : null }
+          : {}),
+        ...(overrideSandboxCpus
+          ? {
+              sandboxCpus: sandboxCpus.trim() === ""
+                ? null
+                : Number(sandboxCpus),
+            }
+          : {}),
         ...(attachments.length > 0
           ? {
               attachments: attachments.map((a) => ({
@@ -215,7 +233,9 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     }
   }, [
     client, projectId, workflowTemplateId, agentDefinitionId,
-    description, baseBranch, credentialSetId, model, ghAccount, onCreated,
+    description, baseBranch, credentialSetId, model, ghAccount,
+    sandboxMemory, sandboxCpus, overrideSandboxMemory, overrideSandboxCpus,
+    attachments, onCreated,
   ]);
 
   const resetForm = () => {
@@ -223,6 +243,10 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     setBaseBranch("");
     setModel("");
     setGhAccount("");
+    setSandboxMemory("");
+    setSandboxCpus("");
+    setOverrideSandboxMemory(false);
+    setOverrideSandboxCpus(false);
     setAttachments([]);
     setExpanded(false);
     setError(null);
@@ -544,6 +568,62 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
               </select>
             </FormField>
           )}
+
+          {/* Sandbox VM resource overrides */}
+          {(() => {
+            const selected = projects.find((p) => p.id === projectId);
+            const projMem = selected?.sandboxMemory ?? null;
+            const projCpus = selected?.sandboxCpus ?? null;
+            const memInherit = projMem ?? "sbx default";
+            const cpuInherit = projCpus !== null ? String(projCpus) : "sbx default";
+            return (
+              <>
+                <FormField label="Sandbox memory">
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={overrideSandboxMemory}
+                        onChange={(e) => setOverrideSandboxMemory(e.target.checked)}
+                      />
+                      Override
+                    </label>
+                    <input
+                      type="text"
+                      value={sandboxMemory}
+                      onChange={(e) => setSandboxMemory(e.target.value)}
+                      disabled={!overrideSandboxMemory}
+                      placeholder={overrideSandboxMemory ? "blank = sbx default" : `inherits ${memInherit}`}
+                      className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50 disabled:opacity-50"
+                    />
+                  </div>
+                </FormField>
+
+                <FormField label="Sandbox CPUs">
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={overrideSandboxCpus}
+                        onChange={(e) => setOverrideSandboxCpus(e.target.checked)}
+                      />
+                      Override
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={sandboxCpus}
+                      onChange={(e) => setSandboxCpus(e.target.value)}
+                      disabled={!overrideSandboxCpus}
+                      placeholder={overrideSandboxCpus ? "blank = sbx default" : `inherits ${cpuInherit}`}
+                      className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring/50 disabled:opacity-50"
+                    />
+                  </div>
+                </FormField>
+              </>
+            );
+          })()}
 
           {/* Error */}
           {error && (
