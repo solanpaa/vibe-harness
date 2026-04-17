@@ -11,6 +11,7 @@ import {
   deleteCredentialEntry,
   getAuditLog,
   getEntryCount,
+  revealCredentialEntry,
 } from '../services/credential-vault.js';
 import {
   createCredentialSetSchema,
@@ -128,6 +129,29 @@ credentials.delete('/api/credentials/:id/entries/:entryId', (c) => {
   deleteCredentialEntry(entryId);
   logger.info({ entryId }, 'Credential entry deleted');
   return c.body(null, 204);
+});
+
+// GET /api/credentials/:id/entries/:entryId/reveal — return decrypted value (audited)
+credentials.get('/api/credentials/:id/entries/:entryId/reveal', (c) => {
+  const setId = c.req.param('id');
+  const entryId = c.req.param('entryId');
+  const revealed = revealCredentialEntry(entryId);
+
+  if (!revealed) {
+    return c.json(
+      { error: { code: 'CREDENTIAL_ENTRY_NOT_FOUND', message: 'Credential entry not found' } },
+      404,
+    );
+  }
+  if (revealed.credentialSetId !== setId) {
+    return c.json(
+      { error: { code: 'CREDENTIAL_ENTRY_MISMATCH', message: 'Entry does not belong to this set' } },
+      400,
+    );
+  }
+
+  logger.info({ credentialSetId: setId, entryId }, 'Credential entry revealed');
+  return c.json({ value: revealed.value });
 });
 
 export { credentials };

@@ -23,6 +23,7 @@ import type {
   CreateCredentialSetRequest,
   CreateCredentialEntryRequest,
   CredentialAuditResponse,
+  CredentialEntryRevealResponse,
   CredentialSet,
   CredentialEntry,
   CreateWorkflowRunRequest,
@@ -365,6 +366,12 @@ export class DaemonClient {
 
   async deleteCredentialEntry(setId: string, entryId: string): Promise<void> {
     await this.fetch<void>(`/api/credentials/${setId}/entries/${entryId}`, { method: "DELETE" });
+  }
+
+  async revealCredentialEntry(setId: string, entryId: string): Promise<CredentialEntryRevealResponse> {
+    return this.fetch<CredentialEntryRevealResponse>(
+      `/api/credentials/${setId}/entries/${entryId}/reveal`,
+    );
   }
 
   async getCredentialAuditLog(credentialSetId?: string): Promise<CredentialAuditResponse> {

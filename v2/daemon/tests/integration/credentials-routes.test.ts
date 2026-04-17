@@ -269,7 +269,7 @@ describe('POST /api/credentials/:id/entries', () => {
   it('adds a file_mount entry', async () => {
     const res = await req('POST', `/api/credentials/${setId}/entries`, {
       key: 'ssh_key',
-      value: 'key-content',
+      value: '/home/user/.ssh/id_rsa',
       type: 'file_mount',
       mountPath: '/root/.ssh/id_rsa',
     });
@@ -277,6 +277,24 @@ describe('POST /api/credentials/:id/entries', () => {
     const body = await res.json() as any;
     expect(body.type).toBe('file_mount');
     expect(body.mountPath).toBe('/root/.ssh/id_rsa');
+  });
+
+  it('rejects file_mount entry without mountPath', async () => {
+    const res = await req('POST', `/api/credentials/${setId}/entries`, {
+      key: 'ssh_key',
+      value: '/home/user/.ssh/id_rsa',
+      type: 'file_mount',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects file_mount entry without value (host path)', async () => {
+    const res = await req('POST', `/api/credentials/${setId}/entries`, {
+      key: 'ssh_key',
+      type: 'file_mount',
+      mountPath: '/root/.ssh/id_rsa',
+    });
+    expect(res.status).toBe(400);
   });
 
   it('returns 404 for non-existent set', async () => {
@@ -320,6 +338,50 @@ describe('DELETE /api/credentials/:id/entries/:entryId', () => {
 
     const res = await req('DELETE', `/api/credentials/${setId}/entries/${entryId}`);
     expect(res.status).toBe(204);
+  });
+});
+
+describe('GET /api/credentials/:id/entries/:entryId/reveal', () => {
+  let setId: string;
+  let entryId: string;
+
+  beforeEach(async () => {
+    const createRes = await req('POST', '/api/credentials', { name: 'Reveal Set' });
+    setId = ((await createRes.json()) as any).id;
+    const entryRes = await req('POST', `/api/credentials/${setId}/entries`, {
+      key: 'API_KEY',
+      value: 'plaintext-secret',
+      type: 'env_var',
+    });
+    entryId = ((await entryRes.json()) as any).id;
+  });
+
+  it('returns the decrypted value', async () => {
+    const res = await req('GET', `/api/credentials/${setId}/entries/${entryId}/reveal`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.value).toBe('plaintext-secret');
+  });
+
+  it('writes a "revealed" audit log entry', async () => {
+    await req('GET', `/api/credentials/${setId}/entries/${entryId}/reveal`);
+    const auditRes = await req('GET', `/api/credentials/audit?credentialSetId=${setId}`);
+    const audit = await auditRes.json() as any;
+    expect(audit.entries.some((e: any) =>
+      e.action === 'revealed' && e.credentialEntryId === entryId,
+    )).toBe(true);
+  });
+
+  it('returns 404 for non-existent entry', async () => {
+    const res = await req('GET', `/api/credentials/${setId}/entries/${crypto.randomUUID()}/reveal`);
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 400 when entry does not belong to set', async () => {
+    const otherSetRes = await req('POST', '/api/credentials', { name: 'Other Set' });
+    const otherSetId = ((await otherSetRes.json()) as any).id;
+    const res = await req('GET', `/api/credentials/${otherSetId}/entries/${entryId}/reveal`);
+    expect(res.status).toBe(400);
   });
 });
 

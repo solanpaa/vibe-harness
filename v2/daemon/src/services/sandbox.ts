@@ -23,8 +23,8 @@ export type NetworkPolicy = 'open' | 'localhost_only' | 'allowlist';
 export interface SandboxCredentials {
   /** -e KEY=VALUE pairs for env_var and command_extract types */
   envVars: Array<{ key: string; value: string }>;
-  /** File contents to pipe into sandbox via stdin */
-  fileMounts: Array<{ mountPath: string; content: string }>;
+  /** Read-only host-file bind mounts (file_mount type) */
+  fileMounts: Array<{ hostPath: string; containerPath: string }>;
   /** Docker registry login commands to run inside sandbox */
   dockerLogins: Array<{ registry: string; username: string; password: string }>;
   /** Read-only host directory bind mounts */
@@ -213,52 +213,18 @@ export function createSandboxService(deps: {
    * Inject credentials into a running sandbox. (SAD §6.2, SRD FR-C4)
    *
    * Order matters:
-   *   1. File mounts (may be needed by docker logins or commands)
-   *   2. Docker logins (use mounted config files)
-   *   3. Env vars are injected at exec time, not here
+   *   1. Docker logins (use mounted config files)
+   *   2. Env vars are injected at exec time, not here
+   *
+   * Note: file_mount and host_dir_mount entries are bind-mounted at sandbox
+   * create time via -v flags (see buildHostDirMountArgs); they are not handled
+   * here.
    */
   async function injectCredentials(
     sandboxName: string,
     creds: SandboxCredentials,
     log: Logger,
   ): Promise<void> {
-    // File mounts: pipe content to tee inside sandbox
-    for (const mount of creds.fileMounts) {
-      log.debug({ mountPath: mount.mountPath }, 'Injecting file mount');
-
-      // Ensure parent directory exists
-      const parentDir = mount.mountPath.split('/').slice(0, -1).join('/');
-      if (parentDir) {
-        await execCommand('docker', [
-          'sandbox', 'exec', sandboxName,
-          'mkdir', '-p', parentDir,
-        ]);
-      }
-
-      // Pipe content via stdin → tee
-      const child = spawn('docker', [
-        'sandbox', 'exec', '-i', sandboxName,
-        'tee', mount.mountPath,
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
-
-      await new Promise<void>((resolve, reject) => {
-        child.on('close', (code) =>
-          code === 0
-            ? resolve()
-            : reject(
-                new SandboxExecError(
-                  sandboxName,
-                  `tee ${mount.mountPath}`,
-                  code ?? 1,
-                  '',
-                ),
-              ),
-        );
-        child.on('error', reject);
-        child.stdin!.end(mount.content);
-      });
-    }
-
     // Docker logins: docker login --password-stdin inside sandbox
     for (const login of creds.dockerLogins) {
       log.debug({ registry: login.registry }, 'Injecting Docker login');
@@ -346,7 +312,7 @@ export function createSandboxService(deps: {
         envVarCount: options.credentials.envVars.length,
         envVarKeys: options.credentials.envVars.map(e => e.key),
         fileMountCount: options.credentials.fileMounts.length,
-        fileMountPaths: options.credentials.fileMounts.map(f => f.mountPath),
+        fileMountPaths: options.credentials.fileMounts.map(f => f.containerPath),
         dockerLoginCount: options.credentials.dockerLogins.length,
         dockerLoginRegistries: options.credentials.dockerLogins.map(l => l.registry),
         hostDirMountCount: options.credentials.hostDirMounts.length,

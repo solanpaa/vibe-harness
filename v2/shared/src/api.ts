@@ -407,6 +407,10 @@ export interface UpdateCredentialEntryRequest {
   command?: string;
 }
 
+export interface CredentialEntryRevealResponse {
+  value: string;
+}
+
 export interface CredentialAuditResponse {
   entries: Array<{
     id: string;

@@ -219,6 +219,44 @@ export function deleteCredentialEntry(entryId: string) {
   });
 }
 
+/**
+ * Decrypt a single entry's value for on-demand UI reveal (FR-C7 exception).
+ * Always writes an audit log row before returning. Returns null if entry not found.
+ */
+export function revealCredentialEntry(
+  entryId: string,
+): { credentialSetId: string; key: string; value: string } | null {
+  const db = getDb();
+  const entry = db
+    .select()
+    .from(schema.credentialEntries)
+    .where(eq(schema.credentialEntries.id, entryId))
+    .get();
+
+  if (!entry) return null;
+
+  // Audit BEFORE returning the secret so a crash mid-decrypt still leaves a trail.
+  logAudit('revealed', {
+    credentialSetId: entry.credentialSetId,
+    credentialEntryId: entry.id,
+    details: { key: entry.key, type: entry.type },
+  });
+
+  let value = '';
+  if (entry.value) {
+    try {
+      value = decrypt(entry.value);
+    } catch (err) {
+      throw new CredentialDecryptionError(
+        entry.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  return { credentialSetId: entry.credentialSetId, key: entry.key, value };
+}
+
 // ── Build Sandbox Credentials ──────────────────────────────────────────
 
 /**
@@ -250,7 +288,13 @@ export async function buildSandboxCredentials(
           log.warn({ entryId: entry.id }, 'file_mount entry missing mountPath, skipping');
           break;
         }
-        creds.fileMounts.push({ mountPath: entry.mountPath, content: entry.value });
+        if (!entry.value) {
+          log.warn({ entryId: entry.id }, 'file_mount entry missing host path (value), skipping');
+          break;
+        }
+        // file_mount semantics: entry.value = host file path, entry.mountPath = container path.
+        // Bind-mounted read-only at sandbox create time (same pattern as host_dir_mount).
+        creds.fileMounts.push({ hostPath: entry.value, containerPath: entry.mountPath });
         break;
 
       case 'docker_login': {

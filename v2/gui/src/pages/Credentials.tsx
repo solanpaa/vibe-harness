@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useDaemonStore } from "../stores/daemon";
 import {
   Select,
@@ -7,22 +7,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { EyeIcon, EyeOffIcon, FolderOpenIcon } from "lucide-react";
 import type {
   CredentialSet,
   CredentialEntry,
   CredentialEntryType,
   CredentialAuditResponse,
 } from "@vibe-harness/shared";
-import {
-  EnvironmentVariables,
-  EnvironmentVariablesHeader,
-  EnvironmentVariablesTitle,
-  EnvironmentVariablesToggle,
-  EnvironmentVariablesContent,
-  EnvironmentVariable,
-  EnvironmentVariableName,
-  EnvironmentVariableValue,
-} from "@/components/ai-elements/environment-variables";
+import { pickHostFile, pickHostDir, nativePickerAvailable } from "@/lib/file-picker";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -32,11 +25,15 @@ interface CredentialSetWithCount extends CredentialSet {
 
 const ENTRY_TYPES: { value: CredentialEntryType; label: string; description: string }[] = [
   { value: "env_var", label: "Environment Variable", description: "Injected as -e KEY=VALUE" },
-  { value: "file_mount", label: "File Mount", description: "File content written to sandbox path" },
-  { value: "docker_login", label: "Docker Login", description: "Registry auth (JSON: username/password)" },
-  { value: "host_dir_mount", label: "Host Dir Mount", description: "Read-only host directory bind mount" },
-  { value: "command_extract", label: "Command Extract", description: "⚠️ Runs shell command on HOST" },
+  { value: "file_mount", label: "File Mount", description: "Bind-mounts a host file (read-only) into the sandbox" },
+  { value: "host_dir_mount", label: "Dir Mount", description: "Bind-mounts a host directory (read-only) into the sandbox" },
+  { value: "docker_login", label: "Docker Login", description: "Authenticates against a container registry" },
+  { value: "command_extract", label: "Command Extract", description: "⚠️ Runs shell command on HOST and uses its stdout as an env var value" },
 ];
+
+const inputClass =
+  "w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary";
+const monoInputClass = `${inputClass} font-mono`;
 
 // ── Add Credential Set Form ────────────────────────────────────────
 
@@ -86,7 +83,7 @@ function AddSetForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Production API Keys"
-          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+          className={inputClass}
           required
         />
       </div>
@@ -97,7 +94,7 @@ function AddSetForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description"
-          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+          className={inputClass}
         />
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -121,7 +118,64 @@ function AddSetForm({
   );
 }
 
-// ── Add Entry Form ─────────────────────────────────────────────────
+// ── Path picker input ──────────────────────────────────────────────
+
+function PathInput({
+  value,
+  onChange,
+  kind,
+  placeholder,
+  required,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  kind: "file" | "dir";
+  placeholder?: string;
+  required?: boolean;
+}) {
+  const canPick = nativePickerAvailable();
+  const [pickerError, setPickerError] = useState<string | null>(null);
+
+  const handlePick = async () => {
+    setPickerError(null);
+    try {
+      const picked = kind === "file" ? await pickHostFile() : await pickHostDir();
+      if (picked) onChange(picked);
+    } catch (err) {
+      setPickerError(err instanceof Error ? err.message : "Picker unavailable");
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={monoInputClass}
+          required={required}
+        />
+        {canPick && (
+          <button
+            type="button"
+            onClick={handlePick}
+            className="px-2 py-1.5 text-xs bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors flex items-center gap-1 shrink-0"
+            aria-label={kind === "file" ? "Browse for file" : "Browse for directory"}
+            title={kind === "file" ? "Browse for file" : "Browse for directory"}
+          >
+            <FolderOpenIcon size={14} />
+            Browse
+          </button>
+        )}
+      </div>
+      {pickerError && <p className="text-xs text-destructive mt-1">{pickerError}</p>}
+    </div>
+  );
+}
+
+// ── Add Entry Form (dispatches per-type sub-form) ──────────────────
 
 function AddEntryForm({
   setId,
@@ -134,16 +188,18 @@ function AddEntryForm({
 }) {
   const { client } = useDaemonStore();
   const [type, setType] = useState<CredentialEntryType>("env_var");
-  const [key, setKey] = useState("");
-  const [value, setValue] = useState("");
-  const [mountPath, setMountPath] = useState("");
-  const [command, setCommand] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const needsValue = type !== "command_extract";
-  const needsMountPath = type === "file_mount" || type === "host_dir_mount";
-  const needsCommand = type === "command_extract";
+  // Per-type fields. Keep all in this scope so switching type preserves entered data.
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  const [hostPath, setHostPath] = useState("");
+  const [containerPath, setContainerPath] = useState("");
+  const [registry, setRegistry] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [command, setCommand] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,13 +207,47 @@ function AddEntryForm({
     setError(null);
     setSubmitting(true);
     try {
-      await client.addCredentialEntry(setId, {
-        key: key.trim(),
-        value: needsValue ? value : undefined,
-        type,
-        mountPath: needsMountPath ? mountPath.trim() : undefined,
-        command: needsCommand ? command.trim() : undefined,
-      });
+      let payload: {
+        key: string;
+        value?: string;
+        type: CredentialEntryType;
+        mountPath?: string;
+        command?: string;
+      };
+
+      switch (type) {
+        case "env_var":
+          payload = { key: key.trim(), value, type };
+          break;
+        case "file_mount":
+          payload = {
+            key: key.trim(),
+            value: hostPath.trim(),
+            type,
+            mountPath: containerPath.trim(),
+          };
+          break;
+        case "host_dir_mount":
+          payload = {
+            key: key.trim(),
+            value: hostPath.trim(),
+            type,
+            mountPath: containerPath.trim(),
+          };
+          break;
+        case "docker_login":
+          payload = {
+            key: registry.trim(),
+            value: JSON.stringify({ username, password }),
+            type,
+          };
+          break;
+        case "command_extract":
+          payload = { key: key.trim(), type, command: command.trim() };
+          break;
+      }
+
+      await client.addCredentialEntry(setId, payload);
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add entry");
@@ -197,75 +287,160 @@ function AddEntryForm({
         </p>
       </div>
 
-      <div>
-        <label className="block text-xs text-muted-foreground mb-1">
-          Key <span className="text-destructive">*</span>
-        </label>
-        <input
-          type="text"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={type === "docker_login" ? "registry.example.com" : "API_KEY"}
-          className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
-          required
-        />
-      </div>
-
-      {needsValue && (
-        <div>
-          <label className="block text-xs text-muted-foreground mb-1">
-            Value <span className="text-destructive">*</span>
-          </label>
-          <textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={
-              type === "docker_login"
-                ? '{"username": "...", "password": "..."}'
-                : type === "host_dir_mount"
-                  ? "/host/path/to/dir"
-                  : "secret value"
-            }
-            rows={type === "file_mount" || type === "docker_login" ? 4 : 2}
-            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
-            required
-          />
-        </div>
+      {type === "env_var" && (
+        <>
+          <Field label="Key" required>
+            <input
+              type="text"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="API_KEY"
+              className={inputClass}
+              required
+            />
+          </Field>
+          <Field label="Value" required>
+            <textarea
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="secret value"
+              rows={2}
+              className={monoInputClass}
+              required
+            />
+          </Field>
+        </>
       )}
 
-      {needsMountPath && (
-        <div>
-          <label className="block text-xs text-muted-foreground mb-1">
-            Mount Path <span className="text-destructive">*</span>
-          </label>
-          <input
-            type="text"
-            value={mountPath}
-            onChange={(e) => setMountPath(e.target.value)}
-            placeholder={type === "host_dir_mount" ? "/container/path" : "/home/user/.config/file"}
-            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
-            required
-          />
-        </div>
+      {type === "file_mount" && (
+        <>
+          <Field label="Key" required>
+            <input
+              type="text"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="ssh_key"
+              className={inputClass}
+              required
+            />
+          </Field>
+          <Field label="Host file path" required>
+            <PathInput
+              kind="file"
+              value={hostPath}
+              onChange={setHostPath}
+              placeholder="/home/user/.ssh/id_rsa"
+              required
+            />
+          </Field>
+          <Field label="Container mount path" required>
+            <input
+              type="text"
+              value={containerPath}
+              onChange={(e) => setContainerPath(e.target.value)}
+              placeholder="/root/.ssh/id_rsa"
+              className={monoInputClass}
+              required
+            />
+          </Field>
+        </>
       )}
 
-      {needsCommand && (
-        <div>
-          <label className="block text-xs text-muted-foreground mb-1">
-            Command <span className="text-destructive">*</span>
-          </label>
-          <input
-            type="text"
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            placeholder="gcloud auth print-access-token"
-            className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary font-mono"
-            required
-          />
-          <p className="text-xs text-amber-400 mt-1">
+      {type === "host_dir_mount" && (
+        <>
+          <Field label="Key" required>
+            <input
+              type="text"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="config_dir"
+              className={inputClass}
+              required
+            />
+          </Field>
+          <Field label="Host directory path" required>
+            <PathInput
+              kind="dir"
+              value={hostPath}
+              onChange={setHostPath}
+              placeholder="/home/user/.config/myapp"
+              required
+            />
+          </Field>
+          <Field label="Container mount path" required>
+            <input
+              type="text"
+              value={containerPath}
+              onChange={(e) => setContainerPath(e.target.value)}
+              placeholder="/root/.config/myapp"
+              className={monoInputClass}
+              required
+            />
+          </Field>
+        </>
+      )}
+
+      {type === "docker_login" && (
+        <>
+          <Field label="Registry" required>
+            <input
+              type="text"
+              value={registry}
+              onChange={(e) => setRegistry(e.target.value)}
+              placeholder="registry.example.com"
+              className={monoInputClass}
+              required
+            />
+          </Field>
+          <Field label="Username" required>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="my-user"
+              className={inputClass}
+              required
+            />
+          </Field>
+          <Field label="Password" required>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className={inputClass}
+              required
+            />
+          </Field>
+        </>
+      )}
+
+      {type === "command_extract" && (
+        <>
+          <Field label="Key" required>
+            <input
+              type="text"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="GCLOUD_TOKEN"
+              className={inputClass}
+              required
+            />
+          </Field>
+          <Field label="Command" required>
+            <input
+              type="text"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              placeholder="gcloud auth print-access-token"
+              className={monoInputClass}
+              required
+            />
+          </Field>
+          <p className="text-xs text-amber-400">
             ⚠️ This command runs on your HOST machine, not in the sandbox.
           </p>
-        </div>
+        </>
       )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -287,6 +462,25 @@ function AddEntryForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-muted-foreground mb-1">
+        {label} {required && <span className="text-destructive">*</span>}
+      </label>
+      {children}
+    </div>
   );
 }
 
@@ -338,14 +532,154 @@ function EntryDeleteButton({
   );
 }
 
+// ── Entry Row (displays one credential entry; supports reveal) ────
+
+function EntryRow({
+  entry,
+  setId,
+  showValues,
+  onDeleted,
+}: {
+  entry: CredentialEntry;
+  setId: string;
+  showValues: boolean;
+  onDeleted: () => void;
+}) {
+  const { client } = useDaemonStore();
+  const [revealedValue, setRevealedValue] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  // Fetch on demand when toggle flips on; clear when toggle flips off.
+  useEffect(() => {
+    if (!showValues) {
+      setRevealedValue(null);
+      setRevealError(null);
+      return;
+    }
+    if (revealedValue !== null || !client) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await client.revealCredentialEntry(setId, entry.id);
+        if (!cancelled) setRevealedValue(res.value);
+      } catch (err) {
+        if (!cancelled) {
+          setRevealError(err instanceof Error ? err.message : "Failed to reveal");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showValues, client, setId, entry.id, revealedValue]);
+
+  const typeLabel = ENTRY_TYPES.find((t) => t.value === entry.type)?.label ?? entry.type;
+  const typeColor =
+    entry.type === "command_extract"
+      ? "text-amber-400"
+      : entry.type === "docker_login"
+        ? "text-purple-400"
+        : entry.type === "file_mount" || entry.type === "host_dir_mount"
+          ? "text-emerald-400"
+          : "text-blue-400";
+
+  // Secondary info per type
+  const secondary = useMemo(() => {
+    if (entry.type === "file_mount" || entry.type === "host_dir_mount") {
+      // For mounts: showValues controls whether host path (the "value") is visible
+      const hostDisplay =
+        showValues
+          ? (revealError ? `<error: ${revealError}>` : (revealedValue ?? "loading…"))
+          : "•".repeat(12);
+      return (
+        <span className="text-xs text-muted-foreground font-mono truncate">
+          <span className={showValues ? "" : "select-none"}>{hostDisplay}</span>
+          <span className="mx-1">→</span>
+          {entry.mountPath}
+        </span>
+      );
+    }
+    if (entry.type === "docker_login") {
+      // Username is visible; password never shown via secondary
+      return (
+        <span className="text-xs text-muted-foreground font-mono truncate">
+          {entry.key}
+        </span>
+      );
+    }
+    if (entry.type === "command_extract" && entry.command) {
+      return (
+        <span className="text-xs text-muted-foreground font-mono truncate">
+          $ {entry.command}
+        </span>
+      );
+    }
+    return null;
+  }, [entry, showValues, revealedValue, revealError]);
+
+  // Tertiary: revealed value, only for env_var and docker_login (password)
+  const valueDisplay = useMemo(() => {
+    if (entry.type === "file_mount" || entry.type === "host_dir_mount") {
+      // Value (host path) is shown in secondary; suppress here.
+      return null;
+    }
+    if (entry.type === "command_extract") {
+      return null;
+    }
+    if (!showValues) {
+      return <span className="font-mono text-xs text-muted-foreground select-none">{"•".repeat(12)}</span>;
+    }
+    if (revealError) {
+      return <span className="text-xs text-destructive">err</span>;
+    }
+    if (revealedValue === null) {
+      return <span className="text-xs text-muted-foreground">…</span>;
+    }
+    if (entry.type === "docker_login") {
+      // value is JSON({username, password}); show username:••••
+      try {
+        const parsed = JSON.parse(revealedValue) as { username?: string; password?: string };
+        const masked = parsed.password ? "•".repeat(Math.min(parsed.password.length, 12)) : "";
+        return (
+          <span className="font-mono text-xs text-muted-foreground truncate">
+            {parsed.username ?? ""}:{masked || "(no password)"}
+          </span>
+        );
+      } catch {
+        return <span className="font-mono text-xs text-muted-foreground">{revealedValue}</span>;
+      }
+    }
+    return (
+      <span className="font-mono text-xs text-muted-foreground truncate">
+        {revealedValue}
+      </span>
+    );
+  }, [entry.type, showValues, revealedValue, revealError]);
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 border-t border-border first:border-t-0">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <span className={`text-[11px] font-mono shrink-0 ${typeColor}`}>{typeLabel}</span>
+        <span className="font-mono text-sm text-foreground shrink-0">{entry.key}</span>
+        {secondary}
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        {valueDisplay}
+        <EntryDeleteButton entry={entry} setId={setId} onDeleted={onDeleted} />
+      </div>
+    </div>
+  );
+}
+
 // ── Credential Set Row ─────────────────────────────────────────────
 
 function CredentialSetRow({
   credSet,
-  onDeleted,
+  onChanged,
 }: {
   credSet: CredentialSetWithCount;
-  onDeleted: () => void;
+  /** Called whenever the row mutates entries OR is deleted, so the parent can refresh sets (entry counts). */
+  onChanged: () => void;
 }) {
   const { client } = useDaemonStore();
   const [expanded, setExpanded] = useState(false);
@@ -353,6 +687,7 @@ function CredentialSetRow({
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [showAddEntry, setShowAddEntry] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showValues, setShowValues] = useState(false);
 
   const loadEntries = useCallback(async () => {
     if (!client) return;
@@ -376,8 +711,13 @@ function CredentialSetRow({
   const handleDelete = async () => {
     if (!client) return;
     await client.deleteCredentialSet(credSet.id);
-    onDeleted();
+    onChanged();
   };
+
+  const handleEntryMutation = useCallback(() => {
+    loadEntries();
+    onChanged();
+  }, [loadEntries, onChanged]);
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden hover:bg-accent/50 transition-colors">
@@ -425,66 +765,46 @@ function CredentialSetRow({
 
       {expanded && (
         <div className="border-t border-border px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-2">
             <h4 className="text-xs font-semibold text-muted-foreground">Entries</h4>
-            {!showAddEntry && (
-              <button
-                onClick={() => setShowAddEntry(true)}
-                className="px-2 py-1 text-xs bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
-              >
-                + Add Entry
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {entries.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">
+                    {showValues ? <EyeIcon size={14} /> : <EyeOffIcon size={14} />}
+                  </span>
+                  <Switch
+                    aria-label="Toggle value visibility"
+                    checked={showValues}
+                    onCheckedChange={setShowValues}
+                  />
+                </div>
+              )}
+              {!showAddEntry && (
+                <button
+                  onClick={() => setShowAddEntry(true)}
+                  className="px-2 py-1 text-xs bg-muted hover:bg-accent rounded-md text-muted-foreground transition-colors"
+                >
+                  + Add Entry
+                </button>
+              )}
+            </div>
           </div>
 
           {loadingEntries ? (
             <p className="text-xs text-muted-foreground">Loading entries…</p>
           ) : entries.length > 0 ? (
-            <EnvironmentVariables className="bg-background border-border">
-              <EnvironmentVariablesHeader>
-                <EnvironmentVariablesTitle>Credentials</EnvironmentVariablesTitle>
-                <EnvironmentVariablesToggle />
-              </EnvironmentVariablesHeader>
-              <EnvironmentVariablesContent>
-                {entries.map((entry) => (
-                  <EnvironmentVariable
-                    key={entry.id}
-                    name={entry.key}
-                    value="••••••••"
-                    className="group"
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span
-                        className={`text-xs font-mono shrink-0 ${
-                          entry.type === "command_extract"
-                            ? "text-amber-400"
-                            : entry.type === "docker_login"
-                              ? "text-purple-400"
-                              : "text-blue-400"
-                        }`}
-                      >
-                        {ENTRY_TYPES.find((t) => t.value === entry.type)?.label ?? entry.type}
-                      </span>
-                      <EnvironmentVariableName />
-                      {entry.mountPath && (
-                        <span className="text-xs text-muted-foreground font-mono truncate max-w-48">
-                          → {entry.mountPath}
-                        </span>
-                      )}
-                      {entry.command && (
-                        <span className="text-xs text-muted-foreground font-mono truncate max-w-48">
-                          $ {entry.command}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <EnvironmentVariableValue />
-                      <EntryDeleteButton entry={entry} setId={credSet.id} onDeleted={loadEntries} />
-                    </div>
-                  </EnvironmentVariable>
-                ))}
-              </EnvironmentVariablesContent>
-            </EnvironmentVariables>
+            <div className="rounded-lg border border-border bg-background">
+              {entries.map((entry) => (
+                <EntryRow
+                  key={entry.id}
+                  entry={entry}
+                  setId={credSet.id}
+                  showValues={showValues}
+                  onDeleted={handleEntryMutation}
+                />
+              ))}
+            </div>
           ) : (
             <p className="text-xs text-muted-foreground">No entries yet.</p>
           )}
@@ -494,7 +814,7 @@ function CredentialSetRow({
               setId={credSet.id}
               onCreated={() => {
                 setShowAddEntry(false);
-                loadEntries();
+                handleEntryMutation();
               }}
               onCancel={() => setShowAddEntry(false)}
             />
@@ -618,7 +938,7 @@ export function Credentials() {
 
   if (!connected) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <h1 className="text-sm font-medium text-foreground mb-4">Credentials</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage credentials.
@@ -663,7 +983,7 @@ export function Credentials() {
         ) : (
           <>
             {sets.map((s) => (
-              <CredentialSetRow key={s.id} credSet={s} onDeleted={loadSets} />
+              <CredentialSetRow key={s.id} credSet={s} onChanged={loadSets} />
             ))}
             {!showAddForm && (
               <button
