@@ -6,20 +6,55 @@ import type {
   WorkflowRunStatus, StageStatus, StageFailureReason, ReviewType, ReviewStatus,
   ParallelGroupStatus, ProposalStatus, CredentialEntryType,
   MessageRole, AgentOutputFormat, AgentType, DiffSide,
-  GitOperationType, GitOperationPhase, StageType,
+  GitOperationType, GitOperationPhase,
 } from './enums';
 
 // ─── Workflow stage template (JSON inside workflowTemplates.stages) ────
 
 export interface WorkflowStage {
   name: string;
-  type: StageType;
+  /**
+   * When true, the stage's review screen exposes a "Split" action that
+   * launches the ad-hoc split sub-pipeline (splitter agent → proposals →
+   * children → consolidate → consolidation review → global post-split
+   * stages → finalize). Defaults to false.
+   */
+  splittable?: boolean;
   promptTemplate: string;
   reviewRequired: boolean;
   autoAdvance: boolean;
   freshSession: boolean;
   model?: string;
   isFinal?: boolean;
+}
+
+// ─── Split execution snapshot (resolved at decision time, persisted on
+// workflow_runs.split_config_json AND embedded in the review hook resume
+// payload — see plan §"Why snapshot") ───────────────────────────────────
+
+export interface SplitConfigSnapshot {
+  sourceStageName: string;
+  sourceReviewId: string;
+  triggeredAt: string;
+  splitterPromptTemplate: string;
+  extraDescription: string;
+  effectiveSplitterPrompt: string;
+  postSplitStages: WorkflowStage[];
+  skippedTemplateStages: string[];
+}
+
+// ─── Global app settings (settings table, key/value, typed parsers) ────
+
+export const AppSettingKey = {
+  DefaultSplitterPromptTemplate: 'defaultSplitterPromptTemplate',
+  DefaultPostSplitStages: 'defaultPostSplitStages',
+} as const;
+
+export type AppSettingKey = (typeof AppSettingKey)[keyof typeof AppSettingKey];
+
+export interface AppSettings {
+  defaultSplitterPromptTemplate: string;
+  defaultPostSplitStages: WorkflowStage[];
 }
 
 // ─── projects ──────────────────────────────────────────────────────────
@@ -88,6 +123,11 @@ export interface WorkflowRun {
   targetBranch: string | null;
   model: string | null;
   ghAccount: string | null;
+  /**
+   * Snapshot captured the first time the user clicked "Split" on a review
+   * for this run. Read-only after first write. Null for non-split runs.
+   */
+  splitConfig: SplitConfigSnapshot | null;
   createdAt: string;
   completedAt: string | null;
 }

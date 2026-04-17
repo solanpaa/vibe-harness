@@ -11,6 +11,7 @@ import * as schema from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
 import { proposalReviewHook } from '../workflows/hooks.js';
+import { proposalsToken } from '../workflows/hookTokens.js';
 import {
   createProposalService,
   ProposalNotFoundError,
@@ -218,7 +219,7 @@ proposals.post('/api/proposals/launch', (c) => {
     // Resume the proposalReviewHook via outbox pattern.
     // On crash, any un-deleted row in hookResumes is replayed by
     // replayPendingHookResumes() in lib/reconcile.ts on startup.
-    const hookToken = `proposals:${runId}`;
+    const hookToken = proposalsToken(runId);
     const payload = { proposalIds };
 
     try {

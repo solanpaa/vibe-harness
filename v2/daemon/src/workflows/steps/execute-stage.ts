@@ -10,11 +10,14 @@
 import { getDb } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildStagePrompt } from '../../services/prompt-builder.js';
 import { logger } from '../../lib/logger.js';
 import type { ReviewComment } from '../hooks.js';
 import type { SessionManager, StageResult } from '../../services/session-manager.js';
 import type { ReviewService } from '../../services/review-service.js';
+import type { McpServer, McpServerStdio } from '@agentclientprotocol/sdk/dist/schema/types.gen.js';
 
 // ── Input/Output types ───────────────────────────────────────────────
 
@@ -22,7 +25,13 @@ export interface ExecuteStageInput {
   runId: string;
   stage: {
     name: string;
-    type: 'standard' | 'split';
+    /**
+     * When true, the stage requires the splitter MCP toolset (propose_task,
+     * list_proposals, etc) regardless of whether it is the user-facing
+     * "splittable" gate. Set true for the synthetic splitter stage created
+     * by the ad-hoc split flow.
+     */
+    requiresSplitMcp?: boolean;
     promptTemplate: string;
     freshSession: boolean;
     model?: string;
@@ -61,8 +70,9 @@ function resolveGlobalDeps(): ExecuteStageDeps {
 
 export async function executeStage(
   input: ExecuteStageInput,
+  depsOverride?: ExecuteStageDeps,
 ): Promise<ExecuteStageOutput> {
-  const allDeps = resolveGlobalDeps() as ExecuteStageDeps;
+  const allDeps = (depsOverride ?? resolveGlobalDeps()) as ExecuteStageDeps;
   const { sessionManager, reviewService, acpClient, streamingService } = allDeps;
   const { runId, stage, round } = input;
   const log = logger.child({ runId, stage: stage.name, round });
@@ -73,7 +83,7 @@ export async function executeStage(
   log.info(
     {
       stageName: stage.name,
-      stageType: stage.type,
+      requiresSplitMcp: !!stage.requiresSplitMcp,
       round,
       isFirstStage: input.isFirstStage,
       isContinuation: !input.isFirstStage && !stage.freshSession,
@@ -200,15 +210,20 @@ export async function executeStage(
   }
 
   // ── Step 3: Determine session mode (SAD §5.4) ──────────────────────
+  // Build MCP servers for stages that need the splitter toolset (propose_task,
+  // etc). The synthetic splitter stage created by the ad-hoc split flow sets
+  // `requiresSplitMcp: true`.
+  const mcpServers = stage.requiresSplitMcp ? buildMcpServers(runId) : undefined;
+
   try {
     if (input.isFirstStage && round === 1) {
       // First stage of the entire workflow run: session already provisioned
       // by the pipeline's loadContext/provisioning phase
     } else if (stage.freshSession && round === 1) {
       const context = buildFreshSessionContext(db, runId, input.previousResult);
-      await deps.sessionManager.fresh(runId, { summary: context }, { model: resolvedModel });
+      await deps.sessionManager.fresh(runId, { summary: context }, { model: resolvedModel, mcpServers });
     } else {
-      await deps.sessionManager.continue(runId, { model: resolvedModel });
+      await deps.sessionManager.continue(runId, { model: resolvedModel, mcpServers });
     }
 
     // ── Step 4: Build prompt ────────────────────────────────────────
@@ -411,4 +426,33 @@ function buildFreshSessionContext(
   }
 
   return contextParts.join('\n\n---\n\n');
+}
+
+// ── MCP server config for split stages ────────────────────────────────
+
+function buildMcpServers(runId: string): McpServerStdio[] {
+  // Read auth token from daemon config
+  const configDir = join(
+    process.env.HOME || process.env.USERPROFILE || '/tmp',
+    '.vibe-harness',
+  );
+  let authToken = '';
+  try {
+    authToken = readFileSync(join(configDir, 'auth.token'), 'utf-8').trim();
+  } catch {
+    logger.child({ runId }).warn('Could not read auth token for MCP bridge');
+  }
+
+  const daemonPort = process.env.NITRO_PORT || '19423';
+
+  return [{
+    name: 'vibe-harness',
+    command: 'node',
+    args: ['/home/agent/vibe-mcp-bridge.js'],
+    env: [
+      { name: 'VIBE_HARNESS_URL', value: `http://host.docker.internal:${daemonPort}` },
+      { name: 'VIBE_RUN_ID', value: runId },
+      { name: 'VIBE_AUTH_TOKEN', value: authToken },
+    ],
+  }];
 }

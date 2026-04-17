@@ -146,7 +146,7 @@ describe("RunFeed", () => {
       />,
     );
 
-    const btn = screen.getByText("+ New Run");
+    const btn = screen.getByTitle("New run");
     expect(btn).toBeInTheDocument();
     fireEvent.click(btn);
     expect(onNewRun).toHaveBeenCalledOnce();

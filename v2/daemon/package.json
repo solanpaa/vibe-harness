@@ -8,6 +8,7 @@
     "build": "nitro build",
     "start": "node .output/server/index.mjs",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:db": "tsx src/db/test-db.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"

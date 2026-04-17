@@ -88,6 +88,13 @@ agents.put('/api/agents/:id', async (c) => {
     );
   }
 
+  if (existing.isBuiltIn) {
+    return c.json(
+      { error: { code: 'CONFLICT', message: 'Cannot modify built-in agent' } },
+      409,
+    );
+  }
+
   const body = await c.req.json();
   const parsed = updateAgentDefinitionSchema.safeParse(body);
 
@@ -237,6 +244,13 @@ agents.delete('/api/agents/:id', (c) => {
     return c.json(
       { error: { code: 'AGENT_NOT_FOUND', message: 'Agent definition not found' } },
       404,
+    );
+  }
+
+  if (existing.isBuiltIn) {
+    return c.json(
+      { error: { code: 'CONFLICT', message: 'Cannot delete built-in agent' } },
+      409,
     );
   }
 

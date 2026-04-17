@@ -324,7 +324,7 @@ export function Projects() {
 
   if (!connected) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <h1 className="text-sm font-medium text-foreground mb-4">Projects</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage projects.

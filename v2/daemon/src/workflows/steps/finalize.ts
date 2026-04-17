@@ -41,11 +41,12 @@ function resolveGlobalDeps(): FinalizeDeps {
 
 export async function finalize(
   input: FinalizeInput,
+  depsOverride?: FinalizeDeps,
 ): Promise<FinalizeOutput> {
   const { runId, targetBranch } = input;
   const log = logger.child({ runId, targetBranch });
   const db = getDb();
-  const deps = resolveGlobalDeps();
+  const deps = depsOverride ?? resolveGlobalDeps();
 
   // ── Load or resume journal (SAD §5.5.3) ───────────────────────────
   let journal = db

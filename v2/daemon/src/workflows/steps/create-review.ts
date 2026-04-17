@@ -46,11 +46,12 @@ const CONSOLIDATION_SENTINEL = '__consolidation__';
 
 export async function createReview(
   input: CreateReviewInput,
+  depsOverride?: CreateReviewDeps,
 ): Promise<CreateReviewOutput> {
   const { runId, stageName, round, type } = input;
   const log = logger.child({ runId, stageName, round, type });
   const db = getDb();
-  const { reviewService } = resolveGlobalDeps();
+  const { reviewService } = depsOverride ?? resolveGlobalDeps();
   const dbStageName = stageName ?? CONSOLIDATION_SENTINEL;
 
   // ── Idempotency: UNIQUE(workflowRunId, stageName, round, type) ────

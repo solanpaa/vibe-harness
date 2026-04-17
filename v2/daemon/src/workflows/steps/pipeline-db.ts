@@ -28,12 +28,13 @@ export interface PipelineContext {
 
 export interface WorkflowStage {
   name: string;
-  type: 'standard' | 'split';
+  splittable?: boolean;
   promptTemplate: string;
   reviewRequired: boolean;
   autoAdvance: boolean;
   freshSession: boolean;
   model?: string;
+  isFinal?: boolean;
 }
 
 export interface RunRecord {
@@ -166,6 +167,16 @@ export async function updateRunStatus(runId: string, status: string): Promise<vo
     .run();
 }
 
+export async function getRunStatus(runId: string): Promise<string | null> {
+  const db = getDb();
+  const row = db
+    .select({ status: schema.workflowRuns.status })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+  return row?.status ?? null;
+}
+
 export async function updateCurrentStage(runId: string, stageName: string): Promise<void> {
   const db = getDb();
   db.update(schema.workflowRuns)
@@ -179,6 +190,52 @@ export async function updateReviewStatus(reviewId: string, status: string): Prom
   db.update(schema.reviews)
     .set({ status })
     .where(eq(schema.reviews.id, reviewId))
+    .run();
+}
+
+// ── Split config snapshot helpers (rubber-duck blocker #1) ─────────────
+//
+// The split snapshot is written ONCE at the moment the user clicks Split
+// in a review, and is also embedded in the review hook resume payload.
+// The persistence here is for crash-recovery and audit; the workflow
+// reads from the hook payload. We expose a getter for tooling/UX that
+// needs to display the snapshot (e.g. listing skipped stages).
+
+export async function persistSplitConfig(runId: string, snapshot: unknown): Promise<void> {
+  const db = getDb();
+  // Best-effort idempotency: only write if not already set. The route is
+  // already gated by run-not-already-split, but this defends against races.
+  const existing = db.select({ s: schema.workflowRuns.splitConfigJson })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+  if (existing?.s) return;
+  db.update(schema.workflowRuns)
+    .set({ splitConfigJson: JSON.stringify(snapshot) })
+    .where(eq(schema.workflowRuns.id, runId))
+    .run();
+}
+
+export async function getSplitConfig(runId: string): Promise<unknown | null> {
+  const db = getDb();
+  const row = db.select({ s: schema.workflowRuns.splitConfigJson })
+    .from(schema.workflowRuns)
+    .where(eq(schema.workflowRuns.id, runId))
+    .get();
+  if (!row?.s) return null;
+  try { return JSON.parse(row.s); } catch { return null; }
+}
+
+/**
+ * Clear a previously-persisted split snapshot. Used by the split route to
+ * recover from a failed hook resume so the user can retry without hitting
+ * the "already split" guard (rubber-duck C2).
+ */
+export async function clearSplitConfig(runId: string): Promise<void> {
+  const db = getDb();
+  db.update(schema.workflowRuns)
+    .set({ splitConfigJson: null })
+    .where(eq(schema.workflowRuns.id, runId))
     .run();
 }
 

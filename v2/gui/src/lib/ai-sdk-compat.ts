@@ -52,7 +52,7 @@ export type ToolState =
   | "output-denied";
 
 /** Tool UI part from AI SDK */
-export interface ToolUIPart<TTools extends Record<string, { input: unknown; output: unknown }> = Record<string, { input: unknown; output: unknown }>> {
+export interface ToolUIPart<_TTools extends Record<string, { input: unknown; output: unknown }> = Record<string, { input: unknown; output: unknown }>> {
   type: `tool-${string}`;
   toolCallId: string;
   toolName: string;

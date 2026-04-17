@@ -404,6 +404,13 @@ export class DaemonClient {
     });
   }
 
+  async splitReview(id: string, extraDescription: string): Promise<{ status: 'split' }> {
+    return this.fetch<{ status: 'split' }>(`/api/reviews/${id}/split`, {
+      method: "POST",
+      body: JSON.stringify({ extraDescription }),
+    });
+  }
+
   async addComment(reviewId: string, data: CreateReviewCommentRequest): Promise<ReviewComment> {
     return this.fetch<ReviewComment>(`/api/reviews/${reviewId}/comments`, {
       method: "POST",

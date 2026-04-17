@@ -10,11 +10,14 @@ interface ReviewHeaderProps {
   onSelectRound: (round: number) => void;
   onApprove: () => void;
   onRequestChanges: () => void;
+  onSplit?: () => void;
   onBack: () => void;
   canApprove: boolean;
   canRequestChanges: boolean;
+  canSplit?: boolean;
   approving?: boolean;
   requesting?: boolean;
+  splitting?: boolean;
 }
 
 export function ReviewHeader({
@@ -25,11 +28,14 @@ export function ReviewHeader({
   onSelectRound,
   onApprove,
   onRequestChanges,
+  onSplit,
   onBack,
   canApprove,
   canRequestChanges,
+  canSplit,
   approving,
   requesting,
+  splitting,
 }: ReviewHeaderProps) {
   const rounds = [...new Set(reviews.map((r) => r.round))].sort((a, b) => a - b);
 
@@ -88,6 +94,16 @@ export function ReviewHeader({
             className="px-3 py-1.5 text-xs rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-950/50 disabled:opacity-40 transition-colors"
           >
             {requesting ? "Submitting..." : "Request Changes"}
+          </button>
+        )}
+        {canSplit && onSplit && (
+          <button
+            onClick={onSplit}
+            disabled={splitting}
+            className="px-3 py-1.5 text-xs rounded-md border border-purple-500/30 text-purple-300 hover:bg-purple-950/50 disabled:opacity-40 transition-colors"
+            title="Split remaining work into parallel sub-tasks"
+          >
+            {splitting ? "Splitting..." : "Split"}
           </button>
         )}
         {canApprove && (

@@ -19,7 +19,16 @@ import {
   reviewDecisionHook,
   conflictResolutionHook,
   proposalReviewHook,
+  parallelCompletionHook,
 } from '../workflows/hooks.js';
+import {
+  stageFailedToken,
+  reviewToken,
+  proposalsToken,
+  parallelToken,
+  finalizeConflictToken,
+  consolidateConflictToken,
+} from '../workflows/hookTokens.js';
 import { z } from 'zod';
 
 const runs = new Hono();
@@ -285,7 +294,7 @@ runs.patch('/api/runs/:id/cancel', async (c) => {
   try {
     switch (run.status) {
       case 'stage_failed': {
-        const hookToken = `failed:${runId}:${run.currentStage}`;
+        const hookToken = stageFailedToken(runId, run.currentStage ?? '');
         await stageFailedHook.resume(hookToken, { action: 'cancel' });
         break;
       }
@@ -301,19 +310,37 @@ runs.patch('/api/runs/:id/cancel', async (c) => {
           .limit(1)
           .get();
         if (pendingReview) {
-          const hookToken = `review:${pendingReview.id}`;
+          const hookToken = reviewToken(pendingReview.id);
           await reviewDecisionHook.resume(hookToken, { action: 'cancel' });
         }
         break;
       }
       case 'awaiting_conflict_resolution': {
-        const hookToken = `conflict:${runId}:finalize`;
+        // Disambiguate: consolidation conflict has an active parallel group
+        // whose sourceWorkflowRunId is this run; finalize conflict does not.
+        const activeGroup = db
+          .select({ id: schema.parallelGroups.id })
+          .from(schema.parallelGroups)
+          .where(and(
+            eq(schema.parallelGroups.sourceWorkflowRunId, runId),
+            inArray(schema.parallelGroups.status, ['running', 'consolidating', 'children_mixed', 'children_completed']),
+          ))
+          .limit(1)
+          .get();
+        const hookToken = activeGroup
+          ? consolidateConflictToken(runId, activeGroup.id)
+          : finalizeConflictToken(runId);
         await conflictResolutionHook.resume(hookToken, { action: 'cancel' });
         break;
       }
       case 'awaiting_proposals': {
-        const hookToken = `proposals:${runId}:${run.currentStage}`;
+        const hookToken = proposalsToken(runId);
         await proposalReviewHook.resume(hookToken, { proposalIds: [] });
+        break;
+      }
+      case 'children_completed_with_failures': {
+        const hookToken = parallelToken(runId);
+        await parallelCompletionHook.resume(hookToken, { action: 'cancel' });
         break;
       }
     }
@@ -452,11 +479,11 @@ async function resumeStageHook(
     );
   }
 
-  // Find the hook token — stable format: `failed:{runId}:{stageName}`
+  // Find the hook token via shared helper.
   try {
     // Write to outbox first for crash safety
     const outboxId = crypto.randomUUID();
-    const hookToken = `failed:${runId}:${run.currentStage}`;
+    const hookToken = stageFailedToken(runId, run.currentStage ?? '');
 
     db.insert(schema.hookResumes)
       .values({

@@ -107,6 +107,7 @@ export const workflowRuns = sqliteTable(
     model: text('model'),
     ghAccount: text('gh_account'),
     attachments: text('attachments'),              // JSON: array of {name, type, dataUrl}
+    splitConfigJson: text('split_config_json'),    // JSON: SplitConfigSnapshot (set once at split-time)
     createdAt: createdAt(),
     completedAt: text('completed_at'),
   },

@@ -8,7 +8,7 @@ function makeInput(overrides: Partial<StagePromptInput> = {}): StagePromptInput 
     runDescription: 'Add user authentication',
     stage: {
       name: 'implement',
-      type: 'standard',
+
       promptTemplate: 'Implement the plan.',
       freshSession: false,
     },
@@ -34,7 +34,7 @@ describe('buildStagePrompt', () => {
 
     it('uses stage name in header', () => {
       const prompt = buildStagePrompt(
-        makeInput({ stage: { name: 'plan', type: 'standard', promptTemplate: 'Create a plan.', freshSession: false } }),
+        makeInput({ stage: { name: 'plan', promptTemplate: 'Create a plan.', freshSession: false } }),
       );
       expect(prompt).toContain('## Current Stage: plan');
     });
@@ -44,7 +44,7 @@ describe('buildStagePrompt', () => {
     it('includes context from prior stages when freshSession + round 1 + context present', () => {
       const prompt = buildStagePrompt(
         makeInput({
-          stage: { name: 'review', type: 'standard', promptTemplate: 'Review code.', freshSession: true },
+          stage: { name: 'review', promptTemplate: 'Review code.', freshSession: true },
           freshSessionContext: 'Stage "plan" completed with summary...',
         }),
       );
@@ -57,7 +57,7 @@ describe('buildStagePrompt', () => {
     it('falls back to standard prompt if freshSession but no context', () => {
       const prompt = buildStagePrompt(
         makeInput({
-          stage: { name: 'review', type: 'standard', promptTemplate: 'Review code.', freshSession: true },
+          stage: { name: 'review', promptTemplate: 'Review code.', freshSession: true },
           freshSessionContext: null,
         }),
       );
@@ -69,7 +69,7 @@ describe('buildStagePrompt', () => {
     it('falls back to standard prompt if freshSession but round > 1', () => {
       const prompt = buildStagePrompt(
         makeInput({
-          stage: { name: 'review', type: 'standard', promptTemplate: 'Review code.', freshSession: true },
+          stage: { name: 'review', promptTemplate: 'Review code.', freshSession: true },
           round: 2,
           freshSessionContext: 'Some context',
         }),
@@ -120,7 +120,7 @@ describe('buildStagePrompt', () => {
           round: 2,
           retryError: 'some error',
           requestChangesComments: [{ body: 'Fix this', filePath: null }],
-          stage: { name: 'impl', type: 'standard', promptTemplate: 'Do it.', freshSession: true },
+          stage: { name: 'impl', promptTemplate: 'Do it.', freshSession: true },
           freshSessionContext: 'context',
         }),
       );
@@ -149,7 +149,7 @@ describe('buildStagePrompt', () => {
       const prompt = buildStagePrompt(
         makeInput({
           retryError: 'error',
-          stage: { name: 'review', type: 'standard', promptTemplate: 'Review.', freshSession: true },
+          stage: { name: 'review', promptTemplate: 'Review.', freshSession: true },
           freshSessionContext: 'prior context',
         }),
       );
@@ -167,7 +167,7 @@ describe('buildStagePrompt', () => {
 
     it('handles empty prompt template', () => {
       const prompt = buildStagePrompt(
-        makeInput({ stage: { name: 'x', type: 'standard', promptTemplate: '', freshSession: false } }),
+        makeInput({ stage: { name: 'x', promptTemplate: '', freshSession: false } }),
       );
       expect(prompt).toContain('## Current Stage: x');
     });

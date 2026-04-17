@@ -5,6 +5,7 @@ import { ReviewHeader } from "./ReviewHeader";
 import { FileTree } from "./FileTree";
 import { DiffViewer } from "./DiffViewer";
 import { GeneralComments } from "./GeneralComments";
+import { SplitModal } from "./SplitModal";
 import type {
   Review,
   ReviewComment,
@@ -139,7 +140,8 @@ function getArtifactType(review: Review | undefined, diffFiles: DiffFile[]): Rev
 
 export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   const { client } = useDaemonStore();
-  const { updateRun } = useWorkspaceStore();
+  const { updateRun, runs } = useWorkspaceStore();
+  const currentRun = runs.find((r) => r.id === runId);
 
   const [detail, setDetail] = useState<ReviewDetailResponse | null>(null);
   const [allReviews, setAllReviews] = useState<Review[]>([]);
@@ -150,6 +152,8 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [actionResult, setActionResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
@@ -292,6 +296,34 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
     }
   }, [client, detail, requesting, localComments, runId, updateRun]);
 
+  const handleSplit = useCallback(
+    async (extraDescription: string) => {
+      if (!client || !detail?.review || splitting) return;
+      setSplitting(true);
+      setActionResult(null);
+      try {
+        await client.splitReview(detail.review.id, extraDescription);
+        setDetail((prev) =>
+          prev ? { ...prev, review: { ...prev.review, status: "approved" as const } } : prev,
+        );
+        updateRun(runId, { status: "running" as const });
+        setActionResult({
+          type: "success",
+          message: "Split initiated. Splitter agent is starting...",
+        });
+        setShowSplitModal(false);
+      } catch (err) {
+        setActionResult({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to split",
+        });
+      } finally {
+        setSplitting(false);
+      }
+    },
+    [client, detail, splitting, runId, updateRun],
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
@@ -328,6 +360,11 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
     );
   }
 
+  const canSplit =
+    isPending &&
+    !!detail.review.stageName &&
+    !currentRun?.parentRunId;
+
   return (
     <div className="flex flex-col h-full">
       {/* Review header */}
@@ -340,13 +377,25 @@ export function ReviewPanel({ reviewId, runId, onBack }: ReviewPanelProps) {
           onSelectRound={handleSelectRound}
           onApprove={handleApprove}
           onRequestChanges={handleRequestChanges}
+          onSplit={() => setShowSplitModal(true)}
           onBack={onBack}
           canApprove={isPending}
           canRequestChanges={isPending && localComments.length > 0}
+          canSplit={canSplit}
           approving={approving}
           requesting={requesting}
+          splitting={splitting}
         />
       </div>
+
+      {showSplitModal && detail.review.stageName && (
+        <SplitModal
+          sourceStageName={detail.review.stageName}
+          onSubmit={handleSplit}
+          onCancel={() => setShowSplitModal(false)}
+          submitting={splitting}
+        />
+      )}
 
       {/* Review facts bar */}
       <div className="flex-shrink-0 flex items-center gap-4 px-4 py-2 text-xs text-zinc-400 border-b border-zinc-700/30 bg-zinc-900/30">

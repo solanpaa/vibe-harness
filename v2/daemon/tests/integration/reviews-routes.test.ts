@@ -192,8 +192,8 @@ describe('GET /api/reviews/:id', () => {
     const res = await req('GET', `/api/reviews/${reviewId}`);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body.id).toBe(reviewId);
-    expect(body.diffSnapshot).toBeDefined();
+    expect(body.review.id).toBe(reviewId);
+    expect(body.review.diffSnapshot).toBeDefined();
     expect(body.comments).toHaveLength(1);
     expect(body.comments[0].body).toBe('Fix this line');
   });
@@ -306,6 +306,161 @@ describe('POST /api/reviews/:id/request-changes', () => {
     expect(res.status).toBe(409);
     const body = await res.json() as any;
     expect(body.error.message).toContain('consolidation');
+  });
+});
+
+describe('POST /api/reviews/:id/split', () => {
+  let splitTemplateId: string;
+
+  beforeEach(() => {
+    // Use the "Plan & Implement" template (has 'implement' stage with splittable flag settable)
+    const planTemplate = testDb.select().from(schema.workflowTemplates)
+      .where(eq(schema.workflowTemplates.name, 'Plan & Implement')).get();
+    splitTemplateId = planTemplate?.id ?? templateId;
+  });
+
+  function createSplitRun() {
+    runId = crypto.randomUUID();
+    testDb.insert(schema.workflowRuns).values({
+      id: runId,
+      workflowTemplateId: splitTemplateId,
+      projectId,
+      agentDefinitionId: agentDefId,
+      status: 'running',
+      baseBranch: 'main',
+      targetBranch: 'main',
+    }).run();
+    return runId;
+  }
+
+  function setSplittableOnStage(stageName: string, splittable: boolean) {
+    const tmpl = testDb.select().from(schema.workflowTemplates)
+      .where(eq(schema.workflowTemplates.id, splitTemplateId)).get()!;
+    const stages = JSON.parse(tmpl.stages);
+    const idx = stages.findIndex((s: any) => s.name === stageName);
+    if (idx >= 0) stages[idx].splittable = splittable;
+    testDb.update(schema.workflowTemplates)
+      .set({ stages: JSON.stringify(stages) })
+      .where(eq(schema.workflowTemplates.id, splitTemplateId)).run();
+  }
+
+  function ensureSplitterSettings() {
+    testDb.insert(schema.settings)
+      .values({ key: 'defaultSplitterPromptTemplate', value: 'Split this: {{description}}\n\n{{extra}}' })
+      .onConflictDoUpdate({ target: schema.settings.key, set: { value: 'Split this: {{description}}\n\n{{extra}}' } })
+      .run();
+    testDb.insert(schema.settings)
+      .values({ key: 'defaultPostSplitStages', value: '[]' })
+      .onConflictDoUpdate({ target: schema.settings.key, set: { value: '[]' } })
+      .run();
+  }
+
+  it('returns 404 for non-existent review', async () => {
+    const res = await req('POST', `/api/reviews/${crypto.randomUUID()}/split`, { extraDescription: 'x' });
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 409 when stage is not splittable', async () => {
+    ensureSplitterSettings();
+    setSplittableOnStage('implement', false);
+    createSplitRun();
+    const reviewId = createTestReview({ stageName: 'implement' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, { extraDescription: '' });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error.message).toMatch(/not splittable/i);
+  });
+
+  it('returns 409 for child runs (no recursive split)', async () => {
+    ensureSplitterSettings();
+    setSplittableOnStage('implement', true);
+    // Create a parent run first, then child
+    const parentId = crypto.randomUUID();
+    testDb.insert(schema.workflowRuns).values({
+      id: parentId,
+      workflowTemplateId: splitTemplateId,
+      projectId,
+      agentDefinitionId: agentDefId,
+      status: 'running',
+    }).run();
+    runId = crypto.randomUUID();
+    testDb.insert(schema.workflowRuns).values({
+      id: runId,
+      workflowTemplateId: splitTemplateId,
+      projectId,
+      agentDefinitionId: agentDefId,
+      parentRunId: parentId,
+      status: 'running',
+    }).run();
+    const reviewId = createTestReview({ stageName: 'implement' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, { extraDescription: '' });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error.message).toMatch(/child/i);
+  });
+
+  it('returns 409 for consolidation reviews', async () => {
+    ensureSplitterSettings();
+    createSplitRun();
+    const reviewId = createTestReview({ type: 'consolidation', stageName: '__consolidation__' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, { extraDescription: '' });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error.message).toMatch(/stage reviews/i);
+  });
+
+  it('returns 409 when run is already split', async () => {
+    ensureSplitterSettings();
+    setSplittableOnStage('implement', true);
+    createSplitRun();
+    testDb.update(schema.workflowRuns)
+      .set({ splitConfigJson: '{}' })
+      .where(eq(schema.workflowRuns.id, runId)).run();
+    const reviewId = createTestReview({ stageName: 'implement' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, { extraDescription: '' });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error.message).toMatch(/already been split/i);
+  });
+
+  it('returns 409 when review is not pending', async () => {
+    ensureSplitterSettings();
+    setSplittableOnStage('implement', true);
+    createSplitRun();
+    const reviewId = createTestReview({ stageName: 'implement', status: 'approved' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, { extraDescription: '' });
+    expect(res.status).toBe(409);
+  });
+
+  it('succeeds and persists split_config_json on valid split', async () => {
+    ensureSplitterSettings();
+    setSplittableOnStage('implement', true);
+    createSplitRun();
+    const reviewId = createTestReview({ stageName: 'implement' });
+    const res = await req('POST', `/api/reviews/${reviewId}/split`, {
+      extraDescription: 'Focus on the auth module.',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.status).toBe('split');
+    expect(body.splitConfig).toBeDefined();
+
+    const run = testDb.select().from(schema.workflowRuns)
+      .where(eq(schema.workflowRuns.id, runId)).get()!;
+    expect(run.splitConfigJson).toBeTruthy();
+    const snapshot = JSON.parse(run.splitConfigJson!);
+    expect(snapshot.sourceStageName).toBe('implement');
+    expect(snapshot.extraDescription).toBe('Focus on the auth module.');
+    expect(snapshot.effectiveSplitterPrompt).toContain('Focus on the auth module.');
+  });
+
+  it('returns 401 without token', async () => {
+    const res = await app.request(`/api/reviews/${crypto.randomUUID()}/split`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extraDescription: 'x' }),
+    });
+    expect(res.status).toBe(401);
   });
 });
 

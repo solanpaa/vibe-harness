@@ -361,7 +361,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
         <div className="px-6 py-4 space-y-4">
           {/* Project (required) */}
           <FormField label="Project" required>
-            <Select value={projectId} onValueChange={setProjectId}>
+            <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select project...">
                   {projects.find(p => p.id === projectId)?.name}
@@ -379,7 +379,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
 
           {/* Workflow template (required) */}
           <FormField label="Workflow Template" required>
-            <Select value={workflowTemplateId} onValueChange={setWorkflowTemplateId}>
+            <Select value={workflowTemplateId} onValueChange={(v) => setWorkflowTemplateId(v ?? "")}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select template...">
                   {templates.find(t => t.id === workflowTemplateId)?.name}
@@ -397,7 +397,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
 
           {/* Agent (required) */}
           <FormField label="Agent" required>
-            <Select value={agentDefinitionId} onValueChange={setAgentDefinitionId}>
+            <Select value={agentDefinitionId} onValueChange={(v) => setAgentDefinitionId(v ?? "")}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select agent...">
                   {agents.find(a => a.id === agentDefinitionId)?.name}
@@ -476,7 +476,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
           <FormField label="Base Branch">
             <Select
               value={baseBranch || "default"}
-              onValueChange={(v) => setBaseBranch(v === "default" ? "" : v)}
+              onValueChange={(v) => setBaseBranch(v === "default" || !v ? "" : v)}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Default branch">
@@ -498,7 +498,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
           <FormField label="Credential Set">
             <Select
               value={credentialSetId || "none"}
-              onValueChange={(v) => setCredentialSetId(v === "none" ? "" : v)}
+              onValueChange={(v) => setCredentialSetId(v === "none" || !v ? "" : v)}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="None">

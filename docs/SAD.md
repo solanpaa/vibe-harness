@@ -528,6 +528,7 @@ workflowRuns
   credentialSetId TEXT FK → credentialSets.id
   baseBranch TEXT  -- branch worktree was created from
   targetBranch TEXT  -- branch to merge into on approval
+  splitConfigJson TEXT  -- SplitConfigSnapshot (JSON), non-NULL after user triggers ad-hoc split; read-only once set
   createdAt TEXT NOT NULL
   completedAt TEXT
 

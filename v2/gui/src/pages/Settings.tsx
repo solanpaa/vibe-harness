@@ -591,6 +591,125 @@ function NotificationToggle() {
   );
 }
 
+function SplitSettingsSection() {
+  const { client } = useDaemonStore();
+  const [promptTemplate, setPromptTemplate] = useState<string>("");
+  const [postSplitStagesJson, setPostSplitStagesJson] = useState<string>("[]");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    if (!client) return;
+    setLoading(true);
+    try {
+      const resp = await client.getSettings();
+      const s = resp.settings ?? {};
+      setPromptTemplate(s["defaultSplitterPromptTemplate"] ?? "");
+      const post = s["defaultPostSplitStages"];
+      if (typeof post === "string" && post.trim()) {
+        try {
+          setPostSplitStagesJson(JSON.stringify(JSON.parse(post), null, 2));
+        } catch {
+          setPostSplitStagesJson(post);
+        }
+      } else {
+        setPostSplitStagesJson("[]");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (!client) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      let postParsed: unknown;
+      try {
+        postParsed = JSON.parse(postSplitStagesJson || "[]");
+      } catch (err) {
+        setMsg({ ok: false, text: `Post-split stages JSON invalid: ${err instanceof Error ? err.message : String(err)}` });
+        setSaving(false);
+        return;
+      }
+      await client.updateSettings({
+        settings: {
+          defaultSplitterPromptTemplate: promptTemplate,
+          defaultPostSplitStages: JSON.stringify(postParsed),
+        },
+      });
+      setMsg({ ok: true, text: "Saved." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "Failed to save" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Default splitter prompt template
+        </label>
+        <textarea
+          value={promptTemplate}
+          onChange={(e) => setPromptTemplate(e.target.value)}
+          rows={6}
+          placeholder="Used when the user triggers a Split from a review. Supports {{description}} and {{extra}} placeholders."
+          className="w-full px-2 py-1.5 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none font-mono"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">
+          Default post-split stages (JSON array of WorkflowStage)
+        </label>
+        <textarea
+          value={postSplitStagesJson}
+          onChange={(e) => setPostSplitStagesJson(e.target.value)}
+          rows={8}
+          placeholder='[]'
+          className="w-full px-2 py-1.5 text-xs rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none font-mono"
+          spellCheck={false}
+        />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Runs after consolidation review on every ad-hoc split. Stages here
+          cannot be splittable themselves.
+        </p>
+      </div>
+
+      {msg && (
+        <div
+          className={`px-2 py-1.5 text-xs rounded border ${
+            msg.ok
+              ? "bg-green-950/30 border-green-800/50 text-green-400"
+              : "bg-destructive/10 border-destructive/30 text-destructive"
+          }`}
+        >
+          {msg.text}
+        </div>
+      )}
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40"
+      >
+        {saving ? "Saving…" : "Save split settings"}
+      </button>
+    </div>
+  );
+}
+
 export function Settings() {
   const { client, connected } = useDaemonStore();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -629,7 +748,7 @@ export function Settings() {
 
   if (!connected) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <h1 className="text-sm font-medium text-foreground mb-4">Settings</h1>
         <p className="text-muted-foreground">
           Daemon not connected. Start the daemon to manage settings.
@@ -659,6 +778,14 @@ export function Settings() {
           GitHub Account
         </h2>
         <GhAccountSelector />
+      </section>
+
+      {/* Split Execution Section */}
+      <section className="mb-8">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          Split Execution
+        </h2>
+        <SplitSettingsSection />
       </section>
 
       {/* Agent Definitions Section */}

@@ -11,6 +11,7 @@ import { reviews } from "./routes/reviews.js";
 import { proposals } from "./routes/proposals.js";
 import { settingsRoute } from "./routes/settings.js";
 import { ghAccounts } from "./routes/gh-accounts.js";
+import mcp from "./routes/mcp.js";
 
 const app = new Hono();
 
@@ -35,5 +36,6 @@ app.route("/", reviews);
 app.route("/", proposals);
 app.route("/", settingsRoute);
 app.route("/", ghAccounts);
+app.route("/", mcp);
 
 export default app;

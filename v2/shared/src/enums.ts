@@ -173,11 +173,6 @@ export const StageFailureReason = {
 
 export type StageFailureReason = (typeof StageFailureReason)[keyof typeof StageFailureReason];
 
-// ─── Workflow stage type (SRD FR-W2) ───────────────────────────────────
-
-export const StageType = {
-  Standard: 'standard',
-  Split: 'split',
-} as const;
-
-export type StageType = (typeof StageType)[keyof typeof StageType];
+// ─── Workflow stage type (REMOVED — see splittable on WorkflowStage) ───
+// StageType enum was removed when ad-hoc split execution replaced the
+// predeclared `type: 'split'` model. Stages now opt in via `splittable`.

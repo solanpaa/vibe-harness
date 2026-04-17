@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('Database schema', () => {
-  it('creates all 16 tables', () => {
+  it('creates all 17 tables', () => {
     const tables = sqlite
       .prepare(
         `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%' ORDER BY name`,
@@ -59,6 +59,7 @@ describe('Database schema', () => {
       'review_comments',
       'reviews',
       'run_messages',
+      'settings',
       'stage_executions',
       'workflow_runs',
       'workflow_templates',
@@ -291,8 +292,8 @@ describe('Cascade delete behavior', () => {
 describe('JSON columns', () => {
   it('round-trips JSON in workflow template stages', () => {
     const stages = [
-      { name: 'plan', type: 'standard', promptTemplate: '{{description}}', reviewRequired: true },
-      { name: 'implement', type: 'standard', promptTemplate: '{{description}}', reviewRequired: false },
+      { name: 'plan', promptTemplate: '{{description}}', reviewRequired: true },
+      { name: 'implement', promptTemplate: '{{description}}', reviewRequired: false },
     ];
 
     const template = db

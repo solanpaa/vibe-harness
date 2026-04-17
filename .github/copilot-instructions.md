@@ -1,97 +1,92 @@
-# Copilot Instructions — Vibe Harness
+# AGENTS.md — Vibe Harness
 
-## Commands
+## What This Is
 
-```bash
-npm run dev          # Dev server on :3000
-npm run build        # Production build (also runs TypeScript check)
-npm run lint         # ESLint
-npx drizzle-kit generate  # Generate migration after schema changes
+Vibe Harness is a desktop-native orchestrator for AI coding agents (GitHub Copilot CLI, Claude Code, Gemini CLI). It runs agents in isolated Docker sandboxes against local git repositories, managing multi-stage workflows with human review gates, git worktree isolation, and parallel execution.
+
+Users define a task ("add OAuth to the API"), the system launches an AI agent in a sandbox, streams its output in real-time, and presents the resulting code changes for human review. Workflows chain multiple stages (plan → implement → review → commit) with session continuity, so the agent remembers context across stages.
+
+## Current State: v1 → v2 Transition
+
+This repository is in a transitional state between two major versions.
+
+### v1 (in `v1/`)
+
+A working Next.js browser application. Functional but with known limitations:
+- Painful npm-based installation
+- Browser UI limits multi-window workflows
+- Organic codebase with architectural debt
+- No durable workflow persistence across restarts
+
+**v1 is reference-only — not under active development.**
+
+### v2 (being built)
+
+A full rewrite with a fundamentally different architecture:
+
+| Component | Technology | Status |
+|-----------|-----------|--------|
+| **Daemon** | Node.js + Hono + Nitro + `use workflow` | Design complete |
+| **GUI** | Tauri 2.0 + React + Vite + Streamdown | Design complete |
+| **CLI** | Post-MVP | Planned |
+| **Shared types** | TypeScript workspace package | Planned |
+
+Key architectural changes from v1:
+- **Daemon + GUI separation** — daemon owns all state and logic; GUI is a thin presentation client
+- **Durable workflows** — Vercel's `use workflow` SDK provides event-sourced, resumable orchestration that survives daemon restarts at review gates
+- **Native desktop app** — Tauri replaces the browser; native multi-window support for concurrent diff review and output monitoring
+- **Single-binary distribution** — no `npm install` for end users
+
+### Design Documents (in `docs/`)
+
+| Document | Description |
+|----------|-------------|
+| `SRD.md` | Solution Requirements Description — 80+ functional and non-functional requirements |
+| `SAD.md` | Solution Architecture Design — component architecture, data model, workflow orchestration, security |
+
+Both reviewed by multiple AI models (GPT-5.4, Claude Opus 4.5, Claude Opus 4.6) with all identified gaps resolved.
+
+### Workflow Spike (in `workflow-spike/`)
+
+A proof-of-concept validating the `use workflow` SDK with Hono. All 5 critical scenarios pass: human-in-the-loop hooks, sequential pipelines, parallel fan-out, durability across restart, and cancellation.
+
+## Repository Structure
+
+```
+vibe-harness/
+├── docs/              # v2 design documents (SRD, SAD)
+│   ├── SRD.md         # Solution Requirements Description
+│   ├── SAD.md         # Solution Architecture Design
+│   ├── SRD.pdf        # PDF for offline review
+│   └── SAD.pdf
+├── v1/                # Original Next.js app (reference only)
+│   ├── src/           # App source (services, API routes, UI)
+│   ├── docker/        # Sandbox Dockerfile
+│   └── ...
+├── workflow-spike/    # use workflow SDK proof-of-concept
+├── LICENSE
+└── README.md
 ```
 
-No test suite exists yet. Use `npm run build` as the primary verification step.
+When v2 reaches feature parity, `v1/` will be removed and `v2/` contents promoted to root.
 
-## Architecture
+## Core Domain Concepts
 
-Vibe Harness is a Next.js 16 App Router application that orchestrates AI coding agents (Copilot CLI, Claude Code, Gemini) running in Docker sandboxes. Users create **tasks** that run agents against git repositories, with optional **workflow** orchestration for multi-stage pipelines (plan → implement → review).
+- **Project** — A registered local git repository
+- **Task** — A single AI agent execution in a Docker sandbox
+- **Workflow Template** — A reusable multi-stage pipeline definition (e.g., plan → implement → review → commit)
+- **Workflow Run** — One execution of a template against a project
+- **Review** — A human checkpoint: view diff, add comments, approve or request changes
+- **Split Execution** — A workflow stage that fans out into parallel child workflows, each in its own worktree, merged back on completion
 
-### Core domain model
+## Target Platforms
 
-- **Projects** — Git repositories with a `localPath` on the host
-- **Tasks** — An agent execution against a project. Lifecycle: `pending → running → awaiting_review → completed/failed`. Each task runs in a Docker sandbox and optionally in a git worktree for isolation
-- **Workflows** — Multi-stage templates (e.g. plan → implement → review). A workflow run creates tasks for each stage, advancing via `--continue` to preserve agent context
-- **Reviews** — Auto-created when a task completes. Contains diff snapshot, AI summary, and inline comments. Approve advances the workflow; request changes reruns the same stage
+- macOS (primary)
+- Linux (secondary)
+- Windows: not currently targeted
 
-### Task lifecycle and review gates
+## Prerequisites
 
-```
-Task created → sandbox launched → agent runs → completes →
-  auto-create review → status: awaiting_review →
-    approve → (next workflow stage OR merge & complete)
-    request changes → rerun same stage with --continue → awaiting_review again
-```
-
-Key: reviews are auto-created by `task-manager.ts` on successful completion. The user never manually creates reviews.
-
-### Sandbox and worktree model
-
-- Each task gets a sandbox named `vibe-{first8chars}` via `docker sandbox run`
-- Worktrees are created under `<project>/.vibe-harness-worktrees/<shortId>/`
-- Workflow stages share the same sandbox and worktree via `originTaskId` + `isContinuation: true` (passes `--continue` to the agent)
-- The `activeSandboxes` Map is stored on `globalThis` to survive Next.js dev hot reloads
-
-### Data flow
-
-- **DB**: SQLite via Drizzle ORM (`better-sqlite3`), WAL mode, file at `./vibe-harness.db`
-- **Schema**: `src/lib/db/schema.ts` — single source of truth. Run `npx drizzle-kit generate` after changes
-- **Migrations**: `src/lib/db/migrations/` — applied automatically on first `getDb()` call
-- **Services** (`src/lib/services/`): Server-only business logic. Never import from client components
-- **API routes** (`src/app/api/`): Thin wrappers around services
-- **Pages**: Client components (`"use client"`) that fetch from API routes
-
-### Key service files
-
-- `task-manager.ts` — Launches sandboxes, manages lifecycle, auto-creates reviews on completion
-- `workflow-engine.ts` — Creates workflow runs, advances stages with `--continue`, builds combined prompts (task description + stage instructions)
-- `review-rerun.ts` — Handles "request changes": bundles comments into prompt, reruns same stage
-- `review-service.ts` — Creates reviews from git diffs, manages task chains via `originTaskId`
-- `sandbox.ts` — Spawns `docker sandbox run` processes, manages active sandbox map
-- `worktree.ts` — Git worktree creation, cleanup, commit-and-merge on approval
-
-## Conventions
-
-### Schema changes
-
-1. Edit `src/lib/db/schema.ts`
-2. Run `npx drizzle-kit generate`
-3. Delete `./vibe-harness.db` if the migration is incompatible (dev-only, no prod data)
-
-### Task chain tracking
-
-Tasks spawned from reruns or workflow stages link back via `originTaskId`. Helper functions in `review-service.ts`:
-- `getOriginTaskId(taskId)` — resolves the chain root
-- `getTaskChainIds(originId)` — all tasks in a chain
-
-Review round counting and worktree resolution use these to find the right origin.
-
-### Combined workflow prompts
-
-Workflow stages build prompts via `buildStagePrompt()` in `workflow-engine.ts`:
-```
-## Task
-{user's task description}
-
-## Current Stage: {stage name}
-{stage prompt template}
-```
-
-### API patterns
-
-- GET returns all rows (use `?fields=summary` on `/api/tasks` for lightweight listing without output)
-- POST creates resources; for workflows use `action: "create_template"` or `action: "start_run"`
-- PATCH on `/api/tasks/[id]` accepts `action: "start"` or `action: "stop"`
-- Review submit: `POST /api/reviews/[id]/submit` with `action: "approve"` or `action: "request_changes"`
-
-### Client-side status configs
-
-Task/review status badge colors and icons are defined as `statusConfig` Record objects at the top of page components. Add new statuses there when extending the lifecycle.
+- Docker Desktop with `docker sandbox` support
+- Git
+- GitHub credentials (`gh auth` or `GITHUB_TOKEN`)

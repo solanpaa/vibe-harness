@@ -191,7 +191,7 @@ describe('executeStage', () => {
 
     const result = await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do the thing.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do the thing.', freshSession: false },
       stageIndex: 0,
       round: 1,
       isFirstStage: true,
@@ -234,7 +234,7 @@ describe('executeStage', () => {
     const sm = mockSessionManager();
     const result = await executeStage({
       runId,
-      stage: { name: 'plan', type: 'standard', promptTemplate: 'Plan.', freshSession: false },
+      stage: { name: 'plan', promptTemplate: 'Plan.', freshSession: false },
       stageIndex: 0,
       round: 1,
       isFirstStage: true,
@@ -262,7 +262,7 @@ describe('executeStage', () => {
 
     const result = await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do it.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do it.', freshSession: false },
       stageIndex: 0,
       round: 1,
       isFirstStage: true,
@@ -290,7 +290,7 @@ describe('executeStage', () => {
 
     await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do it.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do it.', freshSession: false },
       stageIndex: 0,
       round: 2,
       isFirstStage: false,
@@ -311,7 +311,7 @@ describe('executeStage', () => {
 
     await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do it.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do it.', freshSession: false },
       stageIndex: 0,
       round: 2,
       isFirstStage: false,
@@ -336,7 +336,7 @@ describe('executeStage', () => {
       runId,
       stage: {
         name: 'implement',
-        type: 'standard',
+
         promptTemplate: 'Do it.',
         freshSession: false,
         model: 'claude-sonnet',
@@ -374,7 +374,7 @@ describe('executeStage', () => {
 
     await executeStage({
       runId,
-      stage: { name: 'review', type: 'standard', promptTemplate: 'Review.', freshSession: true },
+      stage: { name: 'review', promptTemplate: 'Review.', freshSession: true },
       stageIndex: 1,
       round: 1,
       isFirstStage: false,
@@ -411,7 +411,7 @@ describe('executeStage', () => {
 
     const result = await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do it.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do it.', freshSession: false },
       stageIndex: 0,
       round: 1,
       isFirstStage: false,
@@ -442,7 +442,7 @@ describe('executeStage', () => {
 
     const result = await executeStage({
       runId,
-      stage: { name: 'implement', type: 'standard', promptTemplate: 'Do it.', freshSession: false },
+      stage: { name: 'implement', promptTemplate: 'Do it.', freshSession: false },
       stageIndex: 0,
       round: 1,
       isFirstStage: false,

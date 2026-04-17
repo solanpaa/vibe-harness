@@ -46,11 +46,12 @@ function resolveGlobalDeps(): ConsolidateFinishDeps {
  */
 export async function consolidateFinish(
   input: ConsolidateFinishInput,
+  depsOverride?: ConsolidateFinishDeps,
 ): Promise<void> {
   const { parentRunId, parallelGroupId } = input;
   const log = logger.child({ parentRunId, parallelGroupId, op: 'consolidate-finish' });
   const db = getDb();
-  const deps = resolveGlobalDeps();
+  const deps = depsOverride ?? resolveGlobalDeps();
 
   // ── Load journal — must exist and be in 'merged' phase ────────────
   const journal = db

@@ -45,11 +45,12 @@ function resolveGlobalDeps(): ConsolidateDeps {
 
 export async function consolidate(
   input: ConsolidateInput,
+  depsOverride?: ConsolidateDeps,
 ): Promise<ConsolidateOutput> {
   const { parentRunId, parallelGroupId } = input;
   const log = logger.child({ parentRunId, parallelGroupId });
   const db = getDb();
-  const deps = resolveGlobalDeps();
+  const deps = depsOverride ?? resolveGlobalDeps();
 
   // ── Load or resume journal (SAD §5.5.3) ───────────────────────────
   let journal = db

@@ -108,6 +108,8 @@ export interface AcpConnectOptions {
   worktreePath?: string;
   /** GitHub account username for token resolution (overrides default) */
   ghAccount?: string | null;
+  /** MCP servers to register with the ACP session (for split stages) */
+  mcpServers?: acp.McpServer[];
 }
 
 export interface AcpConnection {
@@ -159,7 +161,7 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     options: AcpConnectOptions,
     onEvent: AcpEventCallback,
   ): Promise<AcpConnection> {
-    const { sandboxName, isContinuation, env: extraEnv, model, ghAccount } = options;
+    const { sandboxName, isContinuation, env: extraEnv, model, ghAccount, mcpServers } = options;
     const log = logger.child({ sandboxName });
 
     // Tear down any existing connection for this sandbox to avoid orphaned processes
@@ -382,9 +384,9 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     // Create or load session
     const worktreePath = options.worktreePath;
     try {
-      log.info({ cwd: worktreePath, isContinuation }, 'Creating ACP session');
+      log.info({ cwd: worktreePath, isContinuation, mcpServerCount: mcpServers?.length ?? 0 }, 'Creating ACP session');
       const sessionResult = await Promise.race([
-        acpConnection.newSession({ cwd: worktreePath ?? '/', mcpServers: [] }),
+        acpConnection.newSession({ cwd: worktreePath ?? '/', mcpServers: mcpServers ?? [] }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('session/new timed out after 30s')), 30_000),
         ),

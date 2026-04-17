@@ -93,7 +93,7 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | ID | Requirement | Priority |
 |----|------------|----------|
 | FR-W1 | User can create workflow templates defining a sequence of stages | Must |
-| FR-W2 | Each stage has: name, type (`standard`/`split`), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean), and optional `model` override (e.g., `gpt-4.1-mini` for planning, `claude-opus-4.5` for implementation) | Must |
+| FR-W2 | Each stage has: name, optional `splittable` flag (permits ad-hoc split from review — see §2.5), prompt template, review settings (`reviewRequired`/`autoAdvance` — mutually exclusive), session settings (`freshSession`: boolean), and optional `model` override (e.g., `gpt-4.1-mini` for planning, `claude-opus-4.5` for implementation) | Must |
 | FR-W3 | User can start a workflow run against a project with a run description, model (optional, default for all stages), credential set (optional), base branch (optional, default: current checked-out branch — must be an actual branch ref, not detached HEAD), and target branch (optional, default: base branch). A quick one-shot uses a default single-stage template | Must |
 | FR-W4 | System executes stages sequentially. For each stage, the prompt is injected into the agent conversation (or a fresh conversation if `freshSession: true`). All stages share the same sandbox and worktree | Must |
 | FR-W5 | Standard stages with `reviewRequired: true` pause for human review after agent completes | Must |
@@ -118,9 +118,19 @@ Workflow Run (user-facing — the only execution unit users interact with)
 
 ### 2.5 Split Execution (Parallel Workflows)
 
+Split execution is **ad-hoc**, not predeclared. Any stage whose template marks
+`splittable: true` exposes a "Split" action on its review gate. When triggered,
+the system runs a splitter agent against the same sandbox, extracts proposals,
+launches children, consolidates, and then runs a globally-configured post-split
+stage chain (app setting `defaultPostSplitStages`). The prompt used by the
+splitter is also a global app setting (`defaultSplitterPromptTemplate`). Both
+settings are **snapshotted into the run** at the moment of decision
+(`workflow_runs.split_config_json`) so later setting edits do not affect the
+in-flight split. Child runs cannot themselves be split (no recursion).
+
 | ID | Requirement | Priority |
 |----|------------|----------|
-| FR-S1 | A "split" stage runs an agent that generates proposals (sub-tasks). Each proposal describes an independent unit of work | Must |
+| FR-S1 | From a review gate whose stage has `splittable: true`, the user can trigger a "Split" action that runs a splitter agent to generate proposals (sub-tasks). Each proposal describes an independent unit of work | Must |
 | FR-S2 | Each proposal has: title, description, affected files, optional workflow template override. Dependencies between proposals are metadata-only (displayed to user during review for manual sequencing decisions, not enforced at runtime) | Must |
 | FR-S3 | User can review, edit, add, and delete proposals before launching | Must |
 | FR-S4 | User can select which proposals to launch as parallel child workflow runs | Must |
@@ -130,9 +140,12 @@ Workflow Run (user-facing — the only execution unit users interact with)
 | FR-S8 | Consolidation begins when all children reach a terminal state (completed, failed, or cancelled). Only completed children are included in the merge | Must |
 | FR-S9 | Consolidation merges child branches sequentially into a consolidation branch (created from parent worktree HEAD) using `--no-ff`. Merge order follows proposal sort order | Must |
 | FR-S10 | On merge conflict during consolidation: system aborts the merge, marks the conflicting child, and presents the conflict to the user. User can: (a) resolve externally and retry consolidation, (b) exclude the conflicting child and re-consolidate, or (c) cancel consolidation | Must |
-| FR-S11 | After successful consolidation review and approval: the parent worktree is fast-forwarded to the consolidation branch. Subsequent stages in the parent workflow continue on this updated worktree. The parent's ACP session does NOT continue from children — a `freshSession` is started for any post-split stage, with the consolidation summary as context | Must |
+| FR-S11 | After successful consolidation review and approval: the parent worktree is fast-forwarded to the consolidation branch. The parent then runs the globally-configured `defaultPostSplitStages` (snapshot taken at decision time). Remaining stages from the original template are skipped. Post-split stages use `freshSession: true` with the consolidation summary as context | Must |
 | FR-S12 | If any children failed: user is notified and can choose to consolidate completed children only, retry failed children, or cancel the parallel group | Must |
 | FR-S13 | Child worktrees and sandboxes are cleaned up after successful consolidation merge. Failed/cancelled child worktrees are preserved until user explicitly deletes them | Must |
+| FR-S14 | The splitter prompt template (`defaultSplitterPromptTemplate`) and post-split stage chain (`defaultPostSplitStages`) are global app settings editable in Settings. Post-split stages cannot themselves be `splittable` (enforced at save time and at runtime). Both values are snapshotted into `workflow_runs.split_config_json` at decision time so subsequent setting edits do not alter an in-flight run | Must |
+| FR-S15 | A splitter that fails transitions the parent run to `stage_failed` (retry / cancel). A splitter that produces zero proposals transitions the parent to `stage_failed` with reason `no_proposals` (no silent fallback to linear continuation) | Must |
+| FR-S16 | Child workflow runs do not expose the Split action on their own review gates (no recursive split) | Must |
 
 ### 2.6 Human Review
 

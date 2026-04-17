@@ -26,11 +26,39 @@ const reviewCommentSchema = z.object({
 
 export type ReviewComment = z.infer<typeof reviewCommentSchema>;
 
+// SplitConfigSnapshot mirror as zod (kept inline to avoid forcing daemon
+// to import shared zod schemas; structurally compatible with the shared
+// `SplitConfigSnapshot` type).
+const splitConfigSnapshotSchema = z.object({
+  sourceStageName: z.string(),
+  sourceReviewId: z.string(),
+  triggeredAt: z.string(),
+  splitterPromptTemplate: z.string(),
+  extraDescription: z.string(),
+  effectiveSplitterPrompt: z.string(),
+  postSplitStages: z.array(z.object({
+    name: z.string(),
+    splittable: z.boolean().optional(),
+    promptTemplate: z.string(),
+    reviewRequired: z.boolean(),
+    autoAdvance: z.boolean(),
+    freshSession: z.boolean(),
+    model: z.string().optional(),
+    isFinal: z.boolean().optional(),
+  })),
+  skippedTemplateStages: z.array(z.string()),
+});
+
 export const reviewDecisionResponseSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('approve') }),
   z.object({
     action: z.literal('request_changes'),
     comments: z.array(reviewCommentSchema).min(1),
+  }),
+  z.object({
+    action: z.literal('split'),
+    extraDescription: z.string(),
+    splitConfig: splitConfigSnapshotSchema,
   }),
   z.object({ action: z.literal('cancel') }),
 ]);

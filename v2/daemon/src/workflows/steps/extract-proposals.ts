@@ -51,9 +51,9 @@ export async function extractProposals(
   const db = getDb();
   const { proposalService } = resolveGlobalDeps();
 
-  // ── Idempotency: check if proposals already exist for this stage ──
-  // Fix #3: Check both existence AND completeness. We parse the expected
-  // proposals first (deterministic), then compare count with existing rows.
+  // ── Primary path: proposals created via MCP tool calls ────────────
+  // The split-stage agent calls propose_task via the MCP bridge, which
+  // creates proposals directly in the DB. Check for those first.
   const existing = db
     .select()
     .from(schema.proposals)
@@ -65,30 +65,25 @@ export async function extractProposals(
     )
     .all();
 
-  // Parse to determine expected count (deterministic — same input always
-  // produces the same parsed output).
-  const parsed = proposalService.parseProposals(agentOutput);
-
-  if (existing.length > 0 && existing.length === parsed.length) {
-    log.info({ count: existing.length }, 'Proposals already extracted, returning cached');
+  if (existing.length > 0) {
+    log.info({ count: existing.length }, 'Proposals found in DB (created via MCP tool calls)');
     return existing.map(mapToRecord);
   }
 
-  // If we have a partial set (crash during previous insertion), we need
-  // to create only the missing proposals. Build a set of already-persisted
-  // titles for deduplication (titles are unique per run+stage).
-  const existingTitles = new Set(existing.map((e) => e.title));
+  // ── Fallback: parse proposals from agent output (JSON) ────────────
+  // If the agent didn't use MCP tools, try to extract from text output.
+  const parsed = proposalService.parseProposals(agentOutput);
 
-  // ── Persist each proposal (skip already-created ones) ─────────────
-  const records: ProposalRecord[] = existing.map(mapToRecord);
+  if (parsed.length === 0) {
+    log.warn('No proposals found via MCP or JSON parsing — agent may not have created any');
+    return [];
+  }
 
+  log.info({ count: parsed.length }, 'Proposals parsed from agent output (fallback)');
+
+  const records: ProposalRecord[] = [];
   for (let i = 0; i < parsed.length; i++) {
     const p = parsed[i];
-    if (existingTitles.has(p.title)) {
-      continue; // Already persisted in a prior partial run
-    }
-
-    // Use the service's idempotent createProposal (UNIQUE constraint)
     const created = proposalService.createProposal({
       workflowRunId: runId,
       stageName,
@@ -109,7 +104,6 @@ export async function extractProposals(
     });
   }
 
-  log.info({ count: records.length }, 'Proposals extracted and persisted');
   return records;
 }
 

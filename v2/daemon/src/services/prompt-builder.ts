@@ -11,7 +11,6 @@ export interface StagePromptInput {
   runDescription: string;
   stage: {
     name: string;
-    type: 'standard' | 'split';
     promptTemplate: string;
     freshSession: boolean;
   };
@@ -55,7 +54,9 @@ export function buildStagePrompt(input: StagePromptInput): string {
     return formatFreshSessionPrompt(runDescription, stage, freshSessionContext);
   }
 
-  // Standard prompt
+  // Standard prompt (also covers the synthetic splitter stage created by
+  // the ad-hoc split flow — its promptTemplate is already the fully-composed
+  // splitter prompt, so the standard formatter just wraps it).
   return formatStandardPrompt(runDescription, stage);
 }
 

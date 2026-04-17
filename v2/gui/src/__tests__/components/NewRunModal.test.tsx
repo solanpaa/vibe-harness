@@ -21,6 +21,7 @@ function makeMockClient() {
       ],
     }),
     listCredentialSets: vi.fn().mockResolvedValue({ sets: [] }),
+    listGhAccounts: vi.fn().mockResolvedValue({ accounts: [] }),
     getProjectBranches: vi.fn().mockResolvedValue({
       branches: [{ name: "main", isCurrent: true, isRemote: false, lastCommit: null }],
       currentBranch: "main",
@@ -89,34 +90,21 @@ describe("NewRunModal", () => {
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
+    // Project, template, and agent are auto-selected when only one option exists.
     await waitFor(() => {
       expect(mockClient.listProjects).toHaveBeenCalled();
+      expect(mockClient.listAgents).toHaveBeenCalled();
     });
-
-    // Fill in required fields
-    const projectSelect = screen.getByText("Project")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(projectSelect, { target: { value: "p1" } });
-
-    const templateSelect = screen.getByText("Workflow Template")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(templateSelect, { target: { value: "t1" } });
-
-    // Agent is auto-selected, but let's be explicit
-    const agentSelect = screen.getByText("Agent")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(agentSelect, { target: { value: "a1" } });
 
     const textarea = screen.getByPlaceholderText(
       "Describe what the agent should do...",
     );
     fireEvent.change(textarea, { target: { value: "Fix the bug" } });
 
-    const submitBtn = screen.getByText("Create Run");
-    expect(submitBtn).not.toBeDisabled();
+    await waitFor(() => {
+      const submitBtn = screen.getByText("Create Run");
+      expect(submitBtn).not.toBeDisabled();
+    });
   });
 
   it("calls onCreated with the run ID on successful submit", async () => {
@@ -126,30 +114,18 @@ describe("NewRunModal", () => {
 
     await waitFor(() => {
       expect(mockClient.listProjects).toHaveBeenCalled();
+      expect(mockClient.listAgents).toHaveBeenCalled();
     });
-
-    // Fill required fields
-    const projectSelect = screen.getByText("Project")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(projectSelect, { target: { value: "p1" } });
-
-    const templateSelect = screen.getByText("Workflow Template")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(templateSelect, { target: { value: "t1" } });
-
-    const agentSelect = screen.getByText("Agent")
-      .closest("div")!
-      .querySelector("select")!;
-    fireEvent.change(agentSelect, { target: { value: "a1" } });
 
     const textarea = screen.getByPlaceholderText(
       "Describe what the agent should do...",
     );
     fireEvent.change(textarea, { target: { value: "Implement feature X" } });
 
-    // Submit
+    await waitFor(() => {
+      expect(screen.getByText("Create Run")).not.toBeDisabled();
+    });
+
     fireEvent.click(screen.getByText("Create Run"));
 
     await waitFor(() => {

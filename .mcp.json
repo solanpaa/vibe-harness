@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "tauri": {
+      "tools": [
+        "*"
+      ],
+      "type": "local",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@hypothesi/tauri-mcp-server"
+      ],
+      "source": "user",
+      "sourcePath": "/Users/jannesolanpaa/.copilot/mcp-config.json"
+    }
+  }
+}

@@ -354,10 +354,10 @@ describe('GET /api/workflows', () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    // Route returns { workflows: [...] }
-    expect(body.workflows.length).toBeGreaterThanOrEqual(3);
+    // Route returns { templates: [...] }
+    expect(body.templates.length).toBeGreaterThanOrEqual(3);
 
-    const names = body.workflows.map((t: any) => t.name);
+    const names = body.templates.map((t: any) => t.name);
     expect(names).toContain('Quick Run');
     expect(names).toContain('Plan & Implement');
     expect(names).toContain('Full Review');
@@ -368,11 +368,11 @@ describe('GET /api/workflows', () => {
       req('/api/workflows', { headers: authHeaders() }),
     );
     const body = await res.json();
-    const quickRun = body.workflows.find((t: any) => t.name === 'Quick Run');
+    const quickRun = body.templates.find((t: any) => t.name === 'Quick Run');
     expect(quickRun.stages).toBeInstanceOf(Array);
     expect(quickRun.stageCount).toBe(1);
 
-    const fullReview = body.workflows.find((t: any) => t.name === 'Full Review');
+    const fullReview = body.templates.find((t: any) => t.name === 'Full Review');
     expect(fullReview.stageCount).toBe(5);
   });
 });

@@ -1,12 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { useDaemonStore } from "../stores/daemon";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type {
   WorkflowTemplate,
   WorkflowStage,
@@ -20,11 +13,11 @@ type View = "list" | "detail" | "create";
 
 const EMPTY_STAGE: WorkflowStage = {
   name: "",
-  type: "standard",
   promptTemplate: "",
   reviewRequired: true,
   autoAdvance: false,
   freshSession: false,
+  splittable: false,
 };
 
 // ─── Stage Pipeline (visual display) ────────────────────────────────────
@@ -36,8 +29,8 @@ function StagePipeline({ stages }: { stages: WorkflowStage[] }) {
         <div key={i} className="flex items-center gap-1">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground whitespace-nowrap">
             {stage.name || `Stage ${i + 1}`}
-            {stage.type === "split" && (
-              <span className="ml-1 text-amber-400" title="Split stage">⑂</span>
+            {stage.splittable && (
+              <span className="ml-1 text-purple-400" title="Splittable at review">⑂</span>
             )}
             {stage.reviewRequired && (
               <span className="ml-1 text-primary" title="Review gate">◉</span>
@@ -140,32 +133,15 @@ function StageEditor({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs text-muted-foreground mb-0.5">Name</label>
-              <input
-                type="text"
-                value={stage.name}
-                onChange={(e) => update(idx, { name: e.target.value })}
-                placeholder="e.g. plan"
-                className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-0.5">Type</label>
-              <Select
-                value={stage.type}
-                onValueChange={(v) => update(idx, { type: v as "standard" | "split" })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue>{stage.type === "split" ? "Split" : "Standard"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="split">Split</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-0.5">Name</label>
+            <input
+              type="text"
+              value={stage.name}
+              onChange={(e) => update(idx, { name: e.target.value })}
+              placeholder="e.g. plan"
+              className="w-full px-2 py-1 text-sm rounded bg-background border border-border text-foreground focus:border-primary focus:outline-none"
+            />
           </div>
 
           <div>
@@ -216,6 +192,18 @@ function StageEditor({
                 className="rounded bg-background border-border"
               />
               Fresh session
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-foreground cursor-pointer"
+              title="Allow the user to trigger an ad-hoc split from this stage's review"
+            >
+              <input
+                type="checkbox"
+                checked={stage.splittable ?? false}
+                onChange={(e) => update(idx, { splittable: e.target.checked })}
+                className="rounded bg-background border-border"
+              />
+              Splittable
             </label>
             <div className="flex items-center gap-1.5">
               <label className="text-muted-foreground text-xs">Model</label>
@@ -446,9 +434,11 @@ function TemplateDetail({
             <div key={i} className="border border-border rounded-lg p-3 bg-card">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-sm font-medium text-foreground">{stage.name}</span>
-                <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                  {stage.type}
-                </span>
+                {stage.splittable && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-purple-950/40 text-purple-300">
+                    splittable
+                  </span>
+                )}
                 {stage.reviewRequired && (
                   <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                     review
@@ -542,7 +532,7 @@ export function Workflows() {
     };
 
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <h1 className="text-sm font-medium text-foreground mb-6">Create Workflow Template</h1>
         <TemplateForm
           onSubmit={handleCreate}
@@ -557,7 +547,7 @@ export function Workflows() {
 
   if (view === "detail" && selectedTemplate) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <TemplateDetail
           template={selectedTemplate}
           onBack={() => {
@@ -579,7 +569,7 @@ export function Workflows() {
 
   if (!connected) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl h-full overflow-y-auto">
         <h1 className="text-sm font-medium text-foreground mb-4">Workflows</h1>
         <p className="text-muted-foreground">Daemon not connected.</p>
       </div>
@@ -587,7 +577,7 @@ export function Workflows() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6 max-w-4xl h-full overflow-y-auto">
       <h1 className="text-sm font-medium text-foreground mb-6">Workflow Templates</h1>
 
       {error && (

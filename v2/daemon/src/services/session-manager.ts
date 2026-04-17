@@ -55,6 +55,8 @@ export interface SessionCreateOptions {
   agentDef: AgentDefinition;
   /** GitHub account username for token resolution */
   ghAccount?: string | null;
+  /** MCP servers to register (for split stages) */
+  mcpServers?: import('@agentclientprotocol/sdk').McpServer[];
 }
 
 // ── Internal session state ───────────────────────────────────────────
@@ -82,11 +84,11 @@ interface ActiveSession {
 
 export interface SessionManager {
   create(runId: string, options: SessionCreateOptions): Promise<void>;
-  continue(runId: string, options?: { model?: string }): Promise<void>;
+  continue(runId: string, options?: { model?: string; mcpServers?: import('@agentclientprotocol/sdk').McpServer[] }): Promise<void>;
   fresh(
     runId: string,
     context: FreshSessionContext,
-    options?: { model?: string },
+    options?: { model?: string; mcpServers?: import('@agentclientprotocol/sdk').McpServer[] },
   ): Promise<void>;
   stop(runId: string): Promise<void>;
   sendPrompt(runId: string, message: string, attachments?: Array<{ name: string; type: string; dataUrl: string }>): Promise<void>;
@@ -338,7 +340,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const onEvent = makeEventHandler(session);
     log.info({ model, ghAccount }, 'Connecting ACP session');
     await acp.connect(
-      { sandboxName, isContinuation: false, env, model, worktreePath, ghAccount },
+      { sandboxName, isContinuation: false, env, model, worktreePath, ghAccount, mcpServers: options.mcpServers },
       onEvent,
     );
 
@@ -366,7 +368,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   async function sessionContinue(
     runId: string,
-    options?: { model?: string },
+    options?: { model?: string; mcpServers?: import('@agentclientprotocol/sdk').McpServer[] },
   ): Promise<void> {
     const session = getSession(runId);
     const log = logger.child({ runId, op: 'session.continue' });
@@ -377,28 +379,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const newModel = options?.model;
       const modelChanged = newModel != null && newModel !== session.currentModel;
+      const hasMcpServers = (options?.mcpServers?.length ?? 0) > 0;
 
       log.info(
-        { sandboxName: session.sandboxName, newModel, currentModel: session.currentModel, modelChanged, acpActive: acp.isActive(session.sandboxName) },
+        { sandboxName: session.sandboxName, newModel, currentModel: session.currentModel, modelChanged, hasMcpServers, acpActive: acp.isActive(session.sandboxName) },
         'Session continue: evaluating reconnect',
       );
 
-      if (acp.isActive(session.sandboxName) && !modelChanged) {
-        // ACP still active, same model — just re-register event handler
-        // for the new generation (resetCompletionState incremented it)
+      // If MCP servers are needed (split stage), always reconnect to register them
+      if (acp.isActive(session.sandboxName) && !modelChanged && !hasMcpServers) {
         const onEvent = makeEventHandler(session);
         acp.onEvent(session.sandboxName, onEvent);
         log.debug('ACP connection active, same model — re-registered event handler for new stage');
         return;
       }
 
-      // Reconnect — either because ACP dropped or model changed
+      // Reconnect — either because ACP dropped, model changed, or MCP servers needed
       if (acp.isActive(session.sandboxName)) {
-        log.info({ newModel }, 'Model changed, disconnecting ACP before reconnect');
+        log.info({ newModel, hasMcpServers }, 'Disconnecting ACP before reconnect');
         acp.disconnect(session.sandboxName);
       }
 
-      log.info({ model: newModel ?? session.currentModel }, 'Reconnecting ACP with --continue');
+      log.info({ model: newModel ?? session.currentModel, mcpServerCount: options?.mcpServers?.length ?? 0 }, 'Reconnecting ACP with --continue');
       const env = sandbox.getEnvVars(session.sandboxName);
       const onEvent = makeEventHandler(session);
       await acp.connect(
@@ -409,6 +411,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           model: newModel ?? session.currentModel,
           worktreePath: session.worktreePath,
           ghAccount: session.ghAccount,
+          mcpServers: options?.mcpServers,
         },
         onEvent,
       );
@@ -428,7 +431,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   async function fresh(
     runId: string,
     context: FreshSessionContext,
-    options?: { model?: string },
+    options?: { model?: string; mcpServers?: import('@agentclientprotocol/sdk').McpServer[] },
   ): Promise<void> {
     const session = getSession(runId);
     const log = logger.child({ runId, op: 'session.fresh' });
@@ -456,6 +459,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           model: newModel,
           worktreePath: session.worktreePath,
           ghAccount: session.ghAccount,
+          mcpServers: options?.mcpServers,
         },
         onEvent,
       );
