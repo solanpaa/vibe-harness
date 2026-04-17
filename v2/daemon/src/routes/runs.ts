@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
+import { dockerImageExists } from '../lib/docker-image.js';
 import { runWorkflowPipeline, type PipelineDeps } from '../workflows/pipeline.js';
 import { setPipelineDeps as setPipelineDepsInternal } from '../workflows/pipeline-deps.js';
 import {
@@ -133,12 +134,32 @@ runs.post('/api/runs', async (c) => {
   }
 
   const agent = db
-    .select({ id: schema.agentDefinitions.id })
+    .select({ id: schema.agentDefinitions.id, dockerImage: schema.agentDefinitions.dockerImage, name: schema.agentDefinitions.name })
     .from(schema.agentDefinitions)
     .where(eq(schema.agentDefinitions.id, agentDefinitionId))
     .get();
   if (!agent) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Agent definition not found' } }, 404);
+  }
+
+  // Pre-flight: when the agent specifies a custom Docker image, the image must
+  // be built locally before the run is allowed to start. Without this check,
+  // `sbx create --template <missing>` would fail mid-provisioning with a
+  // confusing 401 from Docker Hub. We surface a structured error so the GUI
+  // can guide the user to the build screen instead.
+  if (agent.dockerImage && !dockerImageExists(agent.dockerImage)) {
+    return c.json(
+      {
+        error: {
+          code: 'AGENT_IMAGE_MISSING',
+          message: `Docker image '${agent.dockerImage}' for agent '${agent.name}' is not built. Build it before starting a run.`,
+          agentDefinitionId: agent.id,
+          agentName: agent.name,
+          image: agent.dockerImage,
+        },
+      },
+      409,
+    );
   }
 
   // Resolve tri-state for persistence:

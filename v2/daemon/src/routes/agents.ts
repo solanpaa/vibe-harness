@@ -9,7 +9,8 @@ import {
   updateAgentDefinitionSchema,
 } from '../lib/validation/agents.js';
 import { logger } from '../lib/logger.js';
-import { execFile, execFileSync } from 'node:child_process';
+import { inspectDockerImage } from '../lib/docker-image.js';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -210,23 +211,16 @@ agents.get('/api/agents/:id/image-status', (c) => {
   if (!agent) return c.json({ error: { code: 'NOT_FOUND' } }, 404);
   if (!agent.dockerImage) return c.json({ exists: false, image: null });
 
-  try {
-    const result = execFileSync('docker', [
-      'image', 'inspect', agent.dockerImage,
-      '--format', '{{.Id}} {{.Created}} {{.Size}}',
-    ], { encoding: 'utf-8', timeout: 5000 }).trim();
+  const info = inspectDockerImage(agent.dockerImage);
+  if (!info.exists) return c.json({ exists: false, image: agent.dockerImage });
 
-    const [imageId, created, size] = result.split(' ');
-    return c.json({
-      exists: true,
-      image: agent.dockerImage,
-      imageId: imageId?.slice(0, 19),
-      created,
-      sizeMB: Math.round(parseInt(size || '0') / 1024 / 1024),
-    });
-  } catch {
-    return c.json({ exists: false, image: agent.dockerImage });
-  }
+  return c.json({
+    exists: true,
+    image: info.image,
+    imageId: info.imageId.slice(0, 19),
+    created: info.created,
+    sizeMB: Math.round(info.sizeBytes / 1024 / 1024),
+  });
 });
 
 // DELETE /api/agents/:id — delete agent definition

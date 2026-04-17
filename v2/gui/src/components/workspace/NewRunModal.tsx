@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useDaemonStore } from "../../stores/daemon";
+import { DaemonApiError } from "../../api/client";
 import {
   Select,
   SelectContent,
@@ -68,9 +70,17 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
   // UI state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the daemon rejects with AGENT_IMAGE_MISSING — drives the
+  // "image missing" alert with a clickable Build-image button.
+  const [missingImage, setMissingImage] = useState<{
+    agentDefinitionId: string;
+    agentName: string;
+    image: string;
+  } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const navigate = useNavigate();
 
   // Fetch initial data
   useEffect(() => {
@@ -227,7 +237,18 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
       onCreated(res.id);
       resetForm();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create run");
+      if (err instanceof DaemonApiError && err.code === "AGENT_IMAGE_MISSING") {
+        const d = err.details ?? {};
+        setMissingImage({
+          agentDefinitionId: String(d.agentDefinitionId ?? agentDefinitionId),
+          agentName: String(d.agentName ?? "agent"),
+          image: String(d.image ?? ""),
+        });
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create run");
+        setMissingImage(null);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -237,6 +258,12 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     sandboxMemory, sandboxCpus, overrideSandboxMemory, overrideSandboxCpus,
     attachments, onCreated,
   ]);
+
+  const goBuildImage = useCallback(() => {
+    if (!missingImage) return;
+    onClose();
+    navigate(`/settings?agent=${encodeURIComponent(missingImage.agentDefinitionId)}`);
+  }, [missingImage, navigate, onClose]);
 
   const resetForm = () => {
     setDescription("");
@@ -250,6 +277,7 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
     setAttachments([]);
     setExpanded(false);
     setError(null);
+    setMissingImage(null);
   };
 
   const handleKeyDown = useCallback(
@@ -624,6 +652,38 @@ export function NewRunModal({ open, onClose, onCreated }: NewRunModalProps) {
               </>
             );
           })()}
+
+          {/* Missing Docker image — block run, offer Build link */}
+          {missingImage && (
+            <div className="text-sm bg-amber-950/30 border border-amber-500/30 rounded-md px-4 py-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="mt-0.5 text-amber-400 shrink-0">
+                  <path d="M8 5.5v3M8 11h.01M2.5 13.5h11a1 1 0 00.87-1.5l-5.5-9.5a1 1 0 00-1.74 0l-5.5 9.5a1 1 0 00.87 1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <div className="flex-1">
+                  <div className="font-medium text-amber-300">Docker image not built</div>
+                  <div className="text-amber-200/80 mt-0.5">
+                    The agent <span className="font-mono">{missingImage.agentName}</span> needs the image{" "}
+                    <span className="font-mono">{missingImage.image}</span>. Build it before starting a run.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setMissingImage(null)}
+                  className="px-3 py-1.5 text-xs rounded-md text-amber-200/80 hover:text-amber-100 transition-colors"
+                >
+                  Dismiss
+                </button>
+                <button
+                  onClick={goBuildImage}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/90 text-amber-950 hover:bg-amber-400 transition-colors"
+                >
+                  Build image →
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Error */}
           {error && (

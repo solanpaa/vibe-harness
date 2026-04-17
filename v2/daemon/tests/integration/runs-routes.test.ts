@@ -110,6 +110,14 @@ beforeEach(() => {
 
   const agent = testDb.select().from(schema.agentDefinitions).limit(1).get()!;
   agentDefId = agent.id;
+  // The seeded copilot agent ships with a `dockerImage` that POST /api/runs
+  // pre-flight-checks against the host's Docker daemon. Clear it for these
+  // route-level tests so the check is skipped (we're testing route logic,
+  // not the host's image cache).
+  testDb.update(schema.agentDefinitions)
+    .set({ dockerImage: '' })
+    .where(eq(schema.agentDefinitions.id, agent.id))
+    .run();
   const template = testDb.select().from(schema.workflowTemplates).limit(1).get()!;
   templateId = template.id;
   projectId = crypto.randomUUID();
@@ -209,6 +217,27 @@ describe('POST /api/runs', () => {
       agentDefinitionId: crypto.randomUUID(),
     });
     expect(res.status).toBe(404);
+  });
+
+  it('returns 409 AGENT_IMAGE_MISSING when agent image is not present locally', async () => {
+    // Restore a docker image reference that almost certainly does not exist,
+    // so the pre-flight `docker image inspect` fails and we exercise the gate.
+    testDb.update(schema.agentDefinitions)
+      .set({ dockerImage: 'vibe-harness-test/definitely-missing:does-not-exist' })
+      .where(eq(schema.agentDefinitions.id, agentDefId))
+      .run();
+
+    const res = await req('POST', '/api/runs', {
+      workflowTemplateId: templateId,
+      projectId,
+      agentDefinitionId: agentDefId,
+      description: 'should be blocked',
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error.code).toBe('AGENT_IMAGE_MISSING');
+    expect(body.error.agentDefinitionId).toBe(agentDefId);
+    expect(body.error.image).toBe('vibe-harness-test/definitely-missing:does-not-exist');
   });
 });
 

@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactElement } from "react";
 import { NewRunModal } from "../../components/workspace/NewRunModal";
 import { useDaemonStore } from "../../stores/daemon";
+
+// react-router's useNavigate requires a Router ancestor. Wrap once here so
+// the individual tests stay focused on NewRunModal behaviour.
+function renderWithRouter(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 function makeMockClient() {
   return {
@@ -49,14 +57,14 @@ describe("NewRunModal", () => {
   });
 
   it("returns null when not open", () => {
-    const { container } = render(
+    const { container } = renderWithRouter(
       <NewRunModal open={false} onClose={onClose} onCreated={onCreated} />,
     );
     expect(container.innerHTML).toBe("");
   });
 
   it("renders form fields when open", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
@@ -73,7 +81,7 @@ describe("NewRunModal", () => {
   });
 
   it("has submit button disabled when required fields are empty", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
@@ -86,7 +94,7 @@ describe("NewRunModal", () => {
   });
 
   it("enables submit button when all required fields are filled", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
@@ -108,7 +116,7 @@ describe("NewRunModal", () => {
   });
 
   it("calls onCreated with the run ID on successful submit", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
@@ -145,7 +153,7 @@ describe("NewRunModal", () => {
   });
 
   it("calls onClose when close button is clicked", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 
@@ -154,7 +162,7 @@ describe("NewRunModal", () => {
   });
 
   it("calls onClose when Cancel button is clicked", async () => {
-    render(
+    renderWithRouter(
       <NewRunModal open={true} onClose={onClose} onCreated={onCreated} />,
     );
 

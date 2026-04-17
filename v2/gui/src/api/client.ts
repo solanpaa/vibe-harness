@@ -51,6 +51,43 @@ import type {
   UpdateSettingsRequest,
 } from "@vibe-harness/shared";
 
+/**
+ * Structured error thrown by `DaemonApiClient.fetch` when the daemon returns
+ * a non-2xx status. The body is parsed best-effort: when the daemon emits
+ * `{ error: { code, message, ... } }`, those fields are exposed for typed
+ * handling in callers; otherwise `code` falls back to `HTTP_<status>` and
+ * `message` to the raw response text.
+ */
+export class DaemonApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details: Record<string, unknown> | null;
+  readonly rawBody: string;
+
+  constructor(status: number, body: string) {
+    let code = `HTTP_${status}`;
+    let message = body || `Daemon API error ${status}`;
+    let details: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(body) as { error?: Record<string, unknown> };
+      const err = parsed?.error;
+      if (err && typeof err === "object") {
+        if (typeof err.code === "string") code = err.code;
+        if (typeof err.message === "string") message = err.message;
+        details = err;
+      }
+    } catch {
+      // body wasn't JSON; keep defaults
+    }
+    super(`Daemon API error ${status}: ${message}`);
+    this.name = "DaemonApiError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+    this.rawBody = body;
+  }
+}
+
 /** Read a file from ~/.vibe-harness/ via the Tauri FS plugin or `invoke`. */
 async function readStateFile(filename: string): Promise<string | null> {
   try {
@@ -128,7 +165,7 @@ export class DaemonClient {
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Daemon API error ${res.status}: ${body}`);
+      throw new DaemonApiError(res.status, body);
     }
 
     // 204 No Content

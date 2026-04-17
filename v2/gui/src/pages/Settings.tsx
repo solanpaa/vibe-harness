@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useDaemonStore } from "../stores/daemon";
 import type {
   AgentDefinition,
@@ -717,6 +718,26 @@ export function Settings() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const agentRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+
+  // Deep-link support: when navigated to /settings?agent=<id> (e.g. from the
+  // NewRunModal "Build image" button), auto-expand and scroll to that agent
+  // once its row has rendered. We consume the query param so subsequent edits
+  // to the same page don't re-trigger the scroll.
+  useEffect(() => {
+    const focusAgent = searchParams.get("agent");
+    if (!focusAgent || agents.length === 0) return;
+    if (!agents.some((a) => a.id === focusAgent)) return;
+    setExpandedAgentId(focusAgent);
+    requestAnimationFrame(() => {
+      agentRefs.current.get(focusAgent)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    // Strip the query param so reloads don't keep re-focusing.
+    const next = new URLSearchParams(searchParams);
+    next.delete("agent");
+    setSearchParams(next, { replace: true });
+  }, [agents, searchParams, setSearchParams]);
 
   const loadAgents = useCallback(async () => {
     if (!client) return;
@@ -826,14 +847,18 @@ export function Settings() {
           ) : (
             <>
               {agents.map((a) => (
-                <AgentRow
+                <div
                   key={a.id}
-                  agent={a}
-                  onDelete={handleDelete}
-                  onUpdated={loadAgents}
-                  isExpanded={expandedAgentId === a.id}
-                  onToggle={() => setExpandedAgentId(expandedAgentId === a.id ? null : a.id)}
-                />
+                  ref={(el) => { agentRefs.current.set(a.id, el); }}
+                >
+                  <AgentRow
+                    agent={a}
+                    onDelete={handleDelete}
+                    onUpdated={loadAgents}
+                    isExpanded={expandedAgentId === a.id}
+                    onToggle={() => setExpandedAgentId(expandedAgentId === a.id ? null : a.id)}
+                  />
+                </div>
               ))}
               {!showAddForm && (
                 <button
