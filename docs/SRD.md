@@ -277,7 +277,7 @@ in-flight split. Child runs cannot themselves be split (no recursion).
 | Multi-user / collaboration | Single-user local tool |
 | Custom MCP server configuration in GUI | Daemon-side only |
 | Claude Code / Gemini CLI agent support | Deferred — Copilot CLI only for MVP |
-| v1 data migration | Users start fresh with v2. v1 codebase kept in `v1/` for reference |
+| v1 data migration | Users start fresh with v2. v1 codebase removed; refer to git history if needed |
 | Side-by-side diff view | Unified diff only for MVP; side-by-side deferred |
 
 ### 4.3 Assumptions

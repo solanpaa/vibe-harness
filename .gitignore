@@ -2,29 +2,23 @@
 
 # dependencies
 node_modules/
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
 # testing
 coverage/
 
-# next.js
-.next/
-/out/
-
-# production
-/build
+# build outputs
+dist/
+/build/
+.nitro/
+.output/
+.vite/
+target/
 
 # misc
 .DS_Store
 *.pem
 
-# debug
+# debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -41,9 +35,8 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
-# Vibe Harness worktrees
+# Vibe Harness worktrees / demo data
 .vibe-harness-worktrees/
 vb-demo/
 ..bfg-report/

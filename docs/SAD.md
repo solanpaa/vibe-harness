@@ -1187,7 +1187,7 @@ On replay/restart, the step reads the journal and resumes from the last complete
 
 ```
 Source:
-  v2/daemon/ + v2/gui/ + v2/shared/
+  daemon/ + gui/ + shared/
 
 Daemon build:
   1. npm install (workspaces)

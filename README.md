@@ -1,133 +1,54 @@
-# Vibe Harness
+# Vibe Harness v2
 
-AI coding agent orchestrator — run GitHub Copilot CLI in Docker sandboxes with multi-stage workflow pipelines, human-in-the-loop code reviews, and parallel execution.
+Desktop application for orchestrating AI coding agents (Copilot CLI, Claude Code, Gemini) in Docker sandboxes. Tasks run agents against git repositories with optional multi-stage workflow pipelines (plan → implement → review).
 
-## What It Does
+## Architecture
 
-Vibe Harness wraps GitHub Copilot CLI in a web-based orchestration layer that adds:
+- **daemon/** — Nitro HTTP server: API, task lifecycle, sandbox management, SQLite via Drizzle
+- **gui/** — Tauri + React desktop app: project/task UI, live streaming, review interface
+- **shared/** — TypeScript types and contracts shared between daemon and GUI
 
-- **Multi-stage workflows** — Plan → Implement → Review → Fix → Commit, with automatic stage progression
-- **Human review gates** — Pause between stages to review diffs, add inline comments, approve or request changes
-- **Git worktree isolation** — Each task runs on its own branch; changes merge to main only after approval
-- **Mid-task intervention** — Send follow-up messages to the agent while it's working
-- **Parallel execution** — Split work into independent sub-tasks that run concurrently
-- **Credential injection** — Securely pass environment variables and file mounts into sandboxes
+## Prerequisites
+
+- **Node.js** 20+
+- **Docker** (with `docker sandbox` support)
+- **Git**
+- **Rust / Cargo** (for GUI — install via [rustup](https://rustup.rs))
 
 ## Quick Start
 
 ```bash
-npx github:solanpaa/vibe-harness
-```
-
-This installs the package, checks prerequisites, builds the Next.js app on first run, and opens the UI at [http://localhost:3000](http://localhost:3000).
-
-### Options
-
-```bash
-npx github:solanpaa/vibe-harness --port 4000          # Custom port
-npx github:solanpaa/vibe-harness --no-open             # Don't open browser
-npx github:solanpaa/vibe-harness --data-dir ~/my-data  # Custom data directory
-```
-
-### Global Install
-
-```bash
-npm install -g github:solanpaa/vibe-harness
-vibe-harness
-```
-
-### Pin a Version
-
-```bash
-npx github:solanpaa/vibe-harness#v0.2.0   # Tagged release
-npx github:solanpaa/vibe-harness#main      # Latest main
-```
-
-## Prerequisites
-
-All checked automatically on startup:
-
-- **Node.js >= 24**
-- **Docker Desktop** — running
-- **git**
-- **GitHub CLI** (`gh`) — installed and authenticated
-- **GitHub Copilot CLI** (`copilot`) — installed via `gh extension install github/gh-copilot`
-
-> **Note:** macOS and Linux only. Windows is not currently supported.
-
-## How It Works
-
-### Projects
-
-Point Vibe Harness at a local git repository. The agent works in an isolated git worktree so your working directory stays clean.
-
-### Tasks
-
-A task is a single agent execution. Create a task with a prompt, and the agent runs inside a Docker sandbox with your project mounted. You can send follow-up messages while it's running.
-
-### Workflows
-
-Workflows chain multiple tasks into a pipeline. The default workflow has five stages:
-
-1. **Plan** — Agent analyzes the codebase and creates an implementation plan (no code changes)
-2. **Implement** — Agent implements the plan (auto-advances to review)
-3. **Review** — Agent reviews its own implementation against the plan (auto-advances to fix)
-4. **Fix** — Agent addresses any issues found during review
-5. **Commit** — Agent prepares a clean commit with a conventional commit message
-
-Stages with `reviewRequired` pause for human approval. Approve to advance, or request changes to have the agent try again with your feedback.
-
-### Reviews
-
-When a task completes, a review is automatically created with the git diff and an AI-generated summary.
-
-You can then inspect the diff, add inline comments, and approve or request changes. Approving a standalone task merges the worktree branch to main. Approving a workflow stage advances to the next stage.
-
-### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `⌘N` | New task |
-| `↑` / `k` | Navigate up |
-| `↓` / `j` | Navigate down |
-| `Esc` | Clear selection |
-
-## Data Directory
-
-Database is stored at `~/.vibe-harness/vibe-harness.db` (SQLite). Override with `--data-dir` or `DATABASE_URL=file:/path/to/db.sqlite`.
-
-## Development
-
-```bash
+# Install all workspace dependencies
 npm install
-npm run dev          # Dev server on :3000
-npm run build        # Production build (includes type checking)
-npm run lint         # ESLint
-npm run test         # Vitest
+
+# Start the daemon (API server on :3000)
+npm run dev
+
+# In another terminal — start the GUI
+npm run dev:gui
 ```
 
-The dev server uses `./vibe-harness.db` in the project root. Delete it to reset.
+## Scripts
 
-## Custom Sandbox Image
+| Command            | Description                          |
+| ------------------ | ------------------------------------ |
+| `npm run dev`      | Start daemon dev server              |
+| `npm run dev:gui`  | Start Tauri GUI in dev mode          |
+| `npm run build`    | Production build (all workspaces)    |
+| `npm run test`     | Run tests (all workspaces)           |
+| `npm run typecheck`| Type-check (all workspaces)          |
 
-The default Docker sandbox extends the official Copilot CLI image with additional tools:
-
-- **Node.js 25** + npm, pnpm, TypeScript, tsx
-- **Python 3.14** (via uv)
-- **uv / uvx** (Astral Python package manager)
-- **Terraform** (latest)
-- **MCP bridge** for tool calls back to the host
-
-### Building
+## Production Build
 
 ```bash
-./docker/build.sh
-# or:
-docker build -t vibe-harness/copilot:latest -f docker/Dockerfile.copilot docker/
+# Daemon
+cd daemon && bash scripts/build.sh
+# Output: daemon/.output/server/index.mjs
+
+# GUI (Vite frontend)
+cd gui && npm run build
 ```
 
-The image is built automatically on first run if missing.
+## Docs
 
-### Customizing
-
-Edit `docker/Dockerfile.copilot` and rebuild. The agent definition in the database points to the image tag — update it via the Settings page or the API if you change the tag.
+See [../docs/](../docs/) for detailed design documents.

@@ -1,1 +1,0 @@
-ALTER TABLE `credential_entries` ADD `mount_path` text;

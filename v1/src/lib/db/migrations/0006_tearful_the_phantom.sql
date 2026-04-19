@@ -1,1 +1,0 @@
-ALTER TABLE `tasks` ADD `exit_code` integer;
