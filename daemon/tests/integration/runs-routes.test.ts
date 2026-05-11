@@ -220,8 +220,10 @@ describe('POST /api/runs', () => {
   });
 
   it('returns 409 AGENT_IMAGE_MISSING when agent image is not present locally', async () => {
-    // Restore a docker image reference that almost certainly does not exist,
-    // so the pre-flight `docker image inspect` fails and we exercise the gate.
+    // Set an image reference that almost certainly is not present in the
+    // host docker / podman / microsandbox image cache, so the pre-flight
+    // `imageExists()` lookup (docker image inspect → podman → SDK) misses
+    // and we exercise the gate.
     testDb.update(schema.agentDefinitions)
       .set({ dockerImage: 'vibe-harness-test/definitely-missing:does-not-exist' })
       .where(eq(schema.agentDefinitions.id, agentDefId))

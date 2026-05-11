@@ -12,7 +12,8 @@ import { execFileSync } from 'node:child_process';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { logger } from '../lib/logger.js';
-import { dockerImageExists } from '../lib/docker-image.js';
+import { imageExists } from '../lib/image-inspector.js';
+import type { LocalRegistry } from '../services/local-registry.js';
 import { runWorkflowPipeline, type PipelineDeps } from '../workflows/pipeline.js';
 import { setPipelineDeps as setPipelineDepsInternal } from '../workflows/pipeline-deps.js';
 import {
@@ -41,11 +42,16 @@ const runs = new Hono();
 // a simple module-level holder that must be initialized at startup.
 
 let pipelineDeps: PipelineDeps | null = null;
+let runsRouteLocalRegistry: LocalRegistry | null = null;
 
 export function setPipelineDeps(deps: PipelineDeps): void {
   pipelineDeps = deps;
   // Also set on the pipeline module so the workflow can resolve deps on replay
   setPipelineDepsInternal(deps);
+}
+
+export function setRunsRouteLocalRegistry(reg: LocalRegistry): void {
+  runsRouteLocalRegistry = reg;
 }
 
 function getDeps(): PipelineDeps {
@@ -142,24 +148,47 @@ runs.post('/api/runs', async (c) => {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Agent definition not found' } }, 404);
   }
 
-  // Pre-flight: when the agent specifies a custom Docker image, the image must
-  // be built locally before the run is allowed to start. Without this check,
-  // `sbx create --template <missing>` would fail mid-provisioning with a
-  // confusing 401 from Docker Hub. We surface a structured error so the GUI
-  // can guide the user to the build screen instead.
-  if (agent.dockerImage && !dockerImageExists(agent.dockerImage)) {
-    return c.json(
-      {
-        error: {
-          code: 'AGENT_IMAGE_MISSING',
-          message: `Docker image '${agent.dockerImage}' for agent '${agent.name}' is not built. Build it before starting a run.`,
-          agentDefinitionId: agent.id,
-          agentName: agent.name,
-          image: agent.dockerImage,
+  // Pre-flight: the agent's image must be available somewhere microsandbox
+  // can boot from. We accept either:
+  //   - present in the daemon-managed local registry (the common case for
+  //     images built via POST /api/agents/:id/build), OR
+  //   - a registry-qualified ref the host docker/podman or microsandbox
+  //     runtime cache knows about (e.g. ghcr.io/..., or a public Docker Hub
+  //     image already pulled).
+  //
+  // We check ONLY the local registry for unqualified refs — checking the
+  // host docker cache would be misleading because microsandbox cannot pull
+  // from there. If the image is missing from the registry, surface
+  // AGENT_IMAGE_MISSING so the GUI sends the user to the build screen.
+  if (agent.dockerImage) {
+    let available = false;
+    if (runsRouteLocalRegistry && !runsRouteLocalRegistry.isRegistryQualified(agent.dockerImage)) {
+      try {
+        await runsRouteLocalRegistry.ensureRunning();
+        available = await runsRouteLocalRegistry.manifestExists(agent.dockerImage);
+      } catch {
+        /* registry failed to start — fall through */
+      }
+    } else if (agent.dockerImage) {
+      // Qualified ref — trust that microsandbox will pull from upstream.
+      available = await imageExists(agent.dockerImage);
+    }
+    if (!available) {
+      return c.json(
+        {
+          error: {
+            code: 'AGENT_IMAGE_MISSING',
+            message: runsRouteLocalRegistry
+              ? `Image '${agent.dockerImage}' for agent '${agent.name}' has not been pushed to the local registry. Build it via POST /api/agents/${agent.id}/build before starting a run.`
+              : `Image '${agent.dockerImage}' for agent '${agent.name}' is not available locally. Build it before starting a run.`,
+            agentDefinitionId: agent.id,
+            agentName: agent.name,
+            image: agent.dockerImage,
+          },
         },
-      },
-      409,
-    );
+        409,
+      );
+    }
   }
 
   // Resolve tri-state for persistence:

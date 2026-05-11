@@ -9,13 +9,22 @@ import {
   updateAgentDefinitionSchema,
 } from '../lib/validation/agents.js';
 import { logger } from '../lib/logger.js';
-import { inspectDockerImage } from '../lib/docker-image.js';
-import { execFile } from 'node:child_process';
+import { inspectImage } from '../lib/image-inspector.js';
+import type { LocalRegistry } from '../services/local-registry.js';
+import { execFile, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const agents = new Hono();
+
+// The build route needs access to the local registry to push freshly-built
+// images. We accept it via a setter so the route can be wired up at app
+// bootstrap without import-time side effects.
+let localRegistry: LocalRegistry | null = null;
+export function setAgentsRouteDeps(deps: { localRegistry: LocalRegistry }): void {
+  localRegistry = deps.localRegistry;
+}
 
 // GET /api/agents — list all agent definitions
 agents.get('/api/agents', (c) => {
@@ -128,7 +137,13 @@ agents.put('/api/agents/:id', async (c) => {
   return c.json(updated);
 });
 
-// POST /api/agents/:id/build — build Docker image from Dockerfile
+// POST /api/agents/:id/build — build a container image from the stored
+// Dockerfile so microsandbox can boot it. Pipeline:
+//   1. docker buildx build -t <image> <buildDir>      (or `podman build` fallback)
+//
+// Microsandbox can boot images directly from the host docker/podman cache —
+// no separate "template load" step is needed. If the host has neither
+// docker nor podman, the build fails with a clear error.
 agents.post('/api/agents/:id/build', (c) => {
   const id = c.req.param('id');
   const db = getDb();
@@ -140,7 +155,7 @@ agents.post('/api/agents/:id/build', (c) => {
   if (!agent.dockerImage) return c.json({ error: { code: 'NO_IMAGE_NAME', message: 'No image name defined' } }, 400);
 
   const log = logger.child({ agentId: id, imageName: agent.dockerImage });
-  log.info('Starting Docker image build');
+  log.info('Starting container image build');
 
   const buildDir = mkdtempSync(join(tmpdir(), 'vibe-build-'));
   writeFileSync(join(buildDir, 'Dockerfile'), agent.dockerfile);
@@ -153,42 +168,179 @@ agents.post('/api/agents/:id/build', (c) => {
       const send = (data: string) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ output: data })}\n\n`));
       };
+      const finish = (success: boolean) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, success })}\n\n`));
+        controller.close();
+        try { rmSync(buildDir, { recursive: true }); } catch { /* best-effort cleanup */ }
+      };
 
-      send(`Building image ${imageName}...\n`);
+      const runStep = (label: string, cmd: string, args: string[]): Promise<number> =>
+        new Promise((resolve, reject) => {
+          send(`\n▶ ${label}: ${cmd} ${args.join(' ')}\n`);
+          let proc: ChildProcess;
+          try {
+            proc = execFile(cmd, args, { timeout: 600_000 });
+          } catch (err) {
+            reject(err);
+            return;
+          }
+          proc.stdout?.on('data', (chunk: Buffer) => send(chunk.toString()));
+          proc.stderr?.on('data', (chunk: Buffer) => send(chunk.toString()));
+          proc.on('error', (err: Error) => reject(err));
+          proc.on('close', (code: number | null) => resolve(code ?? 1));
+        });
 
-      const proc = execFile('docker', ['build', '-t', imageName, buildDir], {
-        timeout: 600000,
-      });
+      // Pick the available container builder + a strategy for getting the
+      // image into the daemon-managed local registry. Three paths, in order
+      // of preference:
+      //   1. `docker buildx build --push` — pushes directly to the registry,
+      //      bypassing the docker daemon's image store. This is the only path
+      //      that reliably works with plain HTTP registries: `docker push`
+      //      after `buildx --load` hangs because buildx produces multi-arch
+      //      / attested manifests the classic push client cannot ship.
+      //   2. `docker build` + `localRegistry.pushImage()` (no buildx).
+      //   3. `podman build` + `localRegistry.pushImage()`.
+      //
+      // The host architecture is pinned so buildx produces a single-platform
+      // image (no manifest list), which microsandbox can boot.
+      const hostArch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'amd64' : process.arch;
+      const platform = `linux/${hostArch}`;
 
-      proc.stdout?.on('data', (chunk: Buffer) => {
-        send(chunk.toString());
-      });
+      interface BuilderStrategy {
+        cmd: string;
+        args: (registryRef: string) => string[];
+        /** True when the build step already pushed the image (--push). */
+        pushedDirectly: boolean;
+        registryRef: string;
+      }
 
-      proc.stderr?.on('data', (chunk: Buffer) => {
-        send(chunk.toString());
-      });
-
-      proc.on('close', (code: number | null) => {
-        if (code === 0) {
-          send('\n✅ Build succeeded!\n');
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, success: true })}\n\n`));
-          log.info('Docker image build succeeded');
-        } else {
-          send(`\n❌ Build failed (exit code ${code})\n`);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, success: false })}\n\n`));
-          log.warn({ exitCode: code }, 'Docker image build failed');
+      const detectBuilder = async (): Promise<BuilderStrategy | null> => {
+        if (!localRegistry) return null;
+        const registryRef = localRegistry.rewriteImageRef(imageName); // host-side ref (localhost:5050/...)
+        const pushRef = localRegistry.pushRef(imageName);              // buildx-side ref (host.docker.internal:5050/...)
+        const tryRun = (cmd: string, args: string[]): Promise<boolean> =>
+          new Promise((resolve) => {
+            execFile(cmd, args, { timeout: 5_000 }, (err) => resolve(!err));
+          });
+        if (await tryRun('docker', ['buildx', 'version'])) {
+          return {
+            cmd: 'docker',
+            // BuildKit's `--output type=image,...,push=true,registry.insecure=true`
+            // allows plain-HTTP pushes. We push under `host.docker.internal:5050`
+            // because Docker Desktop's BuildKit runs in a separate VM and cannot
+            // reach the host's `localhost`. The registry stores blobs by image
+            // path only, so the daemon and microsandbox can then pull the same
+            // blobs back at `localhost:5050/<image>`.
+            args: (_ref) => [
+              'buildx', 'build',
+              '--provenance=false',
+              '--platform', platform,
+              '--output',
+              `type=image,name=${pushRef},push=true,registry.insecure=true`,
+              buildDir,
+            ],
+            pushedDirectly: true,
+            registryRef,
+          };
         }
-        controller.close();
-        try { rmSync(buildDir, { recursive: true }); } catch {}
-      });
+        if (await tryRun('docker', ['version'])) {
+          return {
+            cmd: 'docker',
+            args: (_ref) => ['build', '--platform', platform, '-t', imageName, buildDir],
+            pushedDirectly: false,
+            registryRef,
+          };
+        }
+        if (await tryRun('podman', ['version'])) {
+          return {
+            cmd: 'podman',
+            args: (_ref) => ['build', '--platform', platform, '-t', imageName, buildDir],
+            pushedDirectly: false,
+            registryRef,
+          };
+        }
+        return null;
+      };
 
-      proc.on('error', (err: Error) => {
-        send(`\n❌ Build error: ${err.message}\n`);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, success: false })}\n\n`));
-        controller.close();
-        log.error({ err }, 'Docker image build error');
-        try { rmSync(buildDir, { recursive: true }); } catch {}
-      });
+      (async () => {
+        try {
+          if (!localRegistry) {
+            send('\n❌ Local registry not wired into the daemon — cannot push image.\n');
+            log.error('localRegistry dependency missing on agents route');
+            finish(false);
+            return;
+          }
+          // Make sure the registry is up BEFORE we kick off a long build,
+          // so the user sees the "booting registry" message early.
+          send(`\n▶ Ensuring local registry at ${localRegistry.endpoint()} is running\n`);
+          try {
+            await localRegistry.ensureRunning();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            send(`\n❌ Failed to start local registry: ${message}\n`);
+            log.error({ err }, 'Local registry start failed');
+            finish(false);
+            return;
+          }
+
+          const builder = await detectBuilder();
+          if (!builder) {
+            send(
+              '\n❌ No container image builder found. Install Docker (with buildx) or Podman: ' +
+              'https://docs.docker.com/get-docker/ or https://podman.io/docs/installation\n',
+            );
+            log.warn('No container builder available');
+            finish(false);
+            return;
+          }
+
+          const targetRef = builder.pushedDirectly ? builder.registryRef : imageName;
+          const code = await runStep(
+            builder.pushedDirectly
+              ? `Building + pushing ${builder.registryRef} via ${builder.cmd} buildx`
+              : `Building image ${imageName} with ${builder.cmd}`,
+            builder.cmd,
+            builder.args(targetRef),
+          );
+          if (code !== 0) {
+            send(`\n❌ ${builder.cmd} build failed (exit code ${code})\n`);
+            log.warn({ exitCode: code, builder: builder.cmd }, 'Image build failed');
+            finish(false);
+            return;
+          }
+
+          if (!builder.pushedDirectly) {
+            try {
+              const builderName = builder.cmd === 'podman' ? 'podman' : 'docker';
+              await localRegistry.pushImage(imageName, builderName, { onLine: send });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              send(`\n❌ Failed to push image to local registry: ${message}\n`);
+              log.error({ err }, 'Local registry push failed');
+              finish(false);
+              return;
+            }
+          }
+
+          send(`\n✅ Build succeeded — image available at ${builder.registryRef}\n`);
+          log.info(
+            { registryRef: builder.registryRef, builder: builder.cmd, pushedDirectly: builder.pushedDirectly },
+            'Image built and pushed to local registry',
+          );
+          // We don't prewarm the microsandbox image cache here — the pull
+          // happens at first-workflow-run time. (Prewarming via a throwaway
+          // Sandbox.create() has been observed to stall in the SDK's pull
+          // layer for reasons we haven't isolated; on-demand pull from the
+          // workflow path works reliably and the 30-minute mutex timeout in
+          // SandboxService.getOrCreate accommodates large agent images.)
+          finish(true);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          send(`\n❌ Build error: ${message}\n`);
+          log.error({ err }, 'Image build error');
+          finish(false);
+        }
+      })();
     },
   });
 
@@ -201,8 +353,12 @@ agents.post('/api/agents/:id/build', (c) => {
   });
 });
 
-// GET /api/agents/:id/image-status — check if Docker image exists locally
-agents.get('/api/agents/:id/image-status', (c) => {
+// GET /api/agents/:id/image-status — check whether the agent's image is
+// available to microsandbox. We probe the daemon's local registry first
+// (that's where microsandbox actually pulls from for daemon-built images),
+// then fall back to docker/podman/microsandbox-runtime caches for
+// registry-qualified refs.
+agents.get('/api/agents/:id/image-status', async (c) => {
   const id = c.req.param('id');
   const db = getDb();
 
@@ -211,7 +367,25 @@ agents.get('/api/agents/:id/image-status', (c) => {
   if (!agent) return c.json({ error: { code: 'NOT_FOUND' } }, 404);
   if (!agent.dockerImage) return c.json({ exists: false, image: null });
 
-  const info = inspectDockerImage(agent.dockerImage);
+  if (localRegistry && !localRegistry.isRegistryQualified(agent.dockerImage)) {
+    try {
+      if (await localRegistry.manifestExists(agent.dockerImage)) {
+        return c.json({
+          exists: true,
+          image: agent.dockerImage,
+          imageId: '',
+          created: '',
+          sizeMB: 0,
+          source: 'local-registry',
+          registryEndpoint: localRegistry.endpoint(),
+        });
+      }
+    } catch {
+      /* registry not running / not reachable — fall through */
+    }
+  }
+
+  const info = await inspectImage(agent.dockerImage);
   if (!info.exists) return c.json({ exists: false, image: agent.dockerImage });
 
   return c.json({
@@ -220,6 +394,7 @@ agents.get('/api/agents/:id/image-status', (c) => {
     imageId: info.imageId.slice(0, 19),
     created: info.created,
     sizeMB: Math.round(info.sizeBytes / 1024 / 1024),
+    source: info.source,
   });
 });
 
