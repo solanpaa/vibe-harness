@@ -144,8 +144,11 @@ export async function reconcileOnStartup(
     }
   }
 
-  // Step 4: Stop orphaned sandboxes (vibe-* with no matching active run)
+  // Step 4: Stop orphaned sandboxes (vibe-* with no matching active run).
+  // The `vibe-registry` sandbox is daemon-managed via local-registry.ts and
+  // is intentionally not tracked as a run — skip it here.
   for (const sandbox of liveSandboxes) {
+    if (sandbox.name === 'vibe-registry') continue;
     if (!accountedSandboxes.has(sandbox.name)) {
       log.warn({ sandboxName: sandbox.name }, 'Stopping orphaned sandbox');
       try {

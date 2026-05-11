@@ -33,10 +33,10 @@ Vibe Harness v2 is a desktop-native AI coding agent orchestrator. It consists of
 │  │                  │◄──────►│  │  (workflow event log)   │  │   │
 │  └─────────────────┘         └──────────────────────────────┘   │
 │                                          │                       │
-│                                          │ docker sandbox run    │
+│                                          │ microsandbox SDK      │
 │                                          ▼                       │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Docker Sandbox(es)                                       │   │
+│  │  microsandbox microVMs                                    │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │   │
 │  │  │ Run A    │  │ Run B    │  │ Run N    │               │   │
 │  │  │ Copilot  │  │ Copilot  │  │ Copilot  │               │   │
@@ -62,7 +62,7 @@ Vibe Harness v2 is a desktop-native AI coding agent orchestrator. It consists of
 | **Daemon** | All business logic, state management, agent orchestration | Node.js, Hono, Nitro, `use workflow`, Drizzle+SQLite |
 | **GUI** | Presentation only — renders state, sends commands | Tauri 2.0, React, Vite, Streamdown |
 | **CLI** (post-MVP) | Thin client — same commands as GUI, terminal output | Node.js, Unix socket client |
-| **Docker Sandboxes** | Isolated agent execution environments | `docker sandbox run`, custom image |
+| **Microsandbox microVMs** | Isolated agent execution environments | [`microsandbox`](https://github.com/superradcompany/microsandbox) SDK, custom image |
 | **Git Worktrees** | Branch isolation per workflow run | `git worktree add/remove` |
 
 ### 1.3 Key Architectural Principles

@@ -12,7 +12,8 @@ import { getDb, closeDb } from "./db/index.js";
 import { eq, and, inArray } from 'drizzle-orm';
 import * as schema from "./db/schema.js";
 import { reconcileOnStartup } from "./lib/reconcile.js";
-import { checkSbxAvailable, ensureLocalhostPolicy } from "./lib/sbx-prereqs.js";
+import { checkSandboxRuntimeAvailable } from "./lib/sandbox-prereqs.js";
+import { createLocalRegistry } from "./services/local-registry.js";
 import { createSandboxService, type SandboxService } from "./services/sandbox.js";
 import { createWorktreeService } from "./services/worktree.js";
 import { createAcpClient } from "./services/acp-client.js";
@@ -22,7 +23,8 @@ import { createReviewService } from "./services/review-service.js";
 import { createProposalService } from "./services/proposal-service.js";
 import { createBranchNamer } from "./services/branch-namer.js";
 import { parseUnifiedDiff } from "./services/diff-parser.js";
-import { setPipelineDeps } from "./routes/runs.js";
+import { setPipelineDeps, setRunsRouteLocalRegistry } from "./routes/runs.js";
+import { setAgentsRouteDeps } from "./routes/agents.js";
 import * as streamingService from "./services/streaming-service.js";
 
 // ── Single-instance guard ───────────────────────────────────────────
@@ -58,13 +60,22 @@ logger.info("Auth token ready");
 const db = getDb(getDbPath());
 logger.info("Database initialized");
 
+// Create the daemon-managed local container registry (lazy-booted on first
+// build/run that needs it). Microsandbox does not read the host docker cache,
+// so we host a registry:3 inside a microsandbox VM and push host-built images
+// to it.
+const localRegistry = createLocalRegistry({ logger });
+// Best-effort: clear stale microsandbox download locks left by previous
+// crashed pulls so the SDK doesn't deadlock on first Sandbox.create().
+localRegistry.cleanStartupState();
+
 // Create sandbox service for reconciliation and shutdown
-const sandboxService: SandboxService = createSandboxService({ logger });
+const sandboxService: SandboxService = createSandboxService({ logger, localRegistry });
 
 // Create all services needed by the workflow pipeline
 const worktreeService = createWorktreeService({ logger, diffParser: { parseUnifiedDiff } });
 const ghAccountService = createGhAccountService();
-const acpClient = createAcpClient({ logger, ghAccountService });
+const acpClient = createAcpClient({ logger, ghAccountService, sandboxService });
 const branchNamer = createBranchNamer({ logger });
 const sessionManager = createSessionManager({
   sandbox: sandboxService,
@@ -92,19 +103,22 @@ setPipelineDeps({
   streamingService,
   sandboxService,
 });
+setRunsRouteLocalRegistry(localRegistry);
+setAgentsRouteDeps({ localRegistry });
 logger.info("Pipeline deps initialized");
 
 // Startup reconciliation (SAD §2.1.3): mark crashed runs as failed,
 // stop orphaned sandboxes, replay pending hook resumes.
 // Awaited before serving so clients never see stale in-flight state.
 //
-// Also runs sbx prereq checks (CLI present, network policy allows
-// localhost:<daemonPort> for the in-sandbox MCP bridge).
+// Also runs prereq checks (microsandbox SDK loads). Microsandbox network
+// policies are per-sandbox (see lib/network-policy.ts), so there is no
+// global policy to bootstrap at startup.
 
 const daemonPort = Number(process.env.NITRO_PORT ?? 19423);
 
 Promise.all([
-  checkSbxAvailable(logger).then((ok) => ok ? ensureLocalhostPolicy(daemonPort, logger) : undefined),
+  checkSandboxRuntimeAvailable(logger),
   reconcileOnStartup(sandboxService),
 ])
   .catch((err) => {
@@ -177,6 +191,13 @@ async function cleanup(): Promise<void> {
     logger.info({ count: liveSandboxes.length }, "Active sandboxes stopped");
   } catch (err) {
     logger.error({ err }, "Error stopping sandboxes during shutdown");
+  }
+
+  // Stop the local registry sandbox (if it was started).
+  try {
+    await localRegistry.stop();
+  } catch (err) {
+    logger.warn({ err }, "Failed to stop local registry sandbox during shutdown");
   }
 
   // Disconnect all WebSocket clients and flush streaming buffers

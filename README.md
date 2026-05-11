@@ -1,6 +1,6 @@
 # Vibe Harness v2
 
-Desktop application for orchestrating AI coding agents (Copilot CLI, Claude Code, Gemini) in Docker sandboxes. Tasks run agents against git repositories with optional multi-stage workflow pipelines (plan → implement → review).
+Desktop application for orchestrating AI coding agents (Copilot CLI, Claude Code, Gemini) in [microsandbox](https://github.com/superradcompany/microsandbox) microVMs. Tasks run agents against git repositories with optional multi-stage workflow pipelines (plan → implement → review).
 
 ## Architecture
 
@@ -10,10 +10,11 @@ Desktop application for orchestrating AI coding agents (Copilot CLI, Claude Code
 
 ## Prerequisites
 
-- **Node.js** 20+
-- **Docker** (with `docker sandbox` support)
+- **Node.js** 22+ (microsandbox NAPI addon requires Node ≥ 22)
+- **Docker** or **Podman** (for building agent container images; microsandbox boots them directly from the host image cache)
 - **Git**
 - **Rust / Cargo** (for GUI — install via [rustup](https://rustup.rs))
+- **macOS Apple Silicon** or **Linux with KVM** (microsandbox runtime requirement)
 
 ## Quick Start
 

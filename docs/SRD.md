@@ -4,7 +4,7 @@
 
 ### 1.1 Problem Statement
 
-Vibe Harness is a tool for orchestrating AI coding agents (GitHub Copilot CLI, Claude Code, Gemini CLI) running in Docker sandboxes against git repositories. It manages multi-stage workflows with human review gates, git worktree isolation, and parallel execution.
+Vibe Harness is a tool for orchestrating AI coding agents (GitHub Copilot CLI, Claude Code, Gemini CLI) running in [microsandbox](https://github.com/superradcompany/microsandbox) microVMs against git repositories. It manages multi-stage workflows with human review gates, git worktree isolation, and parallel execution.
 
 Vibe Harness v1 exists as a working Next.js browser application but has fundamental UX and distribution problems:
 - **Installation friction:** Requires `npm install`, build step, and running a Node.js server. Error-prone for non-Node.js developers.
@@ -195,8 +195,8 @@ in-flight split. Child runs cannot themselves be split (no recursion).
 | NFR-I1 | GUI users: single app download (`.dmg` for macOS, `.AppImage` for Linux). No Node.js or other runtime dependencies beyond Docker and Git | Must |
 | NFR-I2 | Developer users: installable from source with minimal setup (< 3 commands) | Must |
 | NFR-I3 | Daemon starts automatically when GUI launches (Tauri sidecar) | Must |
-| NFR-I4 | System checks for prerequisites on first launch: Docker installed and running, `docker sandbox` available, Git installed, GitHub auth configured. Displays actionable guidance for any missing prerequisite | Must |
-| NFR-I5 | Docker sandbox image is auto-built on first workflow run if not present (or user is prompted to build it) | Should |
+| NFR-I4 | System checks for prerequisites on first launch: container image builder (Docker buildx or Podman) installed, microsandbox SDK loadable on host, Git installed, GitHub auth configured. Displays actionable guidance for any missing prerequisite | Must |
+| NFR-I5 | Agent container image is auto-built on first workflow run if not present in the host image cache (or user is prompted to build it) | Should |
 
 ### 3.2 Performance
 
@@ -213,7 +213,7 @@ in-flight split. Child runs cannot themselves be split (no recursion).
 |----|------------|----------|
 | NFR-R1 | Workflow orchestration state at suspension points (review gates, proposal gates) survives daemon restarts. Completed step results are replayed, not re-executed | Must |
 | NFR-R2 | Tasks actively executing when daemon crashes are NOT recoverable. On restart, these tasks are marked failed with reason "daemon_restart" | Must |
-| NFR-R3 | On daemon restart: enumerate running Docker sandboxes via `docker sandbox ls`, reconcile with DB state. Orphaned sandboxes are stopped. Tasks in "running"/"provisioning" state with no live sandbox are marked failed | Must |
+| NFR-R3 | On daemon restart: active workflow runs in "running"/"provisioning" state are marked failed (sandboxes exit with the daemon in attached mode, so there are no live sandboxes to reconcile) | Must |
 | NFR-R4 | Database operations use WAL mode for concurrent read/write safety | Must |
 | NFR-R5 | Approve/reject operations are idempotent (re-approving an approved review is a no-op) | Must |
 | NFR-R6 | Workflow run start operations are idempotent (re-starting a running workflow returns current status) | Should |
@@ -228,7 +228,7 @@ in-flight split. Child runs cannot themselves be split (no recursion).
 | NFR-S3 | Credentials encrypted at rest using AES-256. Key stored in macOS Keychain / Linux libsecret, with file-based fallback (0600 permissions) | Must |
 | NFR-S4 | Daemon binds to localhost only — no network exposure | Must |
 | NFR-S5 | Git ref arguments validated to prevent command injection (block backticks, $, ;, pipes, ..) | Must |
-| NFR-S6 | Docker sandboxes mount the project worktree (read-write) plus any configured host directory mounts (read-only). Network: outbound access allowed by default (agents need package registries, APIs). Configurable per-project to restrict to localhost-only or specific host allowlists | Must |
+| NFR-S6 | Microsandbox sandboxes mount the project worktree (read-write) plus any configured host directory mounts (read-only). Network: per-sandbox network policy enforced by the microsandbox stack — default-deny egress with `allow @public` and `allow @host` (so the in-sandbox MCP bridge can reach the daemon at `host.microsandbox.internal`); configurable per-project to add deny rules for specific domains/suffixes | Must |
 | NFR-S7 | Credential values never appear in daemon logs, streaming output, or GUI-facing API responses (always masked) | Must |
 
 ### 3.5 User Experience
@@ -282,26 +282,29 @@ in-flight split. Child runs cannot themselves be split (no recursion).
 
 ### 4.3 Assumptions
 
-1. Docker Desktop or equivalent is installed on the user's machine
-2. `docker sandbox` command is available (Docker Desktop with sandbox support)
-3. Git is installed and accessible from the daemon process
-4. The user has GitHub credentials configured (`gh auth` or `GITHUB_TOKEN`)
-5. Projects are local git repositories (not remote-only)
+1. The user is on macOS Apple Silicon or Linux with KVM enabled (microsandbox runtime requirement)
+2. `microsandbox` npm package (and its NAPI binary) loads successfully on the host
+3. Docker, Podman, or another container builder is available on PATH for building agent images (`docker buildx` preferred). Microsandbox boots images directly from the host docker/podman image cache.
+4. Git is installed and accessible from the daemon process
+5. The user has GitHub credentials configured (`gh auth` or `GITHUB_TOKEN`)
+6. Projects are local git repositories (not remote-only)
 
 ### 4.4 Constraints
 
 1. `use workflow` SDK is in beta (4.2.0-beta.67) — API may change
 2. Nitro build system required for workflow directive compilation
-3. Docker sandbox images must be pre-built before first workflow run execution
-4. SQLite single-writer constraint (WAL mode mitigates but doesn't eliminate)
-5. MVP supports Copilot CLI only — agent abstraction designed for extensibility but only one implementation
+3. Sandbox container images must be present in the host docker/podman image cache before first workflow run execution (the agent /build endpoint produces them)
+4. `microsandbox` is in beta (0.4.x) — pinned; expect breaking changes between minors
+5. SQLite single-writer constraint (WAL mode mitigates but doesn't eliminate)
+6. MVP supports Copilot CLI only — agent abstraction designed for extensibility but only one implementation
+7. Sandboxes are owned by the daemon process (attached mode) — they exit when the daemon exits
 
 ### 4.5 Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | `use workflow` SDK breaks in future beta | Workflow engine rewrite | Pin version, monitor changelog, spike proved core features work |
-| `docker sandbox` API changes or requires paid tier | Execution model breaks | Abstract sandbox interface; `docker sandbox` is the only impl for now |
+| `microsandbox` SDK breaking changes | Sandbox layer rewrite | Abstract `SandboxService` interface; pin version; tests mock the SDK |
 | Nitro build system instability (alpha) | Build failures | Custom adapter fallback proven in spike |
 | Large repos cause slow worktree/diff operations | UX degradation | Diff size limits, async operations with progress indicators |
 | SQLite contention under high concurrency | Write failures | WAL mode, busy timeout, write serialization in daemon |

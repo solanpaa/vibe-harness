@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
 // ACP Client Service (CDD §5)
 //
-// Manages NDJSON communication with Copilot CLI running inside sbx
-// sandboxes. Spawns `sbx exec ... bash -lc 'copilot --acp ...'` processes,
-// parses the ACP event stream from stdout, and provides methods to send
-// prompts/stop commands via stdin.
+// Manages NDJSON communication with Copilot CLI running inside microsandbox
+// sandboxes. Spawns `copilot --acp ...` inside the sandbox via the sandbox
+// service's `execInteractive()`, parses the ACP event stream from stdout,
+// and provides methods to send prompts/stop commands via stdin.
+//
+// The sandbox service exposes the guest process as web streams (stdin /
+// stdout) and a stderr subscription, which is what the ACP SDK consumes via
+// `acp.ndJsonStream(writable, readable)`.
 // ---------------------------------------------------------------------------
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { Readable, Writable } from 'node:stream';
 import type { Logger } from 'pino';
 import * as acp from '@agentclientprotocol/sdk';
 import {
@@ -16,8 +18,7 @@ import {
   AcpSessionNotActiveError,
   AcpConnectionNotFoundError,
 } from '../lib/errors.js';
-import { shellQuote } from './sandbox.js';
-import { assertValidEnvVarKey } from '../lib/validation/shared.js';
+import type { SandboxService, SandboxProcess } from './sandbox.js';
 import type { GhAccountService } from './gh-accounts.js';
 
 // ── Types (CDD §5.1) ─────────────────────────────────────────────────
@@ -142,7 +143,7 @@ export interface AcpClient {
 // ── Internal state ────────────────────────────────────────────────────
 
 interface ActiveConnection {
-  process: ChildProcess;
+  process: SandboxProcess;
   acpConnection: acp.ClientSideConnection | null;
   sessionId: string | null;
   listeners: Set<AcpEventCallback>;
@@ -152,8 +153,12 @@ interface ActiveConnection {
 
 // ── Factory (CDD §5.3) ───────────────────────────────────────────────
 
-export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAccountService }): AcpClient {
-  const { logger, ghAccountService } = deps;
+export function createAcpClient(deps: {
+  logger: Logger;
+  ghAccountService: GhAccountService;
+  sandboxService: SandboxService;
+}): AcpClient {
+  const { logger, ghAccountService, sandboxService } = deps;
   const connections = new Map<string, ActiveConnection>();
 
   // ------------------------------------------------------------------
@@ -177,6 +182,34 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     if (isContinuation) copilotArgs.push('--continue');
     if (model) copilotArgs.push('--model', model);
 
+    // Copilot CLI does NOT honour MCP servers passed via the ACP
+    // `session/new` `mcpServers` field — it only reads MCP servers from
+    // `~/.copilot/mcp-config.json` or from the `--additional-mcp-config`
+    // CLI flag. We pass our MCP bridge via the latter so the tools the
+    // splitter stage needs (propose_task etc.) are exposed to the agent.
+    //
+    // The flag expects a JSON object shaped `{mcpServers: {<name>: {...}}}`
+    // — same shape as ~/.copilot/mcp-config.json. Each server entry needs
+    // `type: 'local'`, `command`, `args`, `env`, and a `tools` allowlist
+    // (use `['*']` to expose every tool the server advertises). The tools
+    // appear to the LLM prefixed with `<server_name>-`, e.g.
+    // `vibe-harness-propose_task`.
+    if (mcpServers && mcpServers.length > 0) {
+      const servers: Record<string, unknown> = {};
+      for (const s of mcpServers as Array<{ name: string; command: string; args?: string[]; env?: Array<{ name: string; value: string }> }>) {
+        const envObj: Record<string, string> = {};
+        for (const e of s.env ?? []) envObj[e.name] = e.value;
+        servers[s.name] = {
+          type: 'local',
+          command: s.command,
+          args: s.args ?? [],
+          env: envObj,
+          tools: ['*'],
+        };
+      }
+      copilotArgs.push('--additional-mcp-config', JSON.stringify({ mcpServers: servers }));
+    }
+
     // Per-exec env vars (in addition to those persisted in
     // /etc/sandbox-persistent.sh during sandbox create).
     const perExecEnv: Record<string, string> = {
@@ -197,40 +230,17 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
       }
     }
 
-    // Build a `bash -lc` script:
-    //   1. exports the per-exec env vars
-    //   2. execs copilot so signals/exit codes pass through
-    //
-    // /etc/sandbox-persistent.sh is auto-sourced by the login shell, so any
-    // persistent credentials injected at sandbox-create time are already set.
-    const exportLines = Object.entries(perExecEnv)
-      .map(([k, v]) => {
-        assertValidEnvVarKey(k);
-        return `export ${k}=${shellQuote(v)}`;
-      })
-      .join('; ');
-    const copilotCmd = `exec copilot ${copilotArgs.map(shellQuote).join(' ')}`;
-    const script = exportLines ? `${exportLines}; ${copilotCmd}` : copilotCmd;
-
-    // -i keeps stdin open so the ACP stdio protocol can flow.
-    const fullArgs = ['exec', '-i', sandboxName, 'bash', '-lc', script];
-    const redactedScript = exportLines
-      ? exportLines
-          .replace(/export GITHUB_TOKEN=[^;]+/g, 'export GITHUB_TOKEN=<redacted>')
-          .replace(/export GH_TOKEN=[^;]+/g, 'export GH_TOKEN=<redacted>')
-        + `; ${copilotCmd}`
-      : copilotCmd;
     log.info(
       { isContinuation, model, hasGhToken: !!ghToken, envKeyCount: Object.keys(extraEnv ?? {}).length },
       'Starting ACP session',
     );
-    log.debug({ cmd: ['sbx', 'exec', '-i', sandboxName, 'bash', '-lc', redactedScript] }, 'Spawning sbx exec');
+    log.debug({ command: ['copilot', ...copilotArgs], envKeys: Object.keys(perExecEnv) }, 'Spawning copilot in sandbox');
 
-    const child = spawn(
-      'sbx',
-      fullArgs,
-      { stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    const child = await sandboxService.execInteractive(sandboxName, {
+      command: ['copilot', ...copilotArgs],
+      env: perExecEnv,
+      workdir: options.worktreePath,
+    });
 
     log.info({ pid: child.pid }, 'ACP process spawned');
 
@@ -246,8 +256,8 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
     connections.set(sandboxName, conn);
 
     // Log stderr at info level so it's visible by default
-    child.stderr!.on('data', (chunk: Buffer) => {
-      log.info({ acpStderr: chunk.toString().trim() }, 'ACP stderr');
+    child.onStderr((chunk: string) => {
+      log.info({ acpStderr: chunk.trim() }, 'ACP stderr');
     });
 
     // Handle process exit
@@ -267,10 +277,10 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
       }
     });
 
-    // Set up ACP SDK connection (mirrors v1 pattern)
-    const sdkOutput = Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
-    const sdkInput = Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
-    const stream = acp.ndJsonStream(sdkOutput, sdkInput);
+    // Wire the sandbox process's web streams directly into the ACP NDJSON
+    // parser (CDD §5.4). `child.stdin` is the SDK output (we write into it),
+    // `child.stdout` is the SDK input (we read NDJSON from it).
+    const stream = acp.ndJsonStream(child.stdin, child.stdout);
 
     const acpClient: acp.Client = {
       async requestPermission(params) {
@@ -493,7 +503,7 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
 
     // Kill the process — the ACP SDK doesn't have a "stop" method
     try {
-      conn.process.kill('SIGTERM');
+      await conn.process.kill('SIGTERM');
     } catch { /* already exited */ }
   }
 
@@ -535,7 +545,7 @@ export function createAcpClient(deps: { logger: Logger; ghAccountService: GhAcco
       conn.isActive = false;
       conn.listeners.clear();
       if (!conn.process.killed) {
-        conn.process.kill('SIGTERM');
+        void conn.process.kill('SIGTERM');
       }
       connections.delete(sandboxName);
     }

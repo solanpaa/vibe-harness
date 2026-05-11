@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "nitro dev --port 19423",
+    "dev": "nitro dev --port 19423 --host 0.0.0.0",
     "build": "nitro build",
     "start": "node .output/server/index.mjs",
     "test": "vitest run",
@@ -19,6 +19,7 @@
     "better-sqlite3": "^11.9.1",
     "drizzle-orm": "^0.44.2",
     "hono": "^4.10.6",
+    "microsandbox": "^0.4.5",
     "nitro": "3.0.1-alpha.1",
     "pino": "^9.6.0",
     "rollup": "^4.53.2",

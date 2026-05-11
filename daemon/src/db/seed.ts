@@ -7,16 +7,17 @@ import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
 
-// MCP bridge script injected into the sbx sandbox (adapted from v1).
-// Note: sbx routes traffic from inside the sandbox via host.docker.internal
-// → localhost on the host. The host-side `sbx policy allow network
-// localhost:<daemonPort>` rule is added by the daemon at startup
-// (see lib/sbx-prereqs.ts).
+// MCP bridge script injected into the microsandbox sandbox (adapted from v1).
+// Note: microsandbox routes traffic from inside the sandbox via
+// host.microsandbox.internal → the host. The per-sandbox network policy
+// (built in lib/network-policy.ts and applied at create time in
+// services/sandbox.ts) allows egress to the @host group, so this hostname
+// resolves and connects to the daemon.
 const MCP_BRIDGE_JS = `#!/usr/bin/env node
 const { execSync } = require("child_process");
 const readline = require("readline");
 
-const API_BASE = process.env.VIBE_HARNESS_URL || "http://host.docker.internal:19423";
+const API_BASE = process.env.VIBE_HARNESS_URL || "http://host.microsandbox.internal:19423";
 const RUN_ID = process.env.VIBE_RUN_ID || "";
 const AUTH_TOKEN = process.env.VIBE_AUTH_TOKEN || "";
 
@@ -123,7 +124,15 @@ const COPILOT_CLI_AGENT = {
   dockerfile: `# Custom sandbox template for vibe-harness
 # Extends the official Copilot CLI sandbox with development tools.
 #
-# Build: docker build -t vibe-harness/copilot:latest -f Dockerfile .
+# The vibe-harness daemon builds + loads this image automatically via
+# POST /api/agents/:id/build, which runs:
+#   1. docker build -t vibe-harness/copilot:latest -f Dockerfile .
+#   2. docker save vibe-harness/copilot:latest -o image.tar
+#   3. sbx template load image.tar
+# Steps 2-3 are required because sbx keeps its own image store separate from
+# the host Docker daemon; \`sbx create --template <ref>\` only sees images
+# loaded into the sbx template store.
+#
 # Use with: sbx create --template vibe-harness/copilot:latest copilot <workspace>
 #
 # NOTE: The FROM image below targets the legacy Docker Desktop sandbox
@@ -393,6 +402,11 @@ You have MCP tools available:
 
 - Each proposal must stand alone — include enough context for an agent to
   implement it without seeing other proposals.
+- **Use relative paths only.** Each sub-task agent runs in its OWN git
+  worktree at a DIFFERENT absolute path than yours. Refer to files by
+  their path relative to the project root (e.g. \`colors.py\`,
+  \`src/foo.ts\`), NEVER as absolute paths. If you mention "the project
+  root", do not include a specific filesystem path.
 - Minimize file overlap between proposals.
 - Mark dependencies explicitly: if proposal B needs APIs from A, add A's
   title to B's dependsOn list.

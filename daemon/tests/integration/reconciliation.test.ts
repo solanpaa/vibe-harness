@@ -72,7 +72,7 @@ function createMockSandboxService(
     list: vi.fn().mockResolvedValue(liveSandboxes),
     isActive: vi.fn().mockReturnValue(false),
     getSandboxName: vi.fn().mockImplementation((runId: string) => `vibe-${runId.slice(0, 12)}`),
-    reconcileFromDocker: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
   } as unknown as SandboxService;
 }
 

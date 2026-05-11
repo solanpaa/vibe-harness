@@ -450,7 +450,7 @@ function buildMcpServers(runId: string): McpServerStdio[] {
     command: 'node',
     args: ['/home/agent/vibe-mcp-bridge.js'],
     env: [
-      { name: 'VIBE_HARNESS_URL', value: `http://host.docker.internal:${daemonPort}` },
+      { name: 'VIBE_HARNESS_URL', value: `http://host.microsandbox.internal:${daemonPort}` },
       { name: 'VIBE_RUN_ID', value: runId },
       { name: 'VIBE_AUTH_TOKEN', value: authToken },
     ],

@@ -303,13 +303,32 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       startPoint,
     );
 
-    // 2. Provision sbx sandbox (idempotent via getOrCreate)
+    // 2. Pack git loose objects in the parent .git directory.
+    //    Microsandbox's bind-mount layer has been observed to return
+    //    "Input/output error" when the guest reads many small files (git's
+    //    loose objects are exactly this pattern — one 9p/virtio-fs read per
+    //    SHA). `git gc --auto` packs loose objects into a single pack file,
+    //    which reads reliably through the mount. Best-effort; failures here
+    //    only mean the agent may hit the read issue and recover via gc itself.
+    const gitDir = join(projectPath, '.git');
+    if (existsSync(gitDir)) {
+      log.debug({ gitDir }, 'Packing git loose objects to mitigate mount-read issues');
+      try {
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const exec = promisify(execFile);
+        await exec('git', ['-C', projectPath, 'gc', '--auto', '--quiet'], { timeout: 60_000 });
+      } catch (err) {
+        log.debug({ err }, 'git gc --auto failed (continuing)');
+      }
+    }
+
+    // 3. Provision sandbox (idempotent via getOrCreate).
     // Mount the worktree as main workspace (agent's cwd).
     // Also mount the parent project's .git dir so git worktree
     // refs (gitdir: /path/to/.git/worktrees/...) resolve correctly.
     const sandboxName = sandbox.getSandboxName(runId);
     const extraWorkspaces: string[] = [];
-    const gitDir = join(projectPath, '.git');
     if (existsSync(gitDir)) {
       extraWorkspaces.push(gitDir);
     }
