@@ -404,7 +404,12 @@ async function runSplitSubPipeline(
     promptTemplate: splitConfig.effectiveSplitterPrompt,
     reviewRequired: false,
     autoAdvance: true,
-    freshSession: false,
+    // MCP servers (propose_task etc.) are registered via the ACP
+    // session/new call, which only fires for a brand-new session. The
+    // splitter must therefore run with freshSession=true so the daemon
+    // tears down + reconnects without `--continue` and copilot CLI
+    // re-initializes the MCP toolset for this stage.
+    freshSession: true,
   };
 
   await updateCurrentStage(ctx.runId, splitterStageName);

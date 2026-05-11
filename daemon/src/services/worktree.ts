@@ -486,7 +486,31 @@ export function createWorktreeService(deps: {
     assertSafeRef(targetBranch, 'targetBranch');
 
     return getRepoLock(projectPath).runExclusive(async () => {
-      // Remember current branch to restore later
+      const ffLog = logger.child({ op: 'fastForwardMerge', branch, targetBranch });
+      // If targetBranch is checked out in some worktree (e.g. the parent
+      // run's worktree during a split-child finalize), git refuses to
+      // update refs/heads/<targetBranch> from elsewhere. Run the merge
+      // INSIDE that worktree so the working tree, index and HEAD all stay
+      // consistent. This avoids the historic
+      //   fatal: '<targetBranch>' is already used by worktree at '...'
+      // error during child finalize.
+      const targetWorktreePath = await findWorktreeForBranch(projectPath, targetBranch);
+      ffLog.info({ targetWorktreePath }, 'fastForwardMerge starting');
+
+      if (targetWorktreePath) {
+        const mergeResult = await git(
+          ['merge', '--ff-only', branch],
+          targetWorktreePath,
+        );
+        ffLog.info({ exitCode: mergeResult.exitCode, stdout: mergeResult.stdout.slice(0, 200), stderr: mergeResult.stderr.slice(0, 200) }, 'merge in target-worktree finished');
+        if (mergeResult.exitCode !== 0) {
+          throw new MergeError(branch, targetBranch, mergeResult.stderr);
+        }
+        return;
+      }
+
+      // Fallback: targetBranch is not checked out anywhere. Switch the main
+      // repo's HEAD to it for the merge, then restore the original branch.
       const currentBranchResult = await git(
         ['rev-parse', '--abbrev-ref', 'HEAD'],
         projectPath,
@@ -514,6 +538,40 @@ export function createWorktreeService(deps: {
         await git(['checkout', currentBranch], projectPath);
       }
     });
+  }
+
+  /**
+   * Return the path of the worktree that currently has `branch` checked out,
+   * or null if no worktree holds it. Uses `git worktree list --porcelain`
+   * which emits records like:
+   *   worktree /path/to/wt
+   *   HEAD <sha>
+   *   branch refs/heads/<branch>
+   * separated by blank lines. Detached worktrees omit the `branch` line.
+   */
+  async function findWorktreeForBranch(
+    projectPath: string,
+    branch: string,
+  ): Promise<string | null> {
+    const result = await git(['worktree', 'list', '--porcelain'], projectPath);
+    if (result.exitCode !== 0) return null;
+    const wanted = `refs/heads/${branch}`;
+    let currentPath: string | null = null;
+    for (const rawLine of result.stdout.split('\n')) {
+      const line = rawLine.trim();
+      if (line === '') {
+        currentPath = null;
+        continue;
+      }
+      if (line.startsWith('worktree ')) {
+        currentPath = line.slice('worktree '.length);
+        continue;
+      }
+      if (line === `branch ${wanted}` && currentPath) {
+        return currentPath;
+      }
+    }
+    return null;
   }
 
   // ── listBranches (read — no lock) ────────────────────────────────

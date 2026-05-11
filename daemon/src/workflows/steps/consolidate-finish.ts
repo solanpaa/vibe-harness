@@ -112,10 +112,13 @@ export async function consolidateFinish(
   if (journal.phase === 'merged' || journal.phase === 'ff_parent') {
     // Fast-forward the parent's branch to include all the merged changes.
     // The consolidation branch contains the merged result of all children.
+    // Arg order: fastForwardMerge(project, source, destination) — we want
+    // to advance parent's branch to point at consolidationBranch, so the
+    // SOURCE is consolidationBranch and the DESTINATION is parent.branch.
     await deps.worktreeService.fastForwardMerge(
       projectPath,
-      parentRun.branch!,
       metadata.consolidationBranch,
+      parentRun.branch!,
     );
 
     advancePhase(db, journal.id, 'cleanup', metadata);

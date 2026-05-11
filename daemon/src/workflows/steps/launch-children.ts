@@ -277,6 +277,19 @@ async function launchMissingChildren(
     .all();
   childRunIds.push(...existingChildren.map((c) => c.id));
 
+  // Look up the project's local path so we can strip absolute filesystem
+  // references from proposal descriptions. The splitter agent sees its
+  // OWN worktree path in the prompt context; if it embeds that path into a
+  // child's task description, the child agent (which runs in a different
+  // worktree) ends up writing files to the wrong directory. Defensive
+  // sanitization keeps work on the right side of the mount even when the
+  // splitter ignores the "use relative paths" instruction.
+  const projectLocalPath = db
+    .select({ localPath: schema.projects.localPath })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId))
+    .get()!.localPath;
+
   for (const proposal of selectedProposals) {
     if (alreadyLaunchedProposalIds.has(proposal.id)) {
       continue; // Already launched in a prior attempt
@@ -305,6 +318,16 @@ async function launchMissingChildren(
     // so sessionManager.create() can branch from it when provisioning.
     const childRunId = crypto.randomUUID();
 
+    // Strip absolute paths under the project root from the description so
+    // the child agent (which sees a different worktree path) doesn't
+    // mistakenly write into the parent's worktree. See comment above where
+    // projectLocalPath is resolved.
+    const escapedProjectPath = projectLocalPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const sanitizedDescription = proposal.description.replace(
+      new RegExp(`${escapedProjectPath}[^\\s\`'"]*`, 'g'),
+      '<project-root>',
+    );
+
     db.insert(schema.workflowRuns)
       .values({
         id: childRunId,
@@ -313,7 +336,7 @@ async function launchMissingChildren(
         agentDefinitionId,
         parentRunId,
         parallelGroupId: groupId,
-        description: proposal.description,
+        description: sanitizedDescription,
         title: proposal.title,
         status: 'pending',
         branch: childBranch,

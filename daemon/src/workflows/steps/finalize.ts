@@ -71,6 +71,7 @@ export async function finalize(
       branch: schema.workflowRuns.branch,
       projectId: schema.workflowRuns.projectId,
       sandboxId: schema.workflowRuns.sandboxId,
+      parentRunId: schema.workflowRuns.parentRunId,
     })
     .from(schema.workflowRuns)
     .where(eq(schema.workflowRuns.id, runId))
@@ -79,6 +80,15 @@ export async function finalize(
   if (!run?.worktreePath || !run?.branch) {
     throw new Error(`Run ${runId} missing worktree or branch`);
   }
+
+  // Child runs in a split flow: skip rebase/merge/cleanup. The parent's
+  // consolidate step is responsible for merging children together and into
+  // the parent branch. Child finalize must only:
+  //   1. Commit any dirty state in the child's worktree.
+  //   2. Stop + remove the child's sandbox.
+  //   3. Leave the child's worktree and branch in place so consolidate can
+  //      read them. Consolidate cleans them up itself.
+  const isChildRun = !!run.parentRunId;
 
   const project = db
     .select({ localPath: schema.projects.localPath })
@@ -143,7 +153,8 @@ export async function finalize(
   }
 
   // ── Phase: rebase ─────────────────────────────────────────────────
-  if (journal!.phase === 'rebase' || (journal!.phase === 'commit')) {
+  // Skipped for child runs — see comment above.
+  if (!isChildRun && (journal!.phase === 'rebase' || (journal!.phase === 'commit'))) {
     // Re-read phase in case commit just advanced it
     const currentJournal = db
       .select({ phase: schema.gitOperations.phase })
@@ -165,22 +176,29 @@ export async function finalize(
 
       advancePhase(db, journal!.id, 'merge', metadata);
     }
+  } else if (isChildRun && journal!.phase === 'rebase') {
+    // Child runs: jump straight from commit→cleanup, skipping merge into
+    // the parent branch. The parent's consolidate step is responsible.
+    advancePhase(db, journal!.id, 'cleanup', metadata);
   }
 
   // ── Phase: merge (fast-forward into target) ───────────────────────
-  const mergeCheck = db
-    .select({ phase: schema.gitOperations.phase })
-    .from(schema.gitOperations)
-    .where(eq(schema.gitOperations.id, journal!.id))
-    .get();
+  // Skipped for child runs.
+  if (!isChildRun) {
+    const mergeCheck = db
+      .select({ phase: schema.gitOperations.phase })
+      .from(schema.gitOperations)
+      .where(eq(schema.gitOperations.id, journal!.id))
+      .get();
 
-  if (mergeCheck?.phase === 'merge') {
-    await deps.worktreeService.fastForwardMerge(
-      projectPath,
-      run.branch,
-      targetBranch,
-    );
-    advancePhase(db, journal!.id, 'cleanup', metadata);
+    if (mergeCheck?.phase === 'merge') {
+      await deps.worktreeService.fastForwardMerge(
+        projectPath,
+        run.branch,
+        targetBranch,
+      );
+      advancePhase(db, journal!.id, 'cleanup', metadata);
+    }
   }
 
   // ── Phase: cleanup ────────────────────────────────────────────────
@@ -191,14 +209,19 @@ export async function finalize(
     .get();
 
   if (cleanupCheck?.phase === 'cleanup') {
-    // Stop session (best-effort)
+    // Stop session (best-effort). The sessionManager owns lifecycle of the
+    // microsandbox VM; stopping here ensures the sandbox handle is freed
+    // before we try to remove it via the static `Sandbox.remove`. Without
+    // this, removeSession throws "sandbox still running".
     try {
       await deps.sessionManager.stop(runId);
     } catch {
       // Sandbox may already be gone
     }
 
-    // Remove Docker sandbox
+    // Remove sandbox entry from the runtime (idempotent — sessionManager
+    // already attempted stop+removePersisted above, but for runs whose
+    // session state was already torn down we do a direct removal here).
     const sandboxName = run.sandboxId ?? deps.sessionManager.getSandboxName?.(runId);
     if (sandboxName && deps.sandboxService) {
       try {
@@ -208,16 +231,23 @@ export async function finalize(
       }
     }
 
-    // Remove worktree and branch
-    await deps.worktreeService.remove(projectPath, run.worktreePath, {
-      deleteBranch: run.branch,
-    });
+    if (isChildRun) {
+      // Leave the child's worktree and branch in place. The parent's
+      // consolidate step needs them to read the child's commits and
+      // performs its own cleanup of the worktree afterwards.
+      log.info({ branch: run.branch }, 'Child finalize: leaving worktree + branch for consolidate');
+    } else {
+      // Remove worktree and branch.
+      await deps.worktreeService.remove(projectPath, run.worktreePath, {
+        deleteBranch: run.branch,
+      });
+    }
 
     // Clear run references
     db.update(schema.workflowRuns)
       .set({
         sandboxId: null,
-        worktreePath: null,
+        worktreePath: isChildRun ? run.worktreePath : null,
         completedAt: new Date().toISOString(),
       })
       .where(eq(schema.workflowRuns.id, runId))
