@@ -223,16 +223,22 @@ agents.post('/api/agents/:id/build', (c) => {
             execFile(cmd, args, { timeout: 5_000 }, (err) => resolve(!err));
           });
         if (await tryRun('docker', ['buildx', 'version'])) {
+          // The default buildx `docker` driver ignores `registry.insecure=true`
+          // and delegates the push to the Docker daemon over HTTPS, which fails
+          // against our plain-HTTP local registry. Provision a dedicated
+          // `docker-container` builder (BuildKit in a container) which honors
+          // insecure pushes, and target it with `--builder`.
+          const builderName = await localRegistry.ensureBuildxBuilder();
           return {
             cmd: 'docker',
-            // BuildKit's `--output type=image,...,push=true,registry.insecure=true`
-            // allows plain-HTTP pushes. We push under `host.docker.internal:5050`
-            // because Docker Desktop's BuildKit runs in a separate VM and cannot
-            // reach the host's `localhost`. The registry stores blobs by image
-            // path only, so the daemon and microsandbox can then pull the same
-            // blobs back at `localhost:5050/<image>`.
+            // We push under `host.docker.internal:5050` because Docker Desktop's
+            // BuildKit runs in a separate VM/container and cannot reach the
+            // host's `localhost`. The registry stores blobs by image path only,
+            // so the daemon and microsandbox can then pull the same blobs back
+            // at `localhost:5050/<image>`.
             args: (_ref) => [
               'buildx', 'build',
+              '--builder', builderName,
               '--provenance=false',
               '--platform', platform,
               '--output',

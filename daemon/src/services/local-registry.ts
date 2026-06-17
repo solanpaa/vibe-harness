@@ -39,12 +39,13 @@
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -53,6 +54,7 @@ import type { Logger } from 'pino';
 const execFileAsync = promisify(execFile);
 
 const REGISTRY_CONTAINER_NAME = 'vibe-registry';
+const BUILDX_BUILDER_NAME = 'vibe-builder';
 const REGISTRY_HOST_PORT = 5050;
 const REGISTRY_GUEST_PORT = 5000;
 const REGISTRY_IMAGE = 'registry:3';
@@ -172,6 +174,14 @@ export interface LocalRegistry {
    * network namespace) we return the same as `endpoint()`.
    */
   pushEndpoint(): string;
+  /**
+   * Ensure a dedicated `docker-container` buildx builder exists and is
+   * bootstrapped, returning its name. Required because the default `docker`
+   * driver ignores BuildKit's `registry.insecure=true` and pushes via the
+   * Docker daemon over HTTPS. Only the `docker-container` driver honors
+   * insecure (plain-HTTP) registry pushes. Idempotent.
+   */
+  ensureBuildxBuilder(): Promise<string>;
   isRegistryQualified(image: string): boolean;
   rewriteImageRef(image: string): string;
   pushRef(image: string): string;
@@ -186,6 +196,7 @@ export interface LocalRegistry {
 export function createLocalRegistry(deps: { logger: Logger }): LocalRegistry {
   const { logger } = deps;
   let startPromise: Promise<void> | null = null;
+  let builderPromise: Promise<string> | null = null;
   let runtime: 'docker' | 'podman' | null = null;
 
   function endpoint(): string {
@@ -197,6 +208,72 @@ export function createLocalRegistry(deps: { logger: Logger }): LocalRegistry {
       return `host.docker.internal:${REGISTRY_HOST_PORT}`;
     }
     return endpoint();
+  }
+
+  /**
+   * Create (idempotently) and bootstrap a `docker-container` buildx builder so
+   * BuildKit honors `registry.insecure=true` for plain-HTTP pushes. The default
+   * `docker` driver delegates pushes to the Docker daemon, which forces HTTPS
+   * and fails against our local HTTP registry. The builder is configured with a
+   * buildkitd registry config marking both push endpoints insecure as a
+   * belt-and-suspenders alongside the per-build `registry.insecure=true`.
+   */
+  async function ensureBuildxBuilder(): Promise<string> {
+    if (builderPromise) return builderPromise;
+    builderPromise = (async () => {
+      const log = logger.child({ component: 'local-registry', builder: BUILDX_BUILDER_NAME });
+
+      // Reuse an existing builder of the same name if present.
+      try {
+        await execFileAsync('docker', ['buildx', 'inspect', BUILDX_BUILDER_NAME], { timeout: 15_000 });
+        log.debug('Reusing existing buildx builder');
+      } catch {
+        const toml = [
+          `[registry."host.docker.internal:${REGISTRY_HOST_PORT}"]`,
+          '  http = true',
+          '  insecure = true',
+          `[registry."127.0.0.1:${REGISTRY_HOST_PORT}"]`,
+          '  http = true',
+          '  insecure = true',
+          '',
+        ].join('\n');
+        const cfgDir = mkdtempSync(join(tmpdir(), 'vibe-buildkitd-'));
+        const cfgPath = join(cfgDir, 'buildkitd.toml');
+        writeFileSync(cfgPath, toml);
+        log.info('Creating docker-container buildx builder for insecure-registry pushes');
+        try {
+          await execFileAsync('docker', [
+            'buildx', 'create',
+            '--name', BUILDX_BUILDER_NAME,
+            '--driver', 'docker-container',
+            '--buildkitd-config', cfgPath,
+          ], { timeout: 60_000 });
+        } catch (err) {
+          throw new Error(
+            `Failed to create docker-container buildx builder '${BUILDX_BUILDER_NAME}': ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      // Bootstrap (pulls moby/buildkit on first use and starts the container).
+      try {
+        await execFileAsync('docker', ['buildx', 'inspect', '--bootstrap', BUILDX_BUILDER_NAME], {
+          timeout: 300_000,
+        });
+      } catch (err) {
+        throw new Error(
+          `Failed to bootstrap buildx builder '${BUILDX_BUILDER_NAME}': ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      log.info('Buildx builder ready');
+      return BUILDX_BUILDER_NAME;
+    })().catch((err) => {
+      builderPromise = null;
+      throw err;
+    });
+    return builderPromise;
   }
 
   function isRegistryQualified(image: string): boolean {
@@ -412,6 +489,7 @@ export function createLocalRegistry(deps: { logger: Logger }): LocalRegistry {
     stop,
     endpoint,
     pushEndpoint,
+    ensureBuildxBuilder,
     isRegistryQualified,
     rewriteImageRef,
     pushRef,
