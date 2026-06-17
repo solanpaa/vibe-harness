@@ -687,9 +687,9 @@ export function createSandboxService(deps: {
       try { await state.sandbox.kill(); } catch { /* idempotent */ }
     }
     try {
-      await state.sandbox.removePersisted();
+      await Sandbox.remove(sandboxName);
     } catch (err) {
-      log.debug({ err }, 'removePersisted() failed (may already be removed)');
+      log.debug({ err }, 'Sandbox.remove() failed (may already be removed)');
     }
     activeSandboxes.delete(sandboxName);
     log.info('Sandbox stopped and removed');
@@ -709,7 +709,7 @@ export function createSandboxService(deps: {
       try { await state.sandbox.stop(); }
       catch (err) { log.debug({ err }, 'stop() during remove failed; attempting kill'); }
       try { await state.sandbox.kill(); } catch { /* idempotent */ }
-      try { await state.sandbox.removePersisted(); } catch { /* idempotent */ }
+      try { await Sandbox.remove(sandboxName); } catch { /* idempotent */ }
       activeSandboxes.delete(sandboxName);
       return;
     }
@@ -746,7 +746,7 @@ export function createSandboxService(deps: {
     const state = activeSandboxes.get(sandboxName);
     if (state) {
       try { await state.sandbox.kill(); } catch (err) { log.debug({ err }, 'kill failed'); }
-      try { await state.sandbox.removePersisted(); } catch { /* ignore */ }
+      try { await Sandbox.remove(sandboxName); } catch { /* ignore */ }
       activeSandboxes.delete(sandboxName);
       return;
     }
